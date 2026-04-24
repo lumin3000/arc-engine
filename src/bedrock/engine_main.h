@@ -56,12 +56,27 @@ typedef struct {
     // js_runtime_init(). Game should call engine_register_sprites() here.
     void (*on_init)(void);
 
-    // Invoked INSIDE js_runtime_init() — after all engine JS bindings
-    // are registered, before scripts/main.js is evaluated (and before
-    // any jtask service worker sees the global scope). This is the
-    // correct place to register game-specific JS bindings; registering
-    // later causes service workers to race with the registration and
-    // see undefined globals.
+    // Installs engine-provided JS bindings into each JSContext. jtask
+    // weak-links js_init_message_module and calls it for every worker
+    // ctx plus the bootstrap ctx, and the engine invokes this registrar
+    // inside js_init_message_module. Consumers typically pass
+    // arc_register_main_js_bindings from bindings/common_bindings.h.
+    // Required — js_init_message_module logs an error if NULL and the
+    // worker will see no engine globals.
+    void (*register_main_js_bindings)(JSContext *js_ctx);
+
+    // Installs engine-provided JS bindings into the render_service
+    // worker ctx after service creation (do_inject_render_modules).
+    // Consumers typically pass arc_register_render_js_bindings from
+    // common_bindings.h. Required for render_service to render.
+    void (*register_render_js_bindings)(JSContext *js_ctx);
+
+    // Invoked INSIDE js_runtime_init() — after engine JS bindings are
+    // registered, before scripts/main.js is evaluated (and before any
+    // jtask service worker sees the global scope). This is the correct
+    // place to register game-specific JS bindings; registering later
+    // causes service workers to race with the registration and see
+    // undefined globals.
     void (*on_register_js_bindings)(JSContext *js_ctx);
 
     // Invoked every frame before the engine renders. Game-side update.

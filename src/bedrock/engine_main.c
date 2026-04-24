@@ -96,9 +96,13 @@ static void engine_on_init(void) {
   if (g_cfg.js_main_script_path) {
     js_runtime_set_main_script_path(g_cfg.js_main_script_path);
   }
+  // Forward binding registrars to Arc_Engine_State. Must happen BEFORE
+  // js_runtime_init() because js_init_message_module consults the
+  // singleton as soon as it's called for the bootstrap ctx, and jtask
+  // also consults it for every subsequent worker ctx.
+  arc_engine_state()->js_main_bindings_registrar = g_cfg.register_main_js_bindings;
+  arc_engine_state()->js_render_bindings_registrar = g_cfg.register_render_js_bindings;
   if (g_cfg.on_register_js_bindings) {
-    // register BEFORE js_runtime_init so the callback fires at the right
-    // spot inside it (after engine bindings, before scripts/main.js).
     js_runtime_set_game_bindings_registrar(g_cfg.on_register_js_bindings);
   }
 

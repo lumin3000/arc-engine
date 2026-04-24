@@ -2,16 +2,6 @@
 #include "js_runtime.h"
 #include "js_runtime_internal.h"
 #include "engine_state.h"
-#include "../bindings/diag_bindings.h"
-#include "../bindings/draw_bindings.h"
-#include "../bindings/font_bindings.h"
-#include "../bindings/engine_bindings.h"
-#include "../bindings/graphics_bindings.h"
-#include "../bindings/input_bindings.h"
-#include "../bindings/loader_buffer.h"
-#include "../bindings/unified_mesh.h"
-#include "../bindings/imgui_bindings.h"
-#include "../bindings/batch.h"
 #include "../log.h"
 #include "jtask.h"
 #include "jtask_api.h"
@@ -288,14 +278,20 @@ static void do_inject_render_modules(void) {
   if (!task)
     return;
 
+  Engine_JS_Bindings_Registrar render_registrar =
+      arc_engine_state()->js_render_bindings_registrar;
+  if (!render_registrar) {
+    LOG_ERROR("[JSRuntime] render_bindings_registrar not set; "
+              "render_service context will have no engine bindings\n");
+    g_render_ctx_modules_initialized = 1;
+    return;
+  }
+
   if (g_render_service_id.id != 0) {
     JSContext *render_ctx =
         (JSContext *)service_get_context(task->services, g_render_service_id);
     if (render_ctx) {
-      js_init_draw_module(render_ctx);
-      js_init_graphics_module(render_ctx);
-      js_init_engine_module(render_ctx);
-      js_init_input_module(render_ctx);
+      render_registrar(render_ctx);
       g_render_ctx_modules_initialized = 1;
       LOG_VERBOSE(
           "[JSRuntime] render_service context modules injected (Sync)\n");
@@ -597,15 +593,20 @@ int js_init_message_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, global, "message", msg_obj);
   JS_FreeValue(ctx, global);
 
-  js_init_loader_module(ctx);
-  js_init_unified_mesh_module(ctx);
-  js_init_graphics_module(ctx);
-  js_init_input_module(ctx);
-  js_init_draw_module(ctx);
-  js_init_font_module(ctx);
-  js_init_diag_module(ctx);
-  js_init_imgui_module(ctx);
-  js_init_batch_module(ctx);
+  // jtask weak-links this function and invokes it in every worker ctx
+  // (game_service, render_service, loader_service, ...) as well as the
+  // bootstrap ctx. The registrar is therefore the single hook that
+  // reaches all JSContexts — bedrock/ stays free of bindings/ includes
+  // and the consumer controls which engine bindings are installed.
+  Engine_JS_Bindings_Registrar main_registrar =
+      arc_engine_state()->js_main_bindings_registrar;
+  if (main_registrar) {
+    main_registrar(ctx);
+  } else {
+    LOG_ERROR("[JSRuntime] js_main_bindings_registrar not set — "
+              "worker ctx '%s' will be missing engine globals\n",
+              g_run_mode);
+  }
 
   // Game-provided JS bindings must be registered here — before the JS
   // global scope is observed by any jtask service worker. If this runs
@@ -677,22 +678,14 @@ int js_runtime_init(void) {
     return -1;
   }
 
-  if (js_init_draw_module(g_context) < 0) {
-    LOG_ERROR("Failed to initialize draw bindings\n");
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
-    return -1;
-  }
-
+  // js_init_message_module runs the main binding registrar internally,
+  // so on the bootstrap ctx this single call installs the full engine
+  // binding set (draw/loader/unified_mesh/graphics/input/font/diag/
+  // imgui/batch/engine) plus the message protocol itself. Worker
+  // contexts reach the same registrar via jtask's weak-linked
+  // invocation of js_init_message_module during service_requiref.
   if (js_init_message_module(g_context) < 0) {
     LOG_ERROR("Failed to initialize message bindings\n");
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
-    return -1;
-  }
-
-  if (js_init_engine_module(g_context) < 0) {
-    LOG_ERROR("Failed to initialize game bindings\n");
     JS_FreeContext(g_context);
     JS_FreeRuntime(g_runtime);
     return -1;

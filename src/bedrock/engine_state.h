@@ -28,6 +28,10 @@ typedef struct {
 
 typedef void (*JS_Runtime_Game_Bindings_Fn)(JSContext *js_ctx);
 
+// Registrar that installs engine-provided JS bindings into a JSContext.
+// See src/bindings/common_bindings.h for ready-made implementations.
+typedef void (*Engine_JS_Bindings_Registrar)(JSContext *js_ctx);
+
 // Arc_Engine_State collects the scattered engine-lifetime globals into a
 // single singleton so their lifecycle and ownership is no longer spread
 // across file-scope statics in engine_main.c / js_runtime.c. See
@@ -46,6 +50,18 @@ typedef struct {
     char *js_bootstrap_path;        // NULL => default
     char *js_main_script_path;      // NULL => default
     JS_Runtime_Game_Bindings_Fn js_game_bindings_fn;
+
+    // Engine-binding registrar invoked inside js_init_message_module
+    // (which jtask weak-links and calls for every worker ctx + the
+    // bootstrap ctx). Consumers supply arc_register_main_js_bindings
+    // from src/bindings/common_bindings.h via Engine_Config.
+    Engine_JS_Bindings_Registrar js_main_bindings_registrar;
+
+    // Engine-binding registrar for the render_service worker ctx,
+    // invoked from do_inject_render_modules. Currently identical to the
+    // main registrar (shared bundle); separate slot for future
+    // divergence.
+    Engine_JS_Bindings_Registrar js_render_bindings_registrar;
 } Arc_Engine_State;
 
 // Returns the singleton. Never NULL. Storage is in engine_main.c.
