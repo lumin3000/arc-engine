@@ -43,7 +43,7 @@ const MaterialPool = {
     _cache: new Map(),
 
     get TEXTURE_PATHS() {
-        return globalThis.config?.TEXTURE_PATHS || [];
+        return globalThis.GAME_CONFIG?.TEXTURE_PATHS || [];
     },
 
     get TEXTURE_ROOT() {
