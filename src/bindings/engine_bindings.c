@@ -1,7 +1,15 @@
 
 #include "engine_bindings.h"
 #include "../log.h"
+#include "bedrock/engine_state.h"
+#include "bedrock/gfx/camera.h"
+#include "bedrock/gfx/render.h"
+#include "bedrock/helpers.h"
+#include "bedrock/utils/utils.h"
+#include "types.h"
 #include <errno.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -9,35 +17,6 @@
 #else
 #include <unistd.h>
 #endif
-
-typedef float Vec2[2];
-typedef float Vec3[3];
-typedef struct {
-  uint64_t ticks;
-  double game_time_elapsed;
-  Vec3 cam_pos;
-  Vec3 cam_rot;
-  Vec3 cam_vel;
-  float zoom_level;
-  float desired_zoom_level;
-} Game_State;
-
-typedef struct {
-  Game_State *gs;
-  float delta_t;
-} Core_Context;
-
-extern Core_Context ctx;
-extern int window_w;
-extern int window_h;
-
-#include "bedrock/gfx/camera.h"
-#include "bedrock/gfx/render.h"
-#include "bedrock/helpers.h"
-#include "bedrock/utils/utils.h"
-#include "types.h"
-#include <math.h>
-#include <stdio.h>
 
 static JSValue js_coord_push_world_space(JSContext *js_ctx,
                                          JSValueConst this_val, int argc,
@@ -328,9 +307,6 @@ static JSValue js_app_quit(JSContext *js_ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-extern char **app_get_argv(void);
-extern int app_get_argc(void);
-
 static JSValue js_app_restart(JSContext *js_ctx, JSValueConst this_val, int argc,
                               JSValueConst *argv) {
   (void)this_val;
@@ -381,8 +357,6 @@ static JSValue js_fatal(JSContext *js_ctx, JSValueConst this_val, int argc,
 
   return JS_UNDEFINED;
 }
-
-extern float g_master_volume;
 
 static JSValue js_game_set_volume(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv) {

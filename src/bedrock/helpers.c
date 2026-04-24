@@ -1,5 +1,6 @@
 
 #include "helpers.h"
+#include "engine_state.h"
 #include "gfx/camera.h"
 #include "gfx/draw.h"
 #include "input/input.h"
@@ -7,25 +8,6 @@
 #include "utils/utils.h"
 #include <math.h>
 #include <stdio.h>
-
-typedef struct {
-  uint64_t ticks;
-  double game_time_elapsed;
-  Vec3 cam_pos;
-  Vec3 cam_rot;
-  Vec3 cam_vel;
-  float zoom_level;
-  float desired_zoom_level;
-} Game_State;
-
-typedef struct {
-  Game_State *gs;
-  float delta_t;
-} Core_Context;
-
-extern Core_Context ctx;
-extern int window_w;
-extern int window_h;
 
 Coord_Space get_world_space(void) {
   Coord_Space space;
