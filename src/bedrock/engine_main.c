@@ -83,6 +83,8 @@ static void engine_on_init(void) {
 
   render_init();
 
+  if (g_cfg.on_render_ready) g_cfg.on_render_ready();
+
   camera_set_ortho_size(camera_get_main(),
                         g_cfg.base_ortho_size > 0.0f ? g_cfg.base_ortho_size
                                                      : 10.0f);
@@ -102,6 +104,7 @@ static void engine_on_init(void) {
   // also consults it for every subsequent worker ctx.
   arc_engine_state()->js_main_bindings_registrar = g_cfg.register_main_js_bindings;
   arc_engine_state()->js_render_bindings_registrar = g_cfg.register_render_js_bindings;
+  arc_engine_state()->post_mesh_render_hook = g_cfg.on_post_mesh_render;
   if (g_cfg.on_register_js_bindings) {
     js_runtime_set_game_bindings_registrar(g_cfg.on_register_js_bindings);
   }

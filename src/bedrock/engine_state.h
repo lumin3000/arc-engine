@@ -62,6 +62,12 @@ typedef struct {
     // main registrar (shared bundle); separate slot for future
     // divergence.
     Engine_JS_Bindings_Registrar js_render_bindings_registrar;
+
+    // Per-frame hook invoked inside the render pass, after mesh queue
+    // 0..4000 has been submitted, before the main quad draw loop. Games
+    // with custom render paths (skinned animation etc.) install a hook
+    // here via Engine_Config.on_post_mesh_render. NULL = no-op.
+    void (*post_mesh_render_hook)(void);
 } Arc_Engine_State;
 
 // Returns the singleton. Never NULL. Storage is in engine_main.c.

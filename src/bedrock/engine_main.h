@@ -56,6 +56,19 @@ typedef struct {
     // js_runtime_init(). Game should call engine_register_sprites() here.
     void (*on_init)(void);
 
+    // Invoked after render_init() — sokol context is live and the engine
+    // has populated default VIEW_* slots with 1x1 dummies. This is the
+    // correct place for the game to load textures and call
+    // engine_register_view() to override dummy slots (e.g. terrain flow/
+    // ripple/noise maps).
+    void (*on_render_ready)(void);
+
+    // Invoked every frame inside the render pass, after the engine has
+    // submitted opaque/queue-ordered meshes but before the main draw
+    // loop. Games with custom render paths (skinned animation, particle
+    // systems) install a hook here. NULL = no-op.
+    void (*on_post_mesh_render)(void);
+
     // Installs engine-provided JS bindings into each JSContext. jtask
     // weak-links js_init_message_module and calls it for every worker
     // ctx plus the bootstrap ctx, and the engine invokes this registrar

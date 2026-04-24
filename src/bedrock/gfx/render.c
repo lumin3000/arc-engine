@@ -1,5 +1,6 @@
 
 #include "render.h"
+#include "../engine_state.h"
 #include "../../../external/sokol/c/sokol_app.h"
 #include "../../../external/sokol/c/sokol_gfx.h"
 
@@ -973,6 +974,11 @@ void core_render_frame_end(void) {
                                                   const Vec4 debug_color);
     g_dc_breakdown.mesh_rq_0_4000 =
         graphics_submit_meshes_range_count(0, 4000, false, NULL);
+
+    {
+      void (*hook)(void) = arc_engine_state()->post_mesh_render_hook;
+      if (hook) hook();
+    }
 
     sg_apply_pipeline(render_state.pip);
     sg_apply_bindings(&render_state.bind);

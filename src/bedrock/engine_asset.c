@@ -1,5 +1,6 @@
 
 #include "engine_asset.h"
+#include "gfx/render.h"
 #include "../log.h"
 #include <stdlib.h>
 #include <string.h>
@@ -43,4 +44,15 @@ int engine_texture_search_path_count(void) { return g_count; }
 const char *engine_texture_search_path(int i) {
   if (i < 0 || i >= g_count) return NULL;
   return g_paths[i];
+}
+
+void engine_register_view(int slot, sg_view view) {
+  int max_views = (int)(sizeof(render_state.bind.views) /
+                        sizeof(render_state.bind.views[0]));
+  if (slot < 0 || slot >= max_views) {
+    LOG_ERROR("[engine_register_view] slot %d out of range [0, %d)\n",
+              slot, max_views);
+    return;
+  }
+  render_state.bind.views[slot] = view;
 }
