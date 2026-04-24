@@ -32,4 +32,15 @@ const char *engine_texture_search_path(int i);
 // from generated_shader.h. Silently ignored if slot is out of range.
 void engine_register_view(int slot, sg_view view);
 
+// Per-frame fragment-shader global (Unity's Shader.SetGlobalFloat
+// equivalent). graphics.c writes this into Shader_Data.params[1] each
+// time it submits a mesh — games with terrain flow maps set it to
+// 1.0 / (world_size_pixels) so the fragment shader can convert world
+// coords to [0,1] flow-map UV. Default 0.0 means the flow-map path is
+// inert. Set on demand from on_frame or whenever world size changes.
+void engine_set_world_inv_size(float value);
+
+// Read side used by graphics.c. Not intended for game use.
+float engine_get_world_inv_size(void);
+
 #endif

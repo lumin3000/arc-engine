@@ -7,6 +7,7 @@
 #include "generated_shader.h"
 #include "render.h"
 #include "render_diagnostics.h"
+#include "../engine_asset.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -403,9 +404,7 @@ void graphics_submit_meshes(void) {
 
     sd.params[0] = (float)seconds_since_init();
 
-    {
-      sd.params[1] = 0.0f;
-    }
+    sd.params[1] = engine_get_world_inv_size();
 
     if (mat->shader_type == SHADER_TYPE_EDGE_DETECT &&
         mat->texture.id != SG_INVALID_ID) {
@@ -516,9 +515,7 @@ int graphics_submit_meshes_range_count(int rq_min, int rq_max, bool clear_after,
 
     sd.params[0] = (float)seconds_since_init();
 
-    {
-      sd.params[1] = 0.0f;
-    }
+    sd.params[1] = engine_get_world_inv_size();
     if (req->has_block) {
       if (req->block.use_color)
         memcpy(sd.col_override, req->block.color, sizeof(Vec4));

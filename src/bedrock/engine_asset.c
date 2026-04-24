@@ -56,3 +56,8 @@ void engine_register_view(int slot, sg_view view) {
   }
   render_state.bind.views[slot] = view;
 }
+
+static float g_world_inv_size = 0.0f;
+
+void  engine_set_world_inv_size(float value) { g_world_inv_size = value; }
+float engine_get_world_inv_size(void)        { return g_world_inv_size; }
