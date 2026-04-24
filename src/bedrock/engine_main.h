@@ -56,24 +56,12 @@ typedef struct {
     // js_runtime_init(). Game should call engine_register_sprites() here.
     void (*on_init)(void);
 
-    // Installs engine-provided JS bindings on the bootstrap context.
-    // Consumers typically pass arc_register_main_js_bindings from
-    // src/bindings/common_bindings.h. Required — js_runtime_init aborts
-    // if NULL.
-    void (*register_main_js_bindings)(JSContext *js_ctx);
-
-    // Installs engine-provided JS bindings on the render_service
-    // context (a subset of the main set). Consumers typically pass
-    // arc_register_render_js_bindings from common_bindings.h. Required
-    // for rendering to work.
-    void (*register_render_js_bindings)(JSContext *js_ctx);
-
-    // Invoked INSIDE js_runtime_init() — after engine JS bindings are
-    // registered, before scripts/main.js is evaluated (and before any
-    // jtask service worker sees the global scope). This is the correct
-    // place to register game-specific JS bindings; registering later
-    // causes service workers to race with the registration and see
-    // undefined globals.
+    // Invoked INSIDE js_runtime_init() — after all engine JS bindings
+    // are registered, before scripts/main.js is evaluated (and before
+    // any jtask service worker sees the global scope). This is the
+    // correct place to register game-specific JS bindings; registering
+    // later causes service workers to race with the registration and
+    // see undefined globals.
     void (*on_register_js_bindings)(JSContext *js_ctx);
 
     // Invoked every frame before the engine renders. Game-side update.

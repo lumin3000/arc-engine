@@ -96,11 +96,6 @@ static void engine_on_init(void) {
   if (g_cfg.js_main_script_path) {
     js_runtime_set_main_script_path(g_cfg.js_main_script_path);
   }
-  // Forward engine-binding registrars to Arc_Engine_State so
-  // js_runtime_init/do_inject_render_modules can reach them without
-  // including bindings/ headers directly.
-  arc_engine_state()->js_main_bindings_registrar = g_cfg.register_main_js_bindings;
-  arc_engine_state()->js_render_bindings_registrar = g_cfg.register_render_js_bindings;
   if (g_cfg.on_register_js_bindings) {
     // register BEFORE js_runtime_init so the callback fires at the right
     // spot inside it (after engine bindings, before scripts/main.js).
