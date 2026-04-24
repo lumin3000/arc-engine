@@ -2,16 +2,6 @@
 #include "js_runtime.h"
 #include "js_runtime_internal.h"
 #include "engine_state.h"
-#include "../bindings/diag_bindings.h"
-#include "../bindings/draw_bindings.h"
-#include "../bindings/font_bindings.h"
-#include "../bindings/engine_bindings.h"
-#include "../bindings/graphics_bindings.h"
-#include "../bindings/input_bindings.h"
-#include "../bindings/loader_buffer.h"
-#include "../bindings/unified_mesh.h"
-#include "../bindings/imgui_bindings.h"
-#include "../bindings/batch.h"
 #include "../log.h"
 #include "jtask.h"
 #include "jtask_api.h"
@@ -288,14 +278,20 @@ static void do_inject_render_modules(void) {
   if (!task)
     return;
 
+  Engine_JS_Bindings_Registrar render_registrar =
+      arc_engine_state()->js_render_bindings_registrar;
+  if (!render_registrar) {
+    LOG_ERROR("[JSRuntime] render_bindings_registrar not set; "
+              "render_service context will have no engine bindings\n");
+    g_render_ctx_modules_initialized = 1;
+    return;
+  }
+
   if (g_render_service_id.id != 0) {
     JSContext *render_ctx =
         (JSContext *)service_get_context(task->services, g_render_service_id);
     if (render_ctx) {
-      js_init_draw_module(render_ctx);
-      js_init_graphics_module(render_ctx);
-      js_init_engine_module(render_ctx);
-      js_init_input_module(render_ctx);
+      render_registrar(render_ctx);
       g_render_ctx_modules_initialized = 1;
       LOG_VERBOSE(
           "[JSRuntime] render_service context modules injected (Sync)\n");
@@ -597,33 +593,6 @@ int js_init_message_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, global, "message", msg_obj);
   JS_FreeValue(ctx, global);
 
-  js_init_loader_module(ctx);
-  js_init_unified_mesh_module(ctx);
-  js_init_graphics_module(ctx);
-  js_init_input_module(ctx);
-  js_init_draw_module(ctx);
-  js_init_font_module(ctx);
-  js_init_diag_module(ctx);
-  js_init_imgui_module(ctx);
-  js_init_batch_module(ctx);
-
-  // Game-provided JS bindings must be registered here — before the JS
-  // global scope is observed by any jtask service worker. If this runs
-  // after scripts/main.js evaluation, worker services can see undefined
-  // globals and silently fail.
-  JS_Runtime_Game_Bindings_Fn game_bindings_fn =
-      arc_engine_state()->js_game_bindings_fn;
-  if (game_bindings_fn) {
-    game_bindings_fn(ctx);
-  }
-
-  {
-    JSValue g = JS_GetGlobalObject(ctx);
-    JS_SetPropertyStr(ctx, g, "__RUN_MODE__",
-                      JS_NewString(ctx, g_run_mode));
-    JS_FreeValue(ctx, g);
-  }
-
   return 0;
 }
 
@@ -677,13 +646,6 @@ int js_runtime_init(void) {
     return -1;
   }
 
-  if (js_init_draw_module(g_context) < 0) {
-    LOG_ERROR("Failed to initialize draw bindings\n");
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
-    return -1;
-  }
-
   if (js_init_message_module(g_context) < 0) {
     LOG_ERROR("Failed to initialize message bindings\n");
     JS_FreeContext(g_context);
@@ -691,11 +653,28 @@ int js_runtime_init(void) {
     return -1;
   }
 
-  if (js_init_engine_module(g_context) < 0) {
-    LOG_ERROR("Failed to initialize game bindings\n");
+  // Engine-provided JS bindings. The registrar is supplied by
+  // engine_main.c (ultimately from Engine_Config) so bedrock/ does not
+  // need to know which bindings/ modules exist — see
+  // arc-engine/CLAUDE.md §"引擎边界规则" and docs/s16_review.md S2 items.
+  Engine_JS_Bindings_Registrar main_registrar =
+      arc_engine_state()->js_main_bindings_registrar;
+  if (main_registrar) {
+    main_registrar(g_context);
+  } else {
+    LOG_ERROR("[JSRuntime] main_bindings_registrar not set\n");
     JS_FreeContext(g_context);
     JS_FreeRuntime(g_runtime);
     return -1;
+  }
+
+  // Game-provided JS bindings must be installed before scripts/main.js
+  // is evaluated — otherwise jtask service workers spun up by main.js
+  // can race with the registration and observe undefined globals.
+  JS_Runtime_Game_Bindings_Fn game_bindings_fn =
+      arc_engine_state()->js_game_bindings_fn;
+  if (game_bindings_fn) {
+    game_bindings_fn(g_context);
   }
 
   {
@@ -703,6 +682,8 @@ int js_runtime_init(void) {
     JS_SetPropertyStr(
         g_context, global, "loadModule",
         JS_NewCFunction(g_context, js_load_module, "loadModule", 2));
+    JS_SetPropertyStr(g_context, global, "__RUN_MODE__",
+                      JS_NewString(g_context, g_run_mode));
     JS_FreeValue(g_context, global);
   }
 

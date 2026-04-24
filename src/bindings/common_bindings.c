@@ -1,0 +1,32 @@
+
+#include "common_bindings.h"
+#include "batch.h"
+#include "diag_bindings.h"
+#include "draw_bindings.h"
+#include "engine_bindings.h"
+#include "font_bindings.h"
+#include "graphics_bindings.h"
+#include "imgui_bindings.h"
+#include "input_bindings.h"
+#include "loader_buffer.h"
+#include "unified_mesh.h"
+
+void arc_register_main_js_bindings(JSContext *ctx) {
+  js_init_loader_module(ctx);
+  js_init_unified_mesh_module(ctx);
+  js_init_graphics_module(ctx);
+  js_init_input_module(ctx);
+  js_init_draw_module(ctx);
+  js_init_font_module(ctx);
+  js_init_diag_module(ctx);
+  js_init_imgui_module(ctx);
+  js_init_batch_module(ctx);
+  js_init_engine_module(ctx);
+}
+
+void arc_register_render_js_bindings(JSContext *ctx) {
+  js_init_draw_module(ctx);
+  js_init_graphics_module(ctx);
+  js_init_engine_module(ctx);
+  js_init_input_module(ctx);
+}
