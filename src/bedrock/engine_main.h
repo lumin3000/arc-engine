@@ -18,7 +18,7 @@ typedef struct {
     int window_h;                    // defaults to 720  if 0
 
     // Startup
-    const char *default_run_mode;    // default value for --mode; e.g. "gunslinger"
+    const char *default_run_mode;    // default value for --mode
     float master_volume;             // 0..1; 0.25 if 0 and sound is used
     float zoom_level;                // initial zoom; 2.0 if 0
     Vec3 camera_initial_pos;
@@ -59,9 +59,9 @@ typedef struct {
     // Invoked INSIDE js_runtime_init() — after all engine JS bindings
     // are registered, before scripts/main.js is evaluated (and before
     // any jtask service worker sees the global scope). This is the
-    // correct place to register game-specific JS bindings like
-    // blood_bindings; registering later causes service workers to race
-    // with the registration and see undefined globals.
+    // correct place to register game-specific JS bindings; registering
+    // later causes service workers to race with the registration and
+    // see undefined globals.
     void (*on_register_js_bindings)(JSContext *js_ctx);
 
     // Invoked every frame before the engine renders. Game-side update.

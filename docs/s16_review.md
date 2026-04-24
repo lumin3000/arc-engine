@@ -187,4 +187,87 @@ warning。
 - 删 `types.h` 里的 5 个 `#define VIEW_*`，让 `generated_shader.h` 成唯一定义点；
 - 或反过来删生成器的 `#define` 段（需改 sokol-shdc 模板），保留 types.h —— 更不推荐因为对抗生成器。
 
-走第一条。留待 S2 启动后做一个独立小 commit，非 s16_review 13 step 范围。
+走第一条，2061cd9 落地。
+
+### D4.1 (D4 回归修复) — `batch.c` 清理后找不到 `VIEW_tex0`
+
+2061cd9 假设所有 VIEW_* 消费者都直接 include generated_shader.h，未核查
+transitive include 链。`src/bindings/batch.c` 原本没 include 这个头
+文件，靠 types.h → 某条间接链拿到 VIEW_tex0。D4 fix 后，增量 make 因
+`batch.o` 已缓存没察觉，`make clean && make` 报：
+
+```
+batch.c:329: error: use of undeclared identifier 'VIEW_tex0'
+batch.c:342: error: use of undeclared identifier 'VIEW_tex0'
+```
+
+**修复**：2c8ca7c — batch.c 加 `#include "bedrock/gfx/generated_shader.h"`。
+审计其余两个 VIEW_* 消费者（render.c / graphics.c）都已直接 include，
+无其他遗漏。
+
+**教训**：删 header 内容前必须 `make clean && make`，不能只信增量 make。
+
+---
+
+## S1.6 接受的设计折衷
+
+下列选择不是"遗漏"，是 s1.6 阶段刻意的折衷；记录下来避免未来 reviewer
+当成 bug 再提一次。
+
+### A3 折衷 — `Arc_Engine_State` 仅收新增状态，老全局变量保留 `extern`
+
+Step 4 (6cf8dc2) 建的 `Arc_Engine_State` 结构体**只包含 s1.6 新加或原本
+分散在 `js_runtime.c` 里的 7 个 static 中的 3 个**：
+
+收进单例：
+- `saved_argv / saved_argc` (原 engine_main.c static)
+- `last_frame_time` (原 engine_main.c static)
+- `js_bootstrap_path / js_main_script_path / js_game_bindings_fn`
+  (原 js_runtime.c 的 3 个 static)
+
+**没收进单例，保留原 `extern`**：
+- `ctx` (Core_Context) — engine_state.h 统一声明，但存储还在 engine_main.c 文件作用域
+- `window_w` / `window_h` — 同上
+- `g_master_volume` — 同上
+- `g_log_level` / `g_run_mode` — 引擎级简单全局
+- `g_runtime` / `g_context` / `g_coroutine_mgr` / `g_initialized` — js_runtime.c 内部 QJS 运行时对象
+- 一堆 `service_id` / atomic ready flag — jtask wrapping 细节
+
+**折衷理由**：
+1. `ctx / window_w / window_h` 被 `engine_bindings.c` 和 `helpers.c` 热
+   路径直接读，搬进 `arc_engine_state()->xxx` 要改 30+ 处调用点，改动
+   大于收益（已经通过 step 3 统一到 `engine_state.h` 的声明，UB 风险
+   消除了）。
+2. `g_runtime / g_context / service_ids` 是 QJS + jtask 的运行时对象，
+   属于 "js_runtime 模块私有状态"而不是"引擎配置状态"。把它们塞进
+   `Arc_Engine_State` 会把单例变成一个大杂烩。
+3. `g_log_level / g_run_mode` 是 parse_args 写一次、全程只读的平坦配置
+   值，收进结构体没换来生命周期管理收益。
+
+换言之 `Arc_Engine_State` 的当前边界是 **"跨 TU 共享的引擎配置状态 +
+需要 strdup/free 生命周期管理的字段"**，不是"所有引擎全局"。这条边界
+是 s1.6 的终点，不是 s2+ 不能再动 —— 如果将来 "引擎内部状态搬家成本"
+下降了（例如 ctx 访问已经 wrap 进 accessor），可以再挪。
+
+### A6 折衷 — `js_runtime_get_context()` 保留（即使 `arc_engine_js_context` 是公共入口）
+
+Step 6 (b451810) 新加了对象化 `arc_engine_js_context(eng)` 作为公共面
+API。但底层 `js_runtime_get_context()` 没删 —— `arc_engine_js_context`
+就是 wrap 它的一行。
+
+**折衷理由**：
+- `js_runtime.h` 其余函数（init / shutdown / render / handle_external_command）
+  都是 engine_main.c 内部消费，`get_context` 放在同一个 header 里并无
+  污染；
+- 删它需要把 `arc_engine_js_context` 的实现挪到 js_runtime.c 内部或
+  把 g_context 改成 extern，前者破坏分层（engine_main.c 的公共 API 实
+  现应该在 engine_main.c），后者又回到裸 extern 蛛网。
+- 结论：`js_runtime_get_context` 是 "engine-internal accessor"，`arc_engine_js_context`
+  是 "game-facing wrapper"，两个各司其职，不重复。
+
+### S2 开放的议题（不是折衷，是已知待办）
+
+- `js_runtime.c` 现在还 include 了 11 个 bindings/ 头文件直接注册，
+  根据 `arc-engine/CLAUDE.md` §"引擎边界规则"，S1.5 规划过用回调注入
+  机制改造，本次 s1.6 范围未包含。S2 处理。
+- shader 业务分支的硬编码（CLAUDE.md §3）同上，S2 处理。
