@@ -1,6 +1,31 @@
 
 const jtask = globalThis.jtask;
 
+// Engine startup flow. Games may plug in a TitleScreen via
+// StartupFlow.registerTitleScreen(obj). Without a TitleScreen the
+// engine begins the startup sequence immediately; with one, the engine
+// draws the title screen each frame and enters startup once the title
+// marks itself inactive (e.g. after the user presses Start).
+//
+// The TitleScreen object contract:
+//   active   : boolean — true while the title is visible
+//   draw()   : called every frame as long as it exists
+//
+// Games register the TitleScreen from their own script during bundle
+// evaluation (e.g. 98_title_screen.js), which runs before the first
+// scaffold tick.
+
+globalThis.StartupFlow = {
+  _titleScreen: null,
+
+  registerTitleScreen: function(ts) {
+    if (ts && typeof ts.draw !== 'function') {
+      throw new Error("[StartupFlow] TitleScreen must expose draw()");
+    }
+    this._titleScreen = ts;
+  },
+};
+
 function* StartupRoutine() {
 
   if (typeof Root !== 'undefined' && typeof Current !== 'undefined') {
@@ -44,28 +69,22 @@ function beginStartup() {
   }
 }
 
-// TitleScreen is optional and defined by the game layer (if at all). At
-// this point, game scripts haven't been bundled in yet (engine scripts
-// load first). Defer the decision to the first scaffold tick — by then
-// all game scripts have executed.
-(function registerStartupHook() {
-  var _decided = false;
-  var _systemReady = false;
-  ScaffoldCallbacks.register(function() {
-    if (!_decided) {
-      _decided = true;
-      if (typeof globalThis.TitleScreen === 'undefined' || !globalThis.TitleScreen.active) {
-        beginStartup();
-        return;
-      }
+var _started = false;
+ScaffoldCallbacks.register(function() {
+  var ts = globalThis.StartupFlow._titleScreen;
+  if (!ts) {
+    if (!_started) {
+      _started = true;
+      beginStartup();
     }
-    if (typeof globalThis.TitleScreen === 'undefined') return;
-    if (globalThis.TitleScreen.active) {
-      globalThis.TitleScreen.draw();
-      if (globalThis.TitleScreen._startRequested && !_systemReady) {
-        _systemReady = true;
-        beginStartup();
-      }
-    }
-  }, ScaffoldPriority.LONG_EVENT_CHECK - 1, "TitleScreen.Wait");
-})();
+    return;
+  }
+  if (ts.active) {
+    ts.draw();
+    return;
+  }
+  if (!_started) {
+    _started = true;
+    beginStartup();
+  }
+}, ScaffoldPriority.LONG_EVENT_CHECK - 1, "TitleScreen.Wait");
