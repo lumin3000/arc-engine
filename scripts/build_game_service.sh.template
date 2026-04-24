@@ -37,7 +37,7 @@ count=0
 
 bundle_dir() {
     local label="$1"
-    local dir="$2"
+    local dir="${2%/}"  # strip trailing slash if present
     [ ! -d "$dir" ] && return 0
     local files=$(find "$dir" -name "*.js" 2>/dev/null | sort)
     for f in $files; do
