@@ -3,6 +3,7 @@
 
 #include "../types.h"
 #include "../../external/sokol/c/sokol_app.h"
+#include "quickjs.h"
 
 // Engine entry point. Called by the game's main(). The engine owns the
 // sapp_run loop, init/frame/cleanup/event callbacks, argument parsing,
@@ -51,8 +52,7 @@ typedef struct {
     // correct place to register game-specific JS bindings like
     // blood_bindings; registering later causes service workers to race
     // with the registration and see undefined globals.
-    // Receives JSContext* (typed as void* to avoid QJS include here).
-    void (*on_register_js_bindings)(void *js_ctx);
+    void (*on_register_js_bindings)(JSContext *js_ctx);
 
     // Invoked every frame before the engine renders. Game-side update.
     void (*on_frame)(float delta_t);

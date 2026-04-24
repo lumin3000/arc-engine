@@ -2,6 +2,7 @@
 #define ARC_ENGINE_STATE_H
 
 #include "../types.h"
+#include "quickjs.h"
 #include <stdint.h>
 
 // Engine-internal state shared between engine_main.c (owner) and the
@@ -25,10 +26,7 @@ typedef struct {
     float       delta_t;
 } Core_Context;
 
-// Forward declaration to keep this header free of engine_main.h / QJS
-// includes. engine_main.c defines the layout.
-struct Engine_Config;
-typedef void (*JS_Runtime_Game_Bindings_Fn)(void *js_ctx);
+typedef void (*JS_Runtime_Game_Bindings_Fn)(JSContext *js_ctx);
 
 // Arc_Engine_State collects the scattered engine-lifetime globals into a
 // single singleton so their lifecycle and ownership is no longer spread

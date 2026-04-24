@@ -614,7 +614,7 @@ int js_init_message_module(JSContext *ctx) {
   JS_Runtime_Game_Bindings_Fn game_bindings_fn =
       arc_engine_state()->js_game_bindings_fn;
   if (game_bindings_fn) {
-    game_bindings_fn((void *)ctx);
+    game_bindings_fn(ctx);
   }
 
   {

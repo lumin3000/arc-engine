@@ -7,7 +7,7 @@
 // here. Exposing these in js_runtime.h led to two parallel APIs doing the
 // same job (see docs/s16_review.md §A1).
 
-typedef void (*JS_Runtime_Game_Bindings_Fn)(void *js_ctx);
+#include "engine_state.h"   // JS_Runtime_Game_Bindings_Fn
 
 void js_runtime_set_bootstrap_path(const char *path);
 void js_runtime_set_main_script_path(const char *path);
