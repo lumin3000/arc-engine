@@ -160,3 +160,31 @@ S1.7 做 C1+C2 最小清理（至少让 99_startup.js 回到可读状态）。C3
 - 禁止破坏性 git 操作
 - 引擎侧改动 push arc-engine；gunslinger 侧 submodule pointer 跟随 bump
 - 每 step 完成后更新 MEMORY.md 当前任务块
+
+---
+
+## 发现的预存问题（本次重构范围外）
+
+### D4 (preexisting) — `VIEW_*` 宏双重定义
+
+**证据**：step 9 全量重编 unified_mesh.c 时报 5 条
+`'VIEW_tex0'/'VIEW_flow_map'/'VIEW_ripple_tex'/'VIEW_noise_tex'/'VIEW_font_tex' macro redefined`
+warning。
+
+两处定义点：
+- `src/types.h:97-101` — 明文整数（`#define VIEW_tex0 0`）
+- `src/bedrock/gfx/generated_shader.h:108-112` — 括号整数（`#define VIEW_tex0 (0)`）
+
+`generated_shader.h` 是 sokol-shdc 自动生成的产物；`types.h` 的手写定义与生成器输出重复。
+
+**后果**：
+- warning 噪音；
+- 真实 bug 风险低（两边值一致），但若 sokol-shdc 输出改变（例如 slot 重排），两份定义就会悄悄错位。
+
+**根因**：S1.4 移植时，types.h 把 VIEW 宏作为"引擎共享常量"复制过来，未察觉 generated_shader.h 已是权威来源。
+
+**修复方向（不在 13 step 内做）**：
+- 删 `types.h` 里的 5 个 `#define VIEW_*`，让 `generated_shader.h` 成唯一定义点；
+- 或反过来删生成器的 `#define` 段（需改 sokol-shdc 模板），保留 types.h —— 更不推荐因为对抗生成器。
+
+走第一条。留待 S2 启动后做一个独立小 commit，非 s16_review 13 step 范围。
