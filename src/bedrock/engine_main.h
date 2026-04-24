@@ -64,9 +64,7 @@ typedef struct {
 // Runs the engine. Never returns (calls exit() internally).
 int engine_run(const Engine_Config *cfg, int argc, char **argv);
 
-// Accessors for engine state (used by engine_bindings.c's coord/game APIs).
-// Not intended as game-facing API.
-extern int window_w;
-extern int window_h;
+// Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
+// lives in engine_state.h. Not intended as game-facing API.
 
 #endif

@@ -4,6 +4,7 @@
 #endif
 
 #include "engine_main.h"
+#include "engine_state.h"
 #include "gfx/camera.h"
 #include "gfx/render.h"
 #include "helpers.h"
@@ -26,28 +27,15 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// Globals exposed to engine bindings (engine_bindings.c reads these via extern).
+// Globals exposed to engine bindings via engine_state.h. engine_main.c is
+// the sole owner; bindings and other TUs read through the accessors
+// declared there.
 
 int window_w = DEFAULT_WINDOW_WIDTH;
 int window_h = DEFAULT_WINDOW_HEIGHT;
 int g_log_level = LOG_LEVEL_NORMAL;
 const char *g_run_mode = "default";
 float g_master_volume = 0.25f;
-
-typedef struct {
-  uint64_t ticks;
-  double game_time_elapsed;
-  Vec3 cam_pos;
-  Vec3 cam_rot;
-  Vec3 cam_vel;
-  float zoom_level;
-  float desired_zoom_level;
-} Game_State;
-
-typedef struct {
-  Game_State *gs;
-  float delta_t;
-} Core_Context;
 
 Core_Context ctx = {0};
 static Game_State _game_state = {0};
