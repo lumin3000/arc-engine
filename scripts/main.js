@@ -1,4 +1,13 @@
 
+// REFERENCE IMPLEMENTATION — consumers should copy this file to their
+// own scripts/main.js and adjust the relative paths. arc-engine itself
+// does not build an executable, so this file is never actually loaded
+// from here at runtime.
+//
+// Paths below assume arc-engine lives directly at ./external/jtask/ —
+// when used from a consumer project where arc-engine is a submodule
+// under external/arc-engine/, prefix all paths with "external/arc-engine/".
+
 let start;
 try {
   start = loadModule(

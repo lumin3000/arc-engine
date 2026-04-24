@@ -119,6 +119,19 @@ void *js_runtime_get_context(void) {
   return (void *)g_context;
 }
 
+static char *g_bootstrap_path_override = NULL;
+static char *g_main_script_path_override = NULL;
+
+void js_runtime_set_bootstrap_path(const char *path) {
+  if (g_bootstrap_path_override) free(g_bootstrap_path_override);
+  g_bootstrap_path_override = path ? strdup(path) : NULL;
+}
+
+void js_runtime_set_main_script_path(const char *path) {
+  if (g_main_script_path_override) free(g_main_script_path_override);
+  g_main_script_path_override = path ? strdup(path) : NULL;
+}
+
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
                     const char *filename, int eval_flags) {
   JSValue val = JS_Eval(ctx, buf, buf_len, filename, eval_flags);
@@ -637,7 +650,9 @@ int js_runtime_init(void) {
     JS_FreeValue(g_context, global);
   }
 
-  jtask_set_bootstrap_path("external/jtask/jslib/bootstrap.js");
+  jtask_set_bootstrap_path(
+      g_bootstrap_path_override ? g_bootstrap_path_override
+                                : "external/jtask/jslib/bootstrap.js");
 
   if (jtask_init_bindings(g_context) < 0) {
     LOG_ERROR("Failed to initialize jtask bindings\n");
@@ -677,7 +692,9 @@ int js_runtime_init(void) {
 
   JS_SetModuleLoaderFunc(g_runtime, NULL, js_module_loader, NULL);
 
-  const char *script_path = "scripts/main.js";
+  const char *script_path = g_main_script_path_override
+                                ? g_main_script_path_override
+                                : "scripts/main.js";
   if (eval_file(g_context, script_path) < 0) {
     LOG_ERROR("Failed to execute %s\n", script_path);
     JS_FreeContext(g_context);

@@ -24,4 +24,17 @@ void js_runtime_reset_error_count(void);
 // Returns a JSContext* (void* to avoid QJS include in engine-facing header).
 void *js_runtime_get_context(void);
 
+// Override the bootstrap.js path (the JS file that jtask loads to
+// initialize its core). Must be called before js_runtime_init(). If not
+// called, the default "external/jtask/jslib/bootstrap.js" is used (which
+// assumes the consumer project has jtask directly under ./external/).
+//
+// For arc-engine submodule consumers, set this to
+// "external/arc-engine/external/jtask/jslib/bootstrap.js".
+void js_runtime_set_bootstrap_path(const char *path);
+
+// Override the scripts/main.js path loaded at the end of js_runtime_init().
+// Must be called before js_runtime_init(). Default is "scripts/main.js".
+void js_runtime_set_main_script_path(const char *path);
+
 #endif

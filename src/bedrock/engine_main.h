@@ -26,6 +26,16 @@ typedef struct {
     // NULL to skip.
     const char *startup_ambiance_event;
 
+    // Optional: override paths for jtask bootstrap and the main JS entry.
+    // Useful for consumers that bundle arc-engine as a submodule, where
+    // the default "external/jtask/..." is not where jtask actually lives.
+    // Typical values for a consumer using arc-engine as submodule at
+    // ./external/arc-engine/ :
+    //   .jtask_bootstrap_path  = "external/arc-engine/external/jtask/jslib/bootstrap.js"
+    //   .js_main_script_path   = "scripts/main.js"  // or leave NULL; game keeps its own
+    const char *jtask_bootstrap_path;
+    const char *js_main_script_path;
+
     // Game callbacks ------------------------------------------------------
     // All optional. Called by the engine at the right points in the frame
     // lifecycle. The game uses these to register its own sprites, JS

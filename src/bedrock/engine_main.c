@@ -98,6 +98,13 @@ static void engine_on_init(void) {
   float initial_aspect = (float)window_w / (float)window_h;
   camera_set_aspect(camera_get_main(), initial_aspect);
 
+  if (g_cfg.jtask_bootstrap_path) {
+    js_runtime_set_bootstrap_path(g_cfg.jtask_bootstrap_path);
+  }
+  if (g_cfg.js_main_script_path) {
+    js_runtime_set_main_script_path(g_cfg.js_main_script_path);
+  }
+
   LOG_INFO("[engine] init js_runtime\n");
   if (js_runtime_init() < 0) {
     LOG_ERROR("[engine] js_runtime_init failed\n");
