@@ -24,6 +24,7 @@
 #include <string.h>
 #include "quickjs.h"
 #include "bedrock/gfx/draw.h"
+#include "bedrock/gfx/generated_shader.h"
 #include "bedrock/gfx/render.h"
 #include "bedrock/utils/utils.h"
 #include "bedrock/helpers.h"
