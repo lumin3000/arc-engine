@@ -94,11 +94,9 @@ void get_sprite_offset(Sprite_Name sprite, Vec2 out_offset, Pivot *out_pivot);
 int  get_frame_count(Sprite_Name sprite);
 const char *sprite_name_to_string(Sprite_Name sprite);
 
-#define VIEW_tex0 0
-#define VIEW_font_tex 1
-#define VIEW_flow_map 2
-#define VIEW_ripple_tex 3
-#define VIEW_noise_tex 4
+// VIEW_* slot indices are defined in bedrock/gfx/generated_shader.h
+// (produced by sokol-shdc). types.h used to carry a hand-maintained
+// duplicate set; removed so there is a single source of truth.
 
 typedef struct sg_shader_desc sg_shader_desc;
 typedef enum sg_backend sg_backend;
