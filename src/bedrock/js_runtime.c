@@ -132,6 +132,12 @@ void js_runtime_set_main_script_path(const char *path) {
   g_main_script_path_override = path ? strdup(path) : NULL;
 }
 
+static JS_Runtime_Game_Bindings_Fn g_game_bindings_fn = NULL;
+
+void js_runtime_set_game_bindings_registrar(JS_Runtime_Game_Bindings_Fn fn) {
+  g_game_bindings_fn = fn;
+}
+
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
                     const char *filename, int eval_flags) {
   JSValue val = JS_Eval(ctx, buf, buf_len, filename, eval_flags);
@@ -600,6 +606,14 @@ int js_init_message_module(JSContext *ctx) {
   js_init_diag_module(ctx);
   js_init_imgui_module(ctx);
   js_init_batch_module(ctx);
+
+  // Game-provided JS bindings must be registered here — before the JS
+  // global scope is observed by any jtask service worker. If this runs
+  // after scripts/main.js evaluation, worker services can see undefined
+  // globals and silently fail.
+  if (g_game_bindings_fn) {
+    g_game_bindings_fn((void *)ctx);
+  }
 
   {
     JSValue g = JS_GetGlobalObject(ctx);

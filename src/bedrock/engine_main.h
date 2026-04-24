@@ -45,9 +45,14 @@ typedef struct {
     // js_runtime_init(). Game should call engine_register_sprites() here.
     void (*on_init)(void);
 
-    // Invoked once the JS context exists but before JS user code loads.
-    // Game registers its own JS bindings here (e.g. blood_bindings).
-    void (*on_register_js_bindings)(void *js_ctx);  // JSContext* (avoid QJS include here)
+    // Invoked INSIDE js_runtime_init() — after all engine JS bindings
+    // are registered, before scripts/main.js is evaluated (and before
+    // any jtask service worker sees the global scope). This is the
+    // correct place to register game-specific JS bindings like
+    // blood_bindings; registering later causes service workers to race
+    // with the registration and see undefined globals.
+    // Receives JSContext* (typed as void* to avoid QJS include here).
+    void (*on_register_js_bindings)(void *js_ctx);
 
     // Invoked every frame before the engine renders. Game-side update.
     void (*on_frame)(float delta_t);

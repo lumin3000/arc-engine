@@ -104,16 +104,15 @@ static void engine_on_init(void) {
   if (g_cfg.js_main_script_path) {
     js_runtime_set_main_script_path(g_cfg.js_main_script_path);
   }
+  if (g_cfg.on_register_js_bindings) {
+    // register BEFORE js_runtime_init so the callback fires at the right
+    // spot inside it (after engine bindings, before scripts/main.js).
+    js_runtime_set_game_bindings_registrar(g_cfg.on_register_js_bindings);
+  }
 
   LOG_INFO("[engine] init js_runtime\n");
   if (js_runtime_init() < 0) {
     LOG_ERROR("[engine] js_runtime_init failed\n");
-  }
-
-  // Game registers its own JS bindings now (engine bindings already
-  // registered by js_runtime_init).
-  if (g_cfg.on_register_js_bindings) {
-    g_cfg.on_register_js_bindings(js_runtime_get_context());
   }
 
   if (g_cfg.startup_ambiance_event) {
