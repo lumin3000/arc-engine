@@ -41,16 +41,18 @@ Core_Context ctx = {0};
 static Game_State _game_state = {0};
 
 // ---------------------------------------------------------------------------
-// Engine configuration and saved argv.
+// Arc_Engine_State singleton — see engine_state.h. Collects what were
+// previously scattered file-scope statics (Engine_Config copy, saved
+// argv, last_frame_time, JS runtime overrides) so their lifecycle is
+// managed in one place.
 
-static Engine_Config g_cfg = {0};
-static char **g_saved_argv = NULL;
-static int g_saved_argc = 0;
+static Arc_Engine_State g_engine_state = {0};
+static Engine_Config    g_cfg = {0};
 
-char **app_get_argv(void) { return g_saved_argv; }
-int app_get_argc(void) { return g_saved_argc; }
+Arc_Engine_State *arc_engine_state(void) { return &g_engine_state; }
 
-static double last_frame_time = 0.0;
+char **app_get_argv(void) { return g_engine_state.saved_argv; }
+int    app_get_argc(void) { return g_engine_state.saved_argc; }
 
 // ---------------------------------------------------------------------------
 // sapp lifecycle.
@@ -124,8 +126,8 @@ static void engine_on_frame(void) {
   camera_set_aspect(camera_get_main(), aspect);
 
   double now = seconds_since_init();
-  double dt = now - last_frame_time;
-  last_frame_time = now;
+  double dt = now - g_engine_state.last_frame_time;
+  g_engine_state.last_frame_time = now;
   if (dt > MIN_FRAME_TIME) dt = MIN_FRAME_TIME;
 
   ctx.delta_t = (float)dt;
@@ -245,8 +247,8 @@ int engine_run(const Engine_Config *cfg, int argc, char **argv) {
   }
 
   g_cfg = *cfg;
-  g_saved_argc = argc;
-  g_saved_argv = argv;
+  g_engine_state.saved_argc = argc;
+  g_engine_state.saved_argv = argv;
 
   if (g_cfg.window_w > 0) window_w = g_cfg.window_w;
   if (g_cfg.window_h > 0) window_h = g_cfg.window_h;

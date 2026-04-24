@@ -1,6 +1,7 @@
 
 #include "js_runtime.h"
 #include "js_runtime_internal.h"
+#include "engine_state.h"
 #include "../bindings/diag_bindings.h"
 #include "../bindings/draw_bindings.h"
 #include "../bindings/font_bindings.h"
@@ -120,23 +121,21 @@ void *js_runtime_get_context(void) {
   return (void *)g_context;
 }
 
-static char *g_bootstrap_path_override = NULL;
-static char *g_main_script_path_override = NULL;
+static void dup_str(char **dst, const char *src) {
+  if (*dst) free(*dst);
+  *dst = src ? strdup(src) : NULL;
+}
 
 void js_runtime_set_bootstrap_path(const char *path) {
-  if (g_bootstrap_path_override) free(g_bootstrap_path_override);
-  g_bootstrap_path_override = path ? strdup(path) : NULL;
+  dup_str(&arc_engine_state()->js_bootstrap_path, path);
 }
 
 void js_runtime_set_main_script_path(const char *path) {
-  if (g_main_script_path_override) free(g_main_script_path_override);
-  g_main_script_path_override = path ? strdup(path) : NULL;
+  dup_str(&arc_engine_state()->js_main_script_path, path);
 }
 
-static JS_Runtime_Game_Bindings_Fn g_game_bindings_fn = NULL;
-
 void js_runtime_set_game_bindings_registrar(JS_Runtime_Game_Bindings_Fn fn) {
-  g_game_bindings_fn = fn;
+  arc_engine_state()->js_game_bindings_fn = fn;
 }
 
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
@@ -612,8 +611,10 @@ int js_init_message_module(JSContext *ctx) {
   // global scope is observed by any jtask service worker. If this runs
   // after scripts/main.js evaluation, worker services can see undefined
   // globals and silently fail.
-  if (g_game_bindings_fn) {
-    g_game_bindings_fn((void *)ctx);
+  JS_Runtime_Game_Bindings_Fn game_bindings_fn =
+      arc_engine_state()->js_game_bindings_fn;
+  if (game_bindings_fn) {
+    game_bindings_fn((void *)ctx);
   }
 
   {
@@ -665,9 +666,9 @@ int js_runtime_init(void) {
     JS_FreeValue(g_context, global);
   }
 
-  jtask_set_bootstrap_path(
-      g_bootstrap_path_override ? g_bootstrap_path_override
-                                : "external/jtask/jslib/bootstrap.js");
+  const char *bootstrap_path = arc_engine_state()->js_bootstrap_path;
+  jtask_set_bootstrap_path(bootstrap_path ? bootstrap_path
+                                          : "external/jtask/jslib/bootstrap.js");
 
   if (jtask_init_bindings(g_context) < 0) {
     LOG_ERROR("Failed to initialize jtask bindings\n");
@@ -707,9 +708,9 @@ int js_runtime_init(void) {
 
   JS_SetModuleLoaderFunc(g_runtime, NULL, js_module_loader, NULL);
 
-  const char *script_path = g_main_script_path_override
-                                ? g_main_script_path_override
-                                : "scripts/main.js";
+  const char *main_script_override = arc_engine_state()->js_main_script_path;
+  const char *script_path = main_script_override ? main_script_override
+                                                 : "scripts/main.js";
   if (eval_file(g_context, script_path) < 0) {
     LOG_ERROR("Failed to execute %s\n", script_path);
     JS_FreeContext(g_context);

@@ -25,6 +25,34 @@ typedef struct {
     float       delta_t;
 } Core_Context;
 
+// Forward declaration to keep this header free of engine_main.h / QJS
+// includes. engine_main.c defines the layout.
+struct Engine_Config;
+typedef void (*JS_Runtime_Game_Bindings_Fn)(void *js_ctx);
+
+// Arc_Engine_State collects the scattered engine-lifetime globals into a
+// single singleton so their lifecycle and ownership is no longer spread
+// across file-scope statics in engine_main.c / js_runtime.c. See
+// docs/s16_review.md §A2, §A3.
+typedef struct {
+    // Saved process-level argv (for app_restart etc.)
+    char **saved_argv;
+    int    saved_argc;
+
+    // Last-frame timestamp used by engine_on_frame to compute delta_t.
+    double last_frame_time;
+
+    // JS runtime configuration overrides. Owned strings — freed when
+    // replaced by js_runtime_set_* functions. engine_main.c forwards
+    // Engine_Config fields into these slots before js_runtime_init().
+    char *js_bootstrap_path;        // NULL => default
+    char *js_main_script_path;      // NULL => default
+    JS_Runtime_Game_Bindings_Fn js_game_bindings_fn;
+} Arc_Engine_State;
+
+// Returns the singleton. Never NULL. Storage is in engine_main.c.
+Arc_Engine_State *arc_engine_state(void);
+
 // Owned by engine_main.c. Do not mutate from bindings except through the
 // established setter paths (camera_set_position etc.).
 extern Core_Context ctx;
