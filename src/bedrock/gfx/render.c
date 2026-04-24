@@ -56,7 +56,7 @@
 
 Render_State render_state = {0};
 Draw_Frame draw_frame = {0};
-Sprite sprites[SPRITE_NAME_COUNT] = {0};
+Sprite *sprites = NULL;  // allocated in render_init()
 Atlas atlas = {0};
 Font font = {0};
 Vec4 clear_col = {0};
@@ -286,10 +286,11 @@ void load_sprites_into_atlas(void) {
     stbrp_node nodes[ATLAS_SIZE];
     stbrp_init_target(&cont, atlas.w, atlas.h, nodes, ATLAS_SIZE);
 
-    stbrp_rect rects[SPRITE_NAME_COUNT];
+    int sprite_total = SPRITE_NAME_COUNT;
+    stbrp_rect *rects = (stbrp_rect *)calloc(sprite_total > 0 ? sprite_total : 1, sizeof(stbrp_rect));
     int rect_count = 0;
 
-    for (int id = 0; id < SPRITE_NAME_COUNT; id++) {
+    for (int id = 0; id < sprite_total; id++) {
       if (sprites[id].width == 0)
         continue;
 
@@ -350,6 +351,7 @@ void load_sprites_into_atlas(void) {
     }
 
     free(raw_data);
+    free(rects);
   }
 }
 
@@ -409,6 +411,10 @@ void load_font(void) {
 }
 
 void render_init(void) {
+
+  // Allocate sprite storage sized to the game-registered set (including nil).
+  int sprite_count = engine_sprite_count();
+  sprites = (Sprite *)calloc(sprite_count > 0 ? sprite_count : 1, sizeof(Sprite));
 
   reset_draw_frame();
 

@@ -145,7 +145,7 @@ void index_array_add_tri(Index_Array *arr, uint32_t i0, uint32_t i1,
 
 extern Render_State render_state;
 extern Draw_Frame draw_frame;
-extern Sprite sprites[SPRITE_NAME_COUNT];
+extern Sprite *sprites;  // heap-allocated, sized to engine_sprite_count() at render_init()
 extern Atlas atlas;
 extern Font font;
 extern Vec4 clear_col;
