@@ -1,0 +1,12 @@
+[submodule "external/jtask"]
+	path = external/jtask
+	url = git@github.com:lumin3000/jtask.git
+[submodule "external/ltask"]
+	path = external/ltask
+	url = git@github.com:cloudwu/ltask.git
+[submodule "external/quickjs"]
+	path = external/quickjs
+	url = git@github.com:lumin3000/quickjs.git
+[submodule "external/Tina"]
+	path = external/Tina
+	url = https://github.com/slembcke/Tina.git
