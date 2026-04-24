@@ -44,16 +44,28 @@ function beginStartup() {
   }
 }
 
-if (typeof TitleScreen !== 'undefined' && TitleScreen.active) {
+// TitleScreen is optional and defined by the game layer (if at all). At
+// this point, game scripts haven't been bundled in yet (engine scripts
+// load first). Defer the decision to the first scaffold tick — by then
+// all game scripts have executed.
+(function registerStartupHook() {
+  var _decided = false;
   var _systemReady = false;
   ScaffoldCallbacks.register(function() {
-    if (!TitleScreen.active) return;
-    TitleScreen.draw();
-    if (TitleScreen._startRequested && !_systemReady) {
-      _systemReady = true;
-      beginStartup();
+    if (!_decided) {
+      _decided = true;
+      if (typeof globalThis.TitleScreen === 'undefined' || !globalThis.TitleScreen.active) {
+        beginStartup();
+        return;
+      }
+    }
+    if (typeof globalThis.TitleScreen === 'undefined') return;
+    if (globalThis.TitleScreen.active) {
+      globalThis.TitleScreen.draw();
+      if (globalThis.TitleScreen._startRequested && !_systemReady) {
+        _systemReady = true;
+        beginStartup();
+      }
     }
   }, ScaffoldPriority.LONG_EVENT_CHECK - 1, "TitleScreen.Wait");
-} else {
-  beginStartup();
-}
+})();
