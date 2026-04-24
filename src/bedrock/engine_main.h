@@ -4,6 +4,7 @@
 #include "../types.h"
 #include "../../external/sokol/c/sokol_app.h"
 #include "quickjs.h"
+#include <stdbool.h>
 
 // Engine entry point. Called by the game's main(). The engine owns the
 // sapp_run loop, init/frame/cleanup/event callbacks, argument parsing,
@@ -22,6 +23,15 @@ typedef struct {
     float zoom_level;                // initial zoom; 2.0 if 0
     Vec3 camera_initial_pos;
     Vec3 camera_initial_rot;
+
+    // Base orthographic half-height at zoom_level=1.0. 0 falls back to
+    // the engine default of 10.0f — matching previous hardcoded behaviour.
+    float base_ortho_size;
+
+    // If true, the engine does NOT apply the built-in WASD pan, Q/E zoom,
+    // and mouse-scroll zoom each frame. Default (false) keeps legacy
+    // behaviour; UI-only or JS-driven games set this to true.
+    bool disable_default_camera_controls;
 
     // Optional: play this FMOD event at startup (e.g. "event:/ambiance").
     // NULL to skip.

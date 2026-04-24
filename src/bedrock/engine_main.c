@@ -83,8 +83,9 @@ static void engine_on_init(void) {
 
   render_init();
 
-  const float BASE_ORTHO_SIZE = 10.0f;
-  camera_set_ortho_size(camera_get_main(), BASE_ORTHO_SIZE);
+  camera_set_ortho_size(camera_get_main(),
+                        g_cfg.base_ortho_size > 0.0f ? g_cfg.base_ortho_size
+                                                     : 10.0f);
 
   float initial_aspect = (float)window_w / (float)window_h;
   camera_set_aspect(camera_get_main(), initial_aspect);
@@ -118,9 +119,9 @@ static void engine_on_frame(void) {
   window_w = sapp_width();
   window_h = sapp_height();
 
-  const float BASE_ORTHO_SIZE = 10.0f;
-  float final_ortho_size = BASE_ORTHO_SIZE / ctx.gs->zoom_level;
-  camera_set_ortho_size(camera_get_main(), final_ortho_size);
+  float base_ortho = g_cfg.base_ortho_size > 0.0f ? g_cfg.base_ortho_size
+                                                  : 10.0f;
+  camera_set_ortho_size(camera_get_main(), base_ortho / ctx.gs->zoom_level);
 
   float aspect = (float)window_w / (float)window_h;
   camera_set_aspect(camera_get_main(), aspect);
@@ -139,7 +140,7 @@ static void engine_on_frame(void) {
     sapp_toggle_fullscreen();
   }
 
-  {
+  if (!g_cfg.disable_default_camera_controls) {
     float speed = 3.0f;
     float dx = 0.0f, dz = 0.0f;
     if (key_down(KEY_W)) dz += 1.0f;
@@ -162,7 +163,7 @@ static void engine_on_frame(void) {
   camera_set_rotation(camera_get_main(), ctx.gs->cam_rot[0], ctx.gs->cam_rot[1],
                       ctx.gs->cam_rot[2]);
 
-  {
+  if (!g_cfg.disable_default_camera_controls) {
     if (key_down(KEY_Q)) ctx.gs->desired_zoom_level *= ZOOM_IN_MULTIPLIER;
     if (key_down(KEY_E)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;
 
