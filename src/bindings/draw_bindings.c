@@ -590,11 +590,6 @@ int js_init_draw_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, render_obj, "quit",
                     JS_NewCFunction(ctx, js_render_quit, "quit", 0));
 
-  JS_SetPropertyStr(ctx, render_obj, "SPRITE_BG_REPEAT_TEX0",
-                    JS_NewInt32(ctx, Sprite_Name_bg_repeat_tex0));
-  JS_SetPropertyStr(ctx, render_obj, "SPRITE_SHADOW_MEDIUM",
-                    JS_NewInt32(ctx, Sprite_Name_shadow_medium));
-
   JS_SetPropertyStr(ctx, global, "render", render_obj);
 
   JSValue tilemap_obj = JS_NewObject(ctx);

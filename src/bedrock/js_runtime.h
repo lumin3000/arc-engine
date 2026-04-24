@@ -18,4 +18,10 @@ extern const char *g_run_mode;
 int  js_runtime_get_error_count(void);
 void js_runtime_reset_error_count(void);
 
+// Accessor for the primary JSContext. Returns NULL before js_runtime_init()
+// completes. Used by engine_run() to let the game register its own JS
+// bindings after engine bindings are registered.
+// Returns a JSContext* (void* to avoid QJS include in engine-facing header).
+void *js_runtime_get_context(void);
+
 #endif

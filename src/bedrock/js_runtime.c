@@ -115,6 +115,10 @@ static JSRuntime *g_runtime = NULL;
 static JSContext *g_context = NULL;
 static JSCoroutineManager *g_coroutine_mgr = NULL;
 
+void *js_runtime_get_context(void) {
+  return (void *)g_context;
+}
+
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
                     const char *filename, int eval_flags) {
   JSValue val = JS_Eval(ctx, buf, buf_len, filename, eval_flags);
