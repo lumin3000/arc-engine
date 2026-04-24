@@ -3,12 +3,7 @@
 #include "../../external/sokol/c/sokol_gfx.h"
 #include "../log.h"
 #include "../types.h"
-
-// Default texture search paths used as fallbacks when the JS layer
-// doesn't provide an explicit path. Games can override by writing to
-// globalThis.config.TEXTURE_PATHS from their JS config module.
-#define TEXTURE_PATH_PRIMARY  "res/images"
-#define TEXTURE_PATH_FALLBACK "res/images"
+#include "bedrock/engine_asset.h"
 #include "bedrock/gfx/generated_shader.h"
 #include "bedrock/gfx/graphics.h"
 #include "bedrock/gfx/material.h"
@@ -1009,16 +1004,16 @@ static JSValue js_load_texture_pixels(JSContext *ctx, JSValueConst this_val,
   }
 
   if (!f) {
-    static const char *search_paths[] = {TEXTURE_PATH_PRIMARY,
-                                         TEXTURE_PATH_FALLBACK};
-    for (int i = 0; i < 2 && !f; i++) {
-      snprintf(path, sizeof(path), "%s/%s.png", search_paths[i], tex_path);
+    int path_count = engine_texture_search_path_count();
+    for (int i = 0; i < path_count && !f; i++) {
+      const char *root = engine_texture_search_path(i);
+      if (!root) continue;
+      snprintf(path, sizeof(path), "%s/%s.png", root, tex_path);
       f = fopen(path, "rb");
       if (!f) {
-
         const char *last_slash = strrchr(tex_path, '/');
         const char *filename = last_slash ? last_slash + 1 : tex_path;
-        snprintf(path, sizeof(path), "%s/%s.png", search_paths[i], filename);
+        snprintf(path, sizeof(path), "%s/%s.png", root, filename);
         f = fopen(path, "rb");
       }
     }
@@ -1026,8 +1021,16 @@ static JSValue js_load_texture_pixels(JSContext *ctx, JSValueConst this_val,
 
   if (!f) {
     LOG_VERBOSE("[unified_mesh] Failed to load texture: %s\n", tex_path);
-    LOG_VERBOSE("[unified_mesh]   Tried paths: %s, %s\n",
-                TEXTURE_PATH_PRIMARY, TEXTURE_PATH_FALLBACK);
+    int path_count = engine_texture_search_path_count();
+    if (path_count == 0) {
+      LOG_VERBOSE("[unified_mesh]   No texture search paths registered. "
+                  "Call engine_register_texture_search_paths() in on_init.\n");
+    } else {
+      for (int i = 0; i < path_count; i++) {
+        LOG_VERBOSE("[unified_mesh]   Tried root: %s\n",
+                    engine_texture_search_path(i));
+      }
+    }
     JS_FreeCString(ctx, tex_path);
     return JS_NULL;
   }
