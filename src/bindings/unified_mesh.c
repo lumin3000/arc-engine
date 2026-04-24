@@ -1,9 +1,14 @@
 
 #include "../bedrock/platform.h"
 #include "../../external/sokol/c/sokol_gfx.h"
-#include "../game/game_config.h"
 #include "../log.h"
 #include "../types.h"
+
+// Default texture search paths used as fallbacks when the JS layer
+// doesn't provide an explicit path. Games can override by writing to
+// globalThis.config.TEXTURE_PATHS from their JS config module.
+#define TEXTURE_PATH_PRIMARY  "res/images"
+#define TEXTURE_PATH_FALLBACK "res/images"
 #include "bedrock/gfx/generated_shader.h"
 #include "bedrock/gfx/graphics.h"
 #include "bedrock/gfx/material.h"
