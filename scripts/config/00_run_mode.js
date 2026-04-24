@@ -1,13 +1,16 @@
 
-// Run mode manifest is provided by the game layer before this module runs.
-// A game project should set globalThis.__RUN_MODE_MANIFEST__ = {...} in
-// its own early-loaded script.
+// Run mode manifest is provided by the game at any point before a code
+// path first calls into RunMode's getters. Game scripts set
+// globalThis.__RUN_MODE_MANIFEST__ = { <mode>: {...}, ... }. The getters
+// below read it lazily each access, so load order is not critical.
 
 globalThis.RunMode = {
-    MODE: globalThis.__RUN_MODE__ || 'default',
+    get MODE() { return globalThis.__RUN_MODE__ || 'default'; },
 
-    _manifest: globalThis.__RUN_MODE_MANIFEST__ || {
-        default: { ui: false, hud: false }
+    get _manifest() {
+        return globalThis.__RUN_MODE_MANIFEST__ || {
+            default: { ui: false, hud: false }
+        };
     },
 
     get config() {
@@ -22,4 +25,4 @@ globalThis.RunMode = {
     get testMessages() { return !!this.config.testMessages; },
 };
 
-jtask.log("[RunMode] Mode = " + globalThis.RunMode.MODE);
+jtask.log("[RunMode] Module loaded (mode resolved on first access)");
