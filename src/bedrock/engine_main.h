@@ -61,8 +61,28 @@ typedef struct {
     void (*on_cleanup)(void);
 } Engine_Config;
 
-// Runs the engine. Never returns (calls exit() internally).
-int engine_run(const Engine_Config *cfg, int argc, char **argv);
+// Object-style engine handle. The engine is a process-level singleton
+// backed by sapp_run; arc_engine_create()/run() is the public entry
+// pattern preferred over the older `engine_run(cfg, argc, argv)` that
+// coupled configuration and execution in a single call.
+//
+// Typical usage:
+//
+//   Arc_Engine *eng = arc_engine_create(&cfg, argc, argv);
+//   return arc_engine_run(eng);   // does not return
+//
+// arc_engine_create() only records configuration; subsystem initialization
+// happens inside arc_engine_run() when sapp invokes the init callback.
+// Between create and run the game may inspect the engine handle but
+// should not expect the JS context to be available yet — call
+// arc_engine_js_context() from within a callback that fires after
+// js_runtime_init() (e.g. on_register_js_bindings).
+
+typedef struct Arc_Engine Arc_Engine;
+
+Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv);
+int         arc_engine_run(Arc_Engine *eng);           // does not return
+JSContext  *arc_engine_js_context(Arc_Engine *eng);    // NULL before js_runtime_init
 
 // Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
 // lives in engine_state.h. Not intended as game-facing API.

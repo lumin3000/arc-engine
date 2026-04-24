@@ -234,16 +234,21 @@ static void parse_args(int argc, char *argv[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Public entry.
+// Public entry — object-style API. The engine is a process-level singleton
+// (sapp_run is global), so the handle returned by arc_engine_create() is
+// effectively a pointer to internal state. Calling create twice returns
+// the same handle.
 
-int engine_run(const Engine_Config *cfg, int argc, char **argv) {
-#if defined(_WIN32)
-  ShowWindow(GetConsoleWindow(), SW_HIDE);
-#endif
+struct Arc_Engine {
+  int initialized;  // 1 once arc_engine_create() has populated g_cfg
+};
 
+static struct Arc_Engine g_engine = {0};
+
+Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv) {
   if (!cfg || !cfg->window_title) {
-    fprintf(stderr, "[engine_run] cfg->window_title is required\n");
-    return 1;
+    fprintf(stderr, "[arc_engine_create] cfg->window_title is required\n");
+    return NULL;
   }
 
   g_cfg = *cfg;
@@ -256,6 +261,20 @@ int engine_run(const Engine_Config *cfg, int argc, char **argv) {
   if (g_cfg.master_volume > 0.0f) g_master_volume = g_cfg.master_volume;
 
   parse_args(argc, argv);
+
+  g_engine.initialized = 1;
+  return &g_engine;
+}
+
+int arc_engine_run(Arc_Engine *eng) {
+  if (!eng || !eng->initialized) {
+    fprintf(stderr, "[arc_engine_run] engine not created\n");
+    return 1;
+  }
+
+#if defined(_WIN32)
+  ShowWindow(GetConsoleWindow(), SW_HIDE);
+#endif
 
   sapp_run(&(sapp_desc){
       .init_cb = engine_on_init,
@@ -272,4 +291,9 @@ int engine_run(const Engine_Config *cfg, int argc, char **argv) {
   });
 
   return 0;
+}
+
+JSContext *arc_engine_js_context(Arc_Engine *eng) {
+  (void)eng;
+  return js_runtime_get_context();
 }

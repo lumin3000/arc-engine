@@ -117,8 +117,8 @@ static JSRuntime *g_runtime = NULL;
 static JSContext *g_context = NULL;
 static JSCoroutineManager *g_coroutine_mgr = NULL;
 
-void *js_runtime_get_context(void) {
-  return (void *)g_context;
+JSContext *js_runtime_get_context(void) {
+  return g_context;
 }
 
 static void dup_str(char **dst, const char *src) {
