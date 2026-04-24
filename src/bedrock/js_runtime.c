@@ -1,5 +1,6 @@
 
 #include "js_runtime.h"
+#include "js_runtime_internal.h"
 #include "../bindings/diag_bindings.h"
 #include "../bindings/draw_bindings.h"
 #include "../bindings/font_bindings.h"

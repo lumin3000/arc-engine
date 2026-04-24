@@ -9,6 +9,7 @@
 #include "helpers.h"
 #include "input/input.h"
 #include "js_runtime.h"
+#include "js_runtime_internal.h"
 #include "sound/sound.h"
 #include "stdin_reader.h"
 #include "utils/utils.h"
