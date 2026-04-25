@@ -161,13 +161,15 @@ static JSValue js_imgui_begin_window(JSContext *ctx, JSValueConst this_val,
   bool visible = igBegin(title, p_open, flags);
   JS_FreeCString(ctx, title);
 
-  // If user closed the window via X button
-  if (p_open && !p_open_val) {
-    igEnd();
-    return JS_NewBool(ctx, 0); // signal close
+  // ImGui 规则：igBegin 任何返回值都必须配一次 igEnd（imgui.h:434-435）。
+  // 配对由 JS 的 end_window 无条件调用兜底，C 不在此处补 igEnd——
+  // 否则点 X 关窗时会 double-end，下一帧打到 Debug##Default 触发断言。
+  // closed=true 仅作为关闭信号传给 JS（让上层走 close() 路径）。
+  bool closed = (p_open && !p_open_val);
+  if (closed) {
+    return JS_NewBool(ctx, 0);
   }
-
-  return JS_NewBool(ctx, visible);
+  return JS_NewBool(ctx, visible ? 1 : 0);
 }
 
 // imgui.end_window()
