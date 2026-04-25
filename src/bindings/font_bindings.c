@@ -1,3 +1,14 @@
+/*
+ * font_bindings.c - 字体管理器 JS 绑定
+ *
+ * 暴露给 JS 的 API:
+ * - font.load(path, font_id)     - 加载字体
+ * - font.glyph(font_id, codepoint, size) - 获取字形信息
+ * - font.metrics(font_id, size)  - 获取字体度量
+ * - font.flush()                 - 刷新纹理
+ * - font.texture_dirty()         - 检查纹理是否需要更新
+ * - font.sdf_mask()              - 获取 SDF 边缘阈值
+ */
 
 #include "font_bindings.h"
 #include "../log.h"
@@ -6,7 +17,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ============================================================================
+// 全局字体管理器实例
+// ============================================================================
+
 static struct font_manager *g_font_manager = NULL;
+
+// ============================================================================
+// font.load(path, font_id)
+// ============================================================================
 
 static JSValue js_font_load(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv) {
@@ -30,6 +49,10 @@ static JSValue js_font_load(JSContext *ctx, JSValueConst this_val,
 
     return JS_NewBool(ctx, result == 0);
 }
+
+// ============================================================================
+// font.glyph(font_id, codepoint, size) -> {u, v, w, h, offset_x, offset_y, advance_x, advance_y}
+// ============================================================================
 
 static JSValue js_font_glyph(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv) {
@@ -65,6 +88,10 @@ static JSValue js_font_glyph(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+// ============================================================================
+// font.metrics(font_id, size) -> {ascent, descent, line_gap}
+// ============================================================================
+
 static JSValue js_font_metrics(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv) {
     (void)this_val;
@@ -90,6 +117,10 @@ static JSValue js_font_metrics(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+// ============================================================================
+// font.flush() -> bool (纹理是否有更新)
+// ============================================================================
+
 static JSValue js_font_flush(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
@@ -98,6 +129,10 @@ static JSValue js_font_flush(JSContext *ctx, JSValueConst this_val,
     return JS_NewBool(ctx, dirty);
 }
 
+// ============================================================================
+// font.sdf_mask() -> float
+// ============================================================================
+
 static JSValue js_font_sdf_mask(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
@@ -105,6 +140,10 @@ static JSValue js_font_sdf_mask(JSContext *ctx, JSValueConst this_val,
     float mask = font_manager_sdf_mask(g_font_manager);
     return JS_NewFloat64(ctx, mask);
 }
+
+// ============================================================================
+// font.sdf_distance(num_pixel) -> float
+// ============================================================================
 
 static JSValue js_font_sdf_distance(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
@@ -123,12 +162,21 @@ static JSValue js_font_sdf_distance(JSContext *ctx, JSValueConst this_val,
     return JS_NewFloat64(ctx, dist);
 }
 
+// ============================================================================
+// font.texture_size() -> int
+// ============================================================================
+
 static JSValue js_font_texture_size(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
 
     return JS_NewInt32(ctx, FONT_MANAGER_TEXSIZE);
 }
+
+// ============================================================================
+// font.measure_text(font_id, text, size) -> {x, y}
+// 测量文本尺寸 (不绘制)
+// ============================================================================
 
 static JSValue js_font_measure_text(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
@@ -147,15 +195,17 @@ static JSValue js_font_measure_text(JSContext *ctx, JSValueConst this_val,
     const char *text = JS_ToCString(ctx, argv[1]);
     if (!text) return JS_EXCEPTION;
 
+    // 获取字体度量
     int ascent, descent, line_gap;
     font_manager_metrics(g_font_manager, font_id, size, &ascent, &descent, &line_gap);
 
+    // 遍历 UTF-8 计算宽度
     float total_width = 0;
     const unsigned char *s = (const unsigned char *)text;
 
     while (*s) {
         uint32_t codepoint;
-
+        // UTF-8 解码
         if (*s < 0x80) {
             codepoint = *s++;
         } else if (*s < 0xE0) {
@@ -170,7 +220,7 @@ static JSValue js_font_measure_text(JSContext *ctx, JSValueConst this_val,
         }
 
         if (codepoint == '\n') {
-            continue;
+            continue;  // 忽略换行
         }
 
         FontGlyph g;
@@ -188,6 +238,11 @@ static JSValue js_font_measure_text(JSContext *ctx, JSValueConst this_val,
 
     return obj;
 }
+
+// ============================================================================
+// font.drawText(x, y, font_id, text, size, color) -> void
+// 绘制文本 (添加到 SDF text pipeline)
+// ============================================================================
 
 #include "bedrock/gfx/sdf_text_pipeline.h"
 
@@ -210,25 +265,27 @@ static JSValue js_font_draw_text(JSContext *ctx, JSValueConst this_val,
         return JS_EXCEPTION;
     }
 
+    // color 可以是 number 或 object {r,g,b,a}
     if (JS_IsNumber(argv[5])) {
         int64_t c;
         JS_ToInt64(ctx, &c, argv[5]);
         color = (uint32_t)c;
     } else {
-
+        // 默认白色
         color = 0xFFFFFFFF;
     }
 
     const char *text = JS_ToCString(ctx, argv[3]);
     if (!text) return JS_EXCEPTION;
 
+    // 遍历 UTF-8 绘制每个字符
     float cur_x = (float)x;
     float cur_y = (float)y;
     const unsigned char *s = (const unsigned char *)text;
 
     while (*s) {
         uint32_t codepoint;
-
+        // UTF-8 解码
         if (*s < 0x80) {
             codepoint = *s++;
         } else if (*s < 0xE0) {
@@ -243,7 +300,7 @@ static JSValue js_font_draw_text(JSContext *ctx, JSValueConst this_val,
         }
 
         if (codepoint == '\n') {
-
+            // 换行
             cur_x = (float)x;
             int ascent, descent, line_gap;
             font_manager_metrics(g_font_manager, font_id, size, &ascent, &descent, &line_gap);
@@ -254,7 +311,7 @@ static JSValue js_font_draw_text(JSContext *ctx, JSValueConst this_val,
         FontGlyph g, og;
         const char *err = font_manager_glyph_ex(g_font_manager, font_id, codepoint, size, &g, &og);
         if (!err) {
-
+            // g: 缩放后字形 (屏幕显示), og: 原始字形 (纹理采样)
             sdf_text_add_glyph_ex(cur_x, cur_y, g.u, g.v, g.w, g.h, og.w, og.h, g.offset_x, g.offset_y, color);
             cur_x += g.advance_x;
         }
@@ -264,6 +321,11 @@ static JSValue js_font_draw_text(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+// ============================================================================
+// 初始化 / 销毁
+// ============================================================================
+
+// 全局访问函数 (用于 render.c)
 struct font_manager *get_global_font_manager(void) {
     return g_font_manager;
 }
@@ -273,7 +335,7 @@ struct font_manager *font_bindings_get_manager(void) {
 }
 
 int js_init_font_module(JSContext *ctx) {
-
+    // 分配并初始化字体管理器
     if (!g_font_manager) {
         g_font_manager = (struct font_manager *)malloc(font_manager_sizeof());
         if (!g_font_manager) {
@@ -305,6 +367,7 @@ int js_init_font_module(JSContext *ctx) {
     JS_SetPropertyStr(ctx, font_obj, "drawText",
                       JS_NewCFunction(ctx, js_font_draw_text, "drawText", 6));
 
+    // 常量
     JS_SetPropertyStr(ctx, font_obj, "TEXSIZE", JS_NewInt32(ctx, FONT_MANAGER_TEXSIZE));
 
     JS_SetPropertyStr(ctx, global, "font", font_obj);

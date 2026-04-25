@@ -125,6 +125,23 @@ static JSValue js_render_quit(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// render.sprite_id_by_name(name) -> int (>=0 if registered, -1 otherwise)
+// Game scripts use this to look up engine_register_sprites() registrations
+// without hard-coded enums. The lookup is O(N) over the registered count;
+// JS callers are expected to cache results.
+static JSValue js_render_sprite_id_by_name(JSContext *ctx, JSValueConst this_val,
+                                           int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "render.sprite_id_by_name(name) requires 1 argument");
+  }
+  const char *name = JS_ToCString(ctx, argv[0]);
+  if (!name) return JS_EXCEPTION;
+  Sprite_Name id = engine_get_sprite_index_by_name(name);
+  JS_FreeCString(ctx, name);
+  return JS_NewInt32(ctx, (int32_t)id);
+}
+
 static JSValue js_draw_sprite(JSContext *ctx, JSValueConst this_val, int argc,
                               JSValueConst *argv) {
   if (argc < 3) {
@@ -589,6 +606,9 @@ int js_init_draw_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_render_exec, "exec", 1));
   JS_SetPropertyStr(ctx, render_obj, "quit",
                     JS_NewCFunction(ctx, js_render_quit, "quit", 0));
+  JS_SetPropertyStr(
+      ctx, render_obj, "sprite_id_by_name",
+      JS_NewCFunction(ctx, js_render_sprite_id_by_name, "sprite_id_by_name", 1));
 
   JS_SetPropertyStr(ctx, global, "render", render_obj);
 

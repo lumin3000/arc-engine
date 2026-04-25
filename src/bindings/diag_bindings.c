@@ -1,3 +1,15 @@
+/*
+ * diag_bindings.c - 渲染诊断系统 JS 绑定
+ *
+ * 提供 JS API:
+ *   diag.dump()                  - 立即输出当前帧诊断
+ *   diag.requestDump()           - 请求下一帧输出
+ *   diag.setContinuous(enabled)  - 设置持续输出模式
+ *   diag.setFilter(name)         - 设置名称过滤
+ *   diag.setIssuesOnly(enabled)  - 只显示有问题的对象
+ *   diag.clearFilters()          - 清除所有过滤器
+ *   diag.getStats()              - 获取统计信息
+ */
 
 #include "quickjs.h"
 #include "../bedrock/gfx/render_diagnostics.h"
@@ -5,6 +17,11 @@
 #include "../../external/sokol/c/sokol_gfx.h"
 #include <stdio.h>
 
+// ============================================================================
+// JS 绑定函数
+// ============================================================================
+
+// diag.dump() - 立即输出
 static JSValue js_diag_dump(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv) {
   (void)ctx;
@@ -16,6 +33,7 @@ static JSValue js_diag_dump(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
+// diag.requestDump() - 请求下一帧输出
 static JSValue js_diag_request_dump(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
   (void)ctx;
@@ -27,6 +45,7 @@ static JSValue js_diag_request_dump(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.setContinuous(enabled)
 static JSValue js_diag_set_continuous(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv) {
   if (argc < 1)
@@ -37,6 +56,7 @@ static JSValue js_diag_set_continuous(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.setFilter(name)
 static JSValue js_diag_set_filter(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv) {
   const char *filter = NULL;
@@ -53,6 +73,7 @@ static JSValue js_diag_set_filter(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.setIssuesOnly(enabled)
 static JSValue js_diag_set_issues_only(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
   if (argc < 1)
@@ -63,6 +84,7 @@ static JSValue js_diag_set_issues_only(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.setRenderQueueRange(min, max)
 static JSValue js_diag_set_rq_range(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
   if (argc < 2)
@@ -78,6 +100,7 @@ static JSValue js_diag_set_rq_range(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.clearFilters()
 static JSValue js_diag_clear_filters(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   (void)ctx;
@@ -89,6 +112,7 @@ static JSValue js_diag_clear_filters(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// diag.numDraw() -> number (sokol sg_query_stats().prev_frame.num_draw)
 static JSValue js_diag_num_draw(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv) {
   (void)this_val;
@@ -98,6 +122,7 @@ static JSValue js_diag_num_draw(JSContext *ctx, JSValueConst this_val,
   return JS_NewInt32(ctx, (int32_t)stats.prev_frame.num_draw);
 }
 
+// diag.getStats() -> {entryCount, isEnabled}
 static JSValue js_diag_get_stats(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   (void)this_val;
@@ -112,6 +137,9 @@ static JSValue js_diag_get_stats(JSContext *ctx, JSValueConst this_val,
   return obj;
 }
 
+// diag.dcBreakdown() -> { mesh0, quads, tris, mesh4k, inst, imgui, sdf, total }
+// Returns the per-source draw call breakdown from the previous frame.
+// Zero-cost when not called (counters always run, only JS object creation on query).
 static JSValue js_diag_dc_breakdown(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   (void)this_val;
@@ -138,6 +166,12 @@ static JSValue js_diag_dc_breakdown(JSContext *ctx, JSValueConst this_val,
   return obj;
 }
 
+// ============================================================================
+// stdin 命令处理
+// ============================================================================
+
+// 处理来自 stdin 的诊断命令
+// 格式: {"cmd":"diag", "action":"dump|start|stop|filter|issues_only", ...}
 void diag_handle_stdin_command(const char *action, JSContext *ctx,
                                JSValueConst params) {
   if (!action)
@@ -150,7 +184,7 @@ void diag_handle_stdin_command(const char *action, JSContext *ctx,
   } else if (strcmp(action, "stop") == 0) {
     render_diag_set_continuous(false);
   } else if (strcmp(action, "filter") == 0) {
-
+    // 从 params 中获取 name
     JSValue name_val = JS_GetPropertyStr(ctx, params, "name");
     if (!JS_IsUndefined(name_val) && !JS_IsNull(name_val)) {
       const char *name = JS_ToCString(ctx, name_val);
@@ -172,6 +206,10 @@ void diag_handle_stdin_command(const char *action, JSContext *ctx,
     fprintf(stderr, "[diag] Unknown action: %s\n", action);
   }
 }
+
+// ============================================================================
+// 模块初始化
+// ============================================================================
 
 int js_init_diag_module(JSContext *ctx) {
   JSValue global = JS_GetGlobalObject(ctx);

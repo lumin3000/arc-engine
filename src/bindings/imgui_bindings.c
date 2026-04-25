@@ -1,3 +1,9 @@
+/*
+ * imgui_bindings.c - Dear ImGui JS 绑定实现
+ *
+ * 通过 cimgui C API 调用 Dear ImGui，避免 C++ 依赖
+ * 注册 globalThis.imgui，包含原生 API 和旧 UI 框架兼容 API
+ */
 
 #include "imgui_bindings.h"
 #include "../log.h"
@@ -6,22 +12,30 @@
 #include <stdio.h>
 #include <string.h>
 
+// cimgui C API
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "../../external/cimgui/cimgui.h"
 
+// sokol headers
 #include "../../external/sokol/c/sokol_app.h"
 
+// simgui wrapper (implemented in simgui_impl.cpp)
 extern void simgui_setup_wrapper(void);
 extern void simgui_new_frame_wrapper(int width, int height, double delta_time);
 extern void simgui_render_wrapper(void);
 extern void simgui_shutdown_wrapper(void);
 extern bool simgui_handle_event_wrapper(const sapp_event *event);
 
+// ============================================================================
+// Global state
+// ============================================================================
+
 static struct {
   int initialized;
   int frame_active;
 } g_imgui = {0};
 
+// checkbox/slider/textbox ID-based 状态存储
 #define MAX_CHECKBOX_STATES 128
 #define MAX_SLIDER_STATES 128
 #define MAX_TEXTBOX_STATES 32
@@ -37,7 +51,11 @@ int imgui_frame_is_active(void) {
 
 void imgui_frame_reset(void) { g_imgui.frame_active = 0; }
 
-static JSValue js_nk_init(JSContext *ctx, JSValueConst this_val, int argc,
+// ============================================================================
+// Lifecycle
+// ============================================================================
+
+static JSValue js_imgui_init(JSContext *ctx, JSValueConst this_val, int argc,
                           JSValueConst *argv) {
   if (g_imgui.initialized)
     return JS_UNDEFINED;
@@ -50,11 +68,11 @@ static JSValue js_nk_init(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_begin_frame(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_begin_frame(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   if (!g_imgui.initialized)
     return JS_UNDEFINED;
-
+  // 防止同一帧多次调用 NewFrame（WindowStack 和 imgui_demo 都可能调）
   if (g_imgui.frame_active)
     return JS_UNDEFINED;
   int w = sapp_width();
@@ -64,38 +82,48 @@ static JSValue js_nk_begin_frame(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_end_frame(JSContext *ctx, JSValueConst this_val, int argc,
+static JSValue js_imgui_end_frame(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv) {
-  return JS_UNDEFINED;
+  return JS_UNDEFINED; // render happens in core_render_frame_end
 }
 
-static JSValue js_nk_render(JSContext *ctx, JSValueConst this_val, int argc,
+static JSValue js_imgui_render(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv) {
-  return JS_UNDEFINED;
+  return JS_UNDEFINED; // no-op, render in core_render_frame_end
 }
+
+// ============================================================================
+// Input (no-op — sokol_imgui handles input via event_callback)
+// ============================================================================
 
 static JSValue js_noop(JSContext *ctx, JSValueConst this_val, int argc,
                        JSValueConst *argv) {
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// Window — nk.begin_window(title, x, y, w, h, opts) -> bool
+// ============================================================================
+
+// microui OPT_* → ImGui window flags 翻译
 static int mu_opts_to_imgui_flags(int mu_opt) {
   int flags = 0;
   if (mu_opt & 0x80)
-    flags |= ImGuiWindowFlags_NoTitleBar;
+    flags |= ImGuiWindowFlags_NoTitleBar; // OPT_NOTITLE
   if (mu_opt & 0x10)
-    flags |= ImGuiWindowFlags_NoResize;
+    flags |= ImGuiWindowFlags_NoResize; // OPT_NORESIZE
   if (mu_opt & 0x20)
-    flags |= ImGuiWindowFlags_NoScrollbar;
+    flags |= ImGuiWindowFlags_NoScrollbar; // OPT_NOSCROLL
   if (mu_opt & 0x08)
-    flags |= ImGuiWindowFlags_NoBackground;
+    flags |= ImGuiWindowFlags_NoBackground; // OPT_NOFRAME
   if (mu_opt & 0x04)
-    flags |= ImGuiWindowFlags_NoInputs;
-
+    flags |= ImGuiWindowFlags_NoInputs; // OPT_NOINTERACT
+  // OPT_NOCLOSE (0x40) — handled by passing NULL as p_open
   return flags;
 }
 
-static JSValue js_nk_begin_window(JSContext *ctx, JSValueConst this_val,
+// imgui.begin_window(title, x, y, w, h, opts?) -> bool
+static JSValue js_imgui_begin_window(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv) {
   if (argc < 5)
     return JS_NewBool(ctx, 0);
@@ -115,8 +143,8 @@ static JSValue js_nk_begin_window(JSContext *ctx, JSValueConst this_val,
     JS_ToInt32(ctx, &mu_opt, argv[5]);
 
   int flags = mu_opts_to_imgui_flags(mu_opt);
-
-  if (mu_opt & 0x80) {
+  // HUD windows: no move, no collapse
+  if (mu_opt & 0x80) { // NOTITLE implies no collapse
     flags |= ImGuiWindowFlags_NoCollapse;
   }
 
@@ -126,32 +154,37 @@ static JSValue js_nk_begin_window(JSContext *ctx, JSValueConst this_val,
   igSetNextWindowPos(pos, ImGuiCond_Always, pivot);
   igSetNextWindowSize(size, ImGuiCond_Always);
 
+  // p_open: if OPT_NOCLOSE, don't show close button
   bool p_open_val = true;
   bool *p_open = (mu_opt & 0x40) ? NULL : &p_open_val;
 
   bool visible = igBegin(title, p_open, flags);
   JS_FreeCString(ctx, title);
 
+  // If user closed the window via X button
   if (p_open && !p_open_val) {
     igEnd();
-    return JS_NewBool(ctx, 0);
+    return JS_NewBool(ctx, 0); // signal close
   }
 
   return JS_NewBool(ctx, visible);
 }
 
-static JSValue js_nk_end_window(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.end_window()
+static JSValue js_imgui_end_window(JSContext *ctx, JSValueConst this_val, int argc,
                                 JSValueConst *argv) {
   igEnd();
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_get_current_container(JSContext *ctx,
+// imgui.get_current_container() -> {x, y, body_w, body_h}
+static JSValue js_imgui_get_current_container(JSContext *ctx,
                                            JSValueConst this_val, int argc,
                                            JSValueConst *argv) {
   ImVec2_c pos = igGetWindowPos();
   ImVec2_c size = igGetWindowSize();
 
+  // body = window size minus title bar
   float title_bar_h = igGetFrameHeight();
 
   JSValue obj = JS_NewObject(ctx);
@@ -163,12 +196,19 @@ static JSValue js_nk_get_current_container(JSContext *ctx,
   return obj;
 }
 
+// ============================================================================
+// Layout
+// ============================================================================
+
+// imgui.layout_row(cols, widths[], height)
+// ImGui 没有直接等价物。用 BeginTable 模拟多列布局。
+// 简化实现：设置一个临时变量记录行高，widget 间用 SameLine 分列
 static int g_layout_cols = 1;
 static float g_layout_widths[32];
 static float g_layout_height = 0;
 static int g_layout_col_index = 0;
 
-static JSValue js_nk_layout_row(JSContext *ctx, JSValueConst this_val, int argc,
+static JSValue js_imgui_layout_row(JSContext *ctx, JSValueConst this_val, int argc,
                                 JSValueConst *argv) {
   if (argc < 3)
     return JS_UNDEFINED;
@@ -177,6 +217,7 @@ static JSValue js_nk_layout_row(JSContext *ctx, JSValueConst this_val, int argc,
   if (g_layout_cols > 32)
     g_layout_cols = 32;
 
+  // argv[1] is array of widths
   if (JS_IsArray(argv[1])) {
     for (int i = 0; i < g_layout_cols; i++) {
       JSValue elem = JS_GetPropertyUint32(ctx, argv[1], i);
@@ -195,18 +236,19 @@ static JSValue js_nk_layout_row(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
+// 在每个 widget 调用前调此函数，自动处理多列布局中的 SameLine
 static void layout_advance(void) {
   if (g_layout_cols <= 1)
     return;
   if (g_layout_col_index > 0 && g_layout_col_index < g_layout_cols) {
     igSameLine(0, -1);
   }
-
+  // 设置下一个 widget 的宽度（-1 表示填充剩余空间）
   float w = g_layout_widths[g_layout_col_index];
   if (w > 0) {
     igSetNextItemWidth(w);
   } else if (w < 0) {
-
+    // -1 = 填充剩余空间
     ImVec2_c avail = igGetContentRegionAvail();
     igSetNextItemWidth(avail.x);
   }
@@ -216,39 +258,49 @@ static void layout_advance(void) {
   }
 }
 
-static JSValue js_nk_layout_set_next(JSContext *ctx, JSValueConst this_val,
+// imgui.layout_set_next(x, y, w, h) — 用于 HudWindow 强制定位
+// 在 ImGui 中通过 SetNextWindowPos/Size 实现（在 begin_window 之前调用）
+// 这里做个 no-op 因为 begin_window 已经用了 Always 条件
+static JSValue js_imgui_layout_set_next(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
-
+  // No-op: begin_window already uses ImGuiCond_Always
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_layout_next(JSContext *ctx, JSValueConst this_val,
+// imgui.layout_next() -> {x, y, w, h}
+static JSValue js_imgui_layout_next(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   ImVec2_c cursor = igGetCursorScreenPos();
 
   JSValue obj = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, obj, "x", JS_NewFloat64(ctx, cursor.x));
   JS_SetPropertyStr(ctx, obj, "y", JS_NewFloat64(ctx, cursor.y));
-
+  // Use available width for single column
   ImVec2_c avail = igGetContentRegionAvail();
   JS_SetPropertyStr(ctx, obj, "w", JS_NewFloat64(ctx, avail.x));
   JS_SetPropertyStr(ctx, obj, "h", JS_NewFloat64(ctx, g_layout_height));
   return obj;
 }
 
-static JSValue js_nk_layout_begin_column(JSContext *ctx, JSValueConst this_val,
+// imgui.layout_begin_column() / nk.layout_end_column()
+static JSValue js_imgui_layout_begin_column(JSContext *ctx, JSValueConst this_val,
                                          int argc, JSValueConst *argv) {
   igBeginGroup();
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_layout_end_column(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_layout_end_column(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
   igEndGroup();
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_button(JSContext *ctx, JSValueConst this_val, int argc,
+// ============================================================================
+// Widgets
+// ============================================================================
+
+// imgui.button(label) -> bool
+static JSValue js_imgui_button(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv) {
   layout_advance();
   if (argc < 1)
@@ -257,7 +309,7 @@ static JSValue js_nk_button(JSContext *ctx, JSValueConst this_val, int argc,
   if (!label)
     return JS_EXCEPTION;
   ImVec2_c size = {0, 0};
-
+  // 可选: button(label, width, height)
   if (argc > 1) { double v; JS_ToFloat64(ctx, &v, argv[1]); size.x = (float)v; }
   if (argc > 2) { double v; JS_ToFloat64(ctx, &v, argv[2]); size.y = (float)v; }
   bool clicked = igButton(label, size);
@@ -265,7 +317,8 @@ static JSValue js_nk_button(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_NewBool(ctx, clicked);
 }
 
-static JSValue js_nk_label(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.label(text)
+static JSValue js_imgui_label(JSContext *ctx, JSValueConst this_val, int argc,
                            JSValueConst *argv) {
   layout_advance();
   if (argc < 1)
@@ -278,7 +331,8 @@ static JSValue js_nk_label(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_text(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.text(text) — multiline
+static JSValue js_imgui_text(JSContext *ctx, JSValueConst this_val, int argc,
                           JSValueConst *argv) {
   layout_advance();
   if (argc < 1)
@@ -291,7 +345,8 @@ static JSValue js_nk_text(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_checkbox(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.checkbox(label, state_id) — ID-based state
+static JSValue js_imgui_checkbox_id(JSContext *ctx, JSValueConst this_val, int argc,
                               JSValueConst *argv) {
   layout_advance();
   if (argc < 2)
@@ -309,7 +364,7 @@ static JSValue js_nk_checkbox(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_get_checkbox_state(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_get_checkbox_state(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
   if (argc < 1)
     return JS_NewBool(ctx, 0);
@@ -320,7 +375,7 @@ static JSValue js_nk_get_checkbox_state(JSContext *ctx, JSValueConst this_val,
   return JS_NewBool(ctx, g_checkbox_states[id]);
 }
 
-static JSValue js_nk_set_checkbox_state(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_set_checkbox_state(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
   if (argc < 2)
     return JS_UNDEFINED;
@@ -332,7 +387,8 @@ static JSValue js_nk_set_checkbox_state(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_slider(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.slider(id, min, max, step, format) -> {value, changed}
+static JSValue js_imgui_slider(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv) {
   layout_advance();
   if (argc < 4)
@@ -369,7 +425,7 @@ static JSValue js_nk_slider(JSContext *ctx, JSValueConst this_val, int argc,
   return result;
 }
 
-static JSValue js_nk_set_slider_state(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_set_slider_state(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv) {
   if (argc < 2)
     return JS_UNDEFINED;
@@ -383,7 +439,8 @@ static JSValue js_nk_set_slider_state(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_textbox(JSContext *ctx, JSValueConst this_val, int argc,
+// imgui.textbox(id) -> {text, submitted, changed}
+static JSValue js_imgui_textbox(JSContext *ctx, JSValueConst this_val, int argc,
                              JSValueConst *argv) {
   layout_advance();
   if (argc < 1)
@@ -409,7 +466,7 @@ static JSValue js_nk_textbox(JSContext *ctx, JSValueConst this_val, int argc,
   return result;
 }
 
-static JSValue js_nk_set_textbox_state(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_set_textbox_state(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
   if (argc < 2)
     return JS_UNDEFINED;
@@ -426,7 +483,12 @@ static JSValue js_nk_set_textbox_state(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_draw_rect(JSContext *ctx, JSValueConst this_val, int argc,
+// ============================================================================
+// Drawing
+// ============================================================================
+
+// imgui.draw_rect(x, y, w, h, r, g, b, a) — 绝对坐标绘制矩形
+static JSValue js_imgui_draw_rect(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv) {
   if (argc < 8)
     return JS_UNDEFINED;
@@ -454,7 +516,8 @@ static JSValue js_nk_draw_rect(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_draw_control_text(JSContext *ctx, JSValueConst this_val,
+// imgui.draw_control_text(text, x, y, w, h, colorId, flags)
+static JSValue js_imgui_draw_control_text(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
   if (argc < 5)
     return JS_UNDEFINED;
@@ -473,7 +536,7 @@ static JSValue js_nk_draw_control_text(JSContext *ctx, JSValueConst this_val,
     dl = igGetForegroundDrawList_ViewportPtr(NULL);
 
   if (dl) {
-
+    // Default: white text, left aligned
     ImU32 col = 0xFFFFFFFF;
     ImVec2_c pos = {(float)x, (float)y};
     ImDrawList_AddText_Vec2(dl, pos, col, text, NULL);
@@ -483,15 +546,19 @@ static JSValue js_nk_draw_control_text(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_set_style_color(JSContext *ctx, JSValueConst this_val,
-                                     int argc, JSValueConst *argv) {
+// ============================================================================
+// Style
+// ============================================================================
 
+static JSValue js_imgui_set_style_color(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  // ImGui style colors use different IDs — simplified no-op for now
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_get_style_color(JSContext *ctx, JSValueConst this_val,
+static JSValue js_imgui_get_style_color(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
-
+  // Return default white
   JSValue arr = JS_NewArray(ctx);
   JS_SetPropertyUint32(ctx, arr, 0, JS_NewInt32(ctx, 255));
   JS_SetPropertyUint32(ctx, arr, 1, JS_NewInt32(ctx, 255));
@@ -500,7 +567,11 @@ static JSValue js_nk_get_style_color(JSContext *ctx, JSValueConst this_val,
   return arr;
 }
 
-static JSValue js_nk_begin_panel(JSContext *ctx, JSValueConst this_val,
+// ============================================================================
+// Panel (scroll view) — map to ImGui BeginChild/EndChild
+// ============================================================================
+
+static JSValue js_imgui_begin_panel(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   const char *name = "panel";
   if (argc > 0) {
@@ -515,19 +586,28 @@ static JSValue js_nk_begin_panel(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_end_panel(JSContext *ctx, JSValueConst this_val, int argc,
+static JSValue js_imgui_end_panel(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv) {
   igEndChild();
   return JS_UNDEFINED;
 }
 
-static JSValue js_nk_is_any_hovered(JSContext *ctx, JSValueConst this_val,
+// ============================================================================
+// Query
+// ============================================================================
+
+// imgui.is_any_hovered() -> bool
+static JSValue js_imgui_is_any_hovered(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
   if (!g_imgui.initialized)
     return JS_NewBool(ctx, 0);
   ImGuiIO *io = igGetIO_Nil();
   return JS_NewBool(ctx, io->WantCaptureMouse);
 }
+
+// ============================================================================
+// ImGui-native API (also registered on globalThis.imgui)
+// ============================================================================
 
 static JSValue js_imgui_show_demo_window(JSContext *ctx, JSValueConst this_val,
                                          int argc, JSValueConst *argv) {
@@ -570,6 +650,7 @@ static JSValue js_imgui_want_capture_keyboard(JSContext *ctx,
   return JS_NewBool(ctx, io->WantCaptureKeyboard);
 }
 
+// imgui.text_colored(r, g, b, a, str) — normalized 0-1 colors
 static JSValue js_imgui_text_colored(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   if (argc < 5)
@@ -588,6 +669,7 @@ static JSValue js_imgui_text_colored(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.begin(title, flags) -> bool  (native ImGui style, no position args)
 static JSValue js_imgui_begin(JSContext *ctx, JSValueConst this_val, int argc,
                               JSValueConst *argv) {
   const char *title = "Window";
@@ -605,18 +687,21 @@ static JSValue js_imgui_begin(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_NewBool(ctx, open);
 }
 
+// imgui.end()
 static JSValue js_imgui_end(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv) {
   igEnd();
   return JS_UNDEFINED;
 }
 
+// imgui.separator()
 static JSValue js_imgui_separator(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv) {
   igSeparator();
   return JS_UNDEFINED;
 }
 
+// imgui.same_line(offset, spacing)
 static JSValue js_imgui_same_line(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv) {
   float offset = 0, spacing = -1;
@@ -634,6 +719,7 @@ static JSValue js_imgui_same_line(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.begin_table / end_table / table_*
 static JSValue js_imgui_begin_table(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
   if (argc < 2)
@@ -699,6 +785,7 @@ static JSValue js_imgui_table_next_column(JSContext *ctx, JSValueConst this_val,
   return JS_NewBool(ctx, igTableNextColumn());
 }
 
+// imgui.collapsing_header / tree_node / tree_pop
 static JSValue js_imgui_collapsing_header(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
   if (argc < 1)
@@ -729,6 +816,7 @@ static JSValue js_imgui_tree_pop(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.set_next_window_pos/size
 static JSValue js_imgui_set_next_window_pos(JSContext *ctx,
                                             JSValueConst this_val, int argc,
                                             JSValueConst *argv) {
@@ -756,6 +844,7 @@ static JSValue js_imgui_set_next_window_size(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
+// imgui.checkbox(label, checked) -> {clicked, checked}
 static JSValue js_imgui_checkbox(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   if (argc < 2)
@@ -772,6 +861,7 @@ static JSValue js_imgui_checkbox(JSContext *ctx, JSValueConst this_val,
   return result;
 }
 
+// imgui.slider_float(label, value, min, max) -> {changed, value}
 static JSValue js_imgui_slider_float(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   if (argc < 4)
@@ -793,14 +883,7 @@ static JSValue js_imgui_slider_float(JSContext *ctx, JSValueConst this_val,
   return result;
 }
 
-static JSValue js_imgui_set_keyboard_focus_here(JSContext *ctx, JSValueConst this_val,
-                                                int argc, JSValueConst *argv) {
-  int offset = 0;
-  if (argc > 0) JS_ToInt32(ctx, &offset, argv[0]);
-  igSetKeyboardFocusHere(offset);
-  return JS_UNDEFINED;
-}
-
+// imgui.input_text(label, text) -> {changed, text}
 static JSValue js_imgui_input_text(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv) {
   if (argc < 2)
@@ -825,8 +908,12 @@ static JSValue js_imgui_input_text(JSContext *ctx, JSValueConst this_val,
   return result;
 }
 
-static void js_register_nk_constants(JSContext *ctx, JSValue obj) {
+// ============================================================================
+// 兼容常量
+// ============================================================================
 
+static void js_register_compat_constants(JSContext *ctx, JSValue obj) {
+  // microui OPT_* 常量 (保持原值)
   JS_SetPropertyStr(ctx, obj, "OPT_ALIGNCENTER", JS_NewInt32(ctx, 0x01));
   JS_SetPropertyStr(ctx, obj, "OPT_ALIGNRIGHT", JS_NewInt32(ctx, 0x02));
   JS_SetPropertyStr(ctx, obj, "OPT_NOINTERACT", JS_NewInt32(ctx, 0x04));
@@ -836,17 +923,20 @@ static void js_register_nk_constants(JSContext *ctx, JSValue obj) {
   JS_SetPropertyStr(ctx, obj, "OPT_NOCLOSE", JS_NewInt32(ctx, 0x40));
   JS_SetPropertyStr(ctx, obj, "OPT_NOTITLE", JS_NewInt32(ctx, 0x80));
 
+  // Input keys
   JS_SetPropertyStr(ctx, obj, "KEY_RETURN", JS_NewInt32(ctx, 0));
   JS_SetPropertyStr(ctx, obj, "KEY_BACKSPACE", JS_NewInt32(ctx, 1));
 
+  // Mouse buttons
   JS_SetPropertyStr(ctx, obj, "MOUSE_LEFT", JS_NewInt32(ctx, 0));
   JS_SetPropertyStr(ctx, obj, "MOUSE_RIGHT", JS_NewInt32(ctx, 1));
 
+  // Color IDs
   JS_SetPropertyStr(ctx, obj, "COLOR_TEXT", JS_NewInt32(ctx, 0));
 }
 
 static void js_register_imgui_constants(JSContext *ctx, JSValue obj) {
-
+  // Window flags
   JS_SetPropertyStr(ctx, obj, "WINDOW_NONE", JS_NewInt32(ctx, 0));
   JS_SetPropertyStr(ctx, obj, "WINDOW_NO_TITLE_BAR",
                     JS_NewInt32(ctx, 1 << 0));
@@ -858,20 +948,37 @@ static void js_register_imgui_constants(JSContext *ctx, JSValue obj) {
   JS_SetPropertyStr(ctx, obj, "WINDOW_ALWAYS_AUTO_RESIZE",
                     JS_NewInt32(ctx, 1 << 6));
 
+  // Style color indices (for push_style_color)
   JS_SetPropertyStr(ctx, obj, "COL_PLOT_HISTOGRAM", JS_NewInt32(ctx, ImGuiCol_PlotHistogram));
   JS_SetPropertyStr(ctx, obj, "COL_FRAME_BG", JS_NewInt32(ctx, ImGuiCol_FrameBg));
 
+  // Table flags
   JS_SetPropertyStr(ctx, obj, "TABLE_BORDERS",
                     JS_NewInt32(ctx, (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10)));
   JS_SetPropertyStr(ctx, obj, "TABLE_ROW_BG", JS_NewInt32(ctx, 1 << 6));
   JS_SetPropertyStr(ctx, obj, "TABLE_RESIZABLE", JS_NewInt32(ctx, 1 << 0));
 }
 
+// ============================================================================
+// Module registration
+// ============================================================================
+
+// imgui.set_keyboard_focus_here(offset) — focus next item (or item at offset)
+static JSValue js_imgui_set_keyboard_focus_here(JSContext *ctx, JSValueConst this_val,
+                                                int argc, JSValueConst *argv) {
+  (void)this_val;
+  int offset = 0;
+  if (argc > 0) JS_ToInt32(ctx, &offset, argv[0]);
+  igSetKeyboardFocusHere(offset);
+  return JS_UNDEFINED;
+}
+
+// imgui.progress_bar(fraction, w, h, overlay)
 static JSValue js_imgui_progress_bar(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv) {
   double fraction = 0;
   if (argc > 0) JS_ToFloat64(ctx, &fraction, argv[0]);
-  double w = -1, h = 0;
+  double w = -1, h = 0; // -1 = full width by default
   if (argc > 1) JS_ToFloat64(ctx, &w, argv[1]);
   if (argc > 2) JS_ToFloat64(ctx, &h, argv[2]);
   ImVec2_c size = { (float)w, (float)h };
@@ -884,6 +991,7 @@ static JSValue js_imgui_progress_bar(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.push_style_color(idx, r, g, b, a) / pop_style_color(count)
 static JSValue js_imgui_push_style_color(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
   int idx = 0;
@@ -906,6 +1014,7 @@ static JSValue js_imgui_pop_style_color(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.get_cursor_pos() -> {x, y}
 static JSValue js_imgui_get_cursor_pos(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
   ImVec2_c pos = igGetCursorScreenPos();
@@ -915,6 +1024,7 @@ static JSValue js_imgui_get_cursor_pos(JSContext *ctx, JSValueConst this_val,
   return obj;
 }
 
+// imgui.dummy(w, h)
 static JSValue js_imgui_dummy(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv) {
   double w = 0, h = 0;
@@ -925,6 +1035,7 @@ static JSValue js_imgui_dummy(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.begin_group() / end_group()
 static JSValue js_imgui_begin_group(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   igBeginGroup();
@@ -937,6 +1048,11 @@ static JSValue js_imgui_end_group(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// Selectable
+// ============================================================================
+
+// imgui.selectable(label, selected) → bool (clicked)
 static JSValue js_imgui_selectable(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv) {
   const char *label = (argc > 0) ? JS_ToCString(ctx, argv[0]) : "??";
@@ -946,6 +1062,11 @@ static JSValue js_imgui_selectable(JSContext *ctx, JSValueConst this_val,
   return JS_NewBool(ctx, clicked);
 }
 
+// ============================================================================
+// Drag & Drop (Dear ImGui native)
+// ============================================================================
+
+// imgui.begin_drag_drop_source(flags) → bool
 static JSValue js_imgui_begin_drag_drop_source(JSContext *ctx, JSValueConst this_val,
                                                 int argc, JSValueConst *argv) {
   int flags = (argc > 0) ? 0 : 0;
@@ -953,6 +1074,8 @@ static JSValue js_imgui_begin_drag_drop_source(JSContext *ctx, JSValueConst this
   return JS_NewBool(ctx, igBeginDragDropSource(flags));
 }
 
+// imgui.set_drag_drop_payload(type, data_int) → bool
+// 简化版：payload 是一个 int（列表索引），不传复杂数据
 static JSValue js_imgui_set_drag_drop_payload(JSContext *ctx, JSValueConst this_val,
                                                int argc, JSValueConst *argv) {
   const char *type = (argc > 0) ? JS_ToCString(ctx, argv[0]) : "DEFAULT";
@@ -963,17 +1086,20 @@ static JSValue js_imgui_set_drag_drop_payload(JSContext *ctx, JSValueConst this_
   return JS_NewBool(ctx, result);
 }
 
+// imgui.end_drag_drop_source()
 static JSValue js_imgui_end_drag_drop_source(JSContext *ctx, JSValueConst this_val,
                                               int argc, JSValueConst *argv) {
   igEndDragDropSource();
   return JS_UNDEFINED;
 }
 
+// imgui.begin_drag_drop_target() → bool
 static JSValue js_imgui_begin_drag_drop_target(JSContext *ctx, JSValueConst this_val,
                                                 int argc, JSValueConst *argv) {
   return JS_NewBool(ctx, igBeginDragDropTarget());
 }
 
+// imgui.accept_drag_drop_payload(type) → int (payload data) or null
 static JSValue js_imgui_accept_drag_drop_payload(JSContext *ctx, JSValueConst this_val,
                                                   int argc, JSValueConst *argv) {
   const char *type = (argc > 0) ? JS_ToCString(ctx, argv[0]) : "DEFAULT";
@@ -986,6 +1112,7 @@ static JSValue js_imgui_accept_drag_drop_payload(JSContext *ctx, JSValueConst th
   return JS_NULL;
 }
 
+// imgui.end_drag_drop_target()
 static JSValue js_imgui_end_drag_drop_target(JSContext *ctx, JSValueConst this_val,
                                               int argc, JSValueConst *argv) {
   igEndDragDropTarget();
@@ -998,62 +1125,72 @@ static JSValue js_imgui_end_drag_drop_target(JSContext *ctx, JSValueConst this_v
 int js_init_imgui_module(JSContext *ctx) {
   JSValue global = JS_GetGlobalObject(ctx);
 
+  // ========== globalThis.imgui ==========
   JSValue imgui = JS_NewObject(ctx);
 
-  REG(imgui, "init", js_nk_init, 0);
+  // Lifecycle
+  REG(imgui, "init", js_imgui_init, 0);
   REG(imgui, "shutdown", js_noop, 0);
-  REG(imgui, "begin_frame", js_nk_begin_frame, 1);
-  REG(imgui, "end_frame", js_nk_end_frame, 0);
-  REG(imgui, "render", js_nk_render, 2);
+  REG(imgui, "begin_frame", js_imgui_begin_frame, 1);
+  REG(imgui, "end_frame", js_imgui_end_frame, 0);
+  REG(imgui, "render", js_imgui_render, 2);
 
-  REG(imgui, "begin_window", js_nk_begin_window, 6);
-  REG(imgui, "end_window", js_nk_end_window, 0);
-  REG(imgui, "get_current_container", js_nk_get_current_container, 0);
-
+  // Window — compat (title, x, y, w, h, opts)
+  REG(imgui, "begin_window", js_imgui_begin_window, 6);
+  REG(imgui, "end_window", js_imgui_end_window, 0);
+  REG(imgui, "get_current_container", js_imgui_get_current_container, 0);
+  // Window — imgui 原生 (title, flags)
   REG(imgui, "begin", js_imgui_begin, 2);
   REG(imgui, "end", js_imgui_end, 0);
 
-  REG(imgui, "layout_row", js_nk_layout_row, 3);
-  REG(imgui, "layout_set_next", js_nk_layout_set_next, 4);
-  REG(imgui, "layout_next", js_nk_layout_next, 0);
-  REG(imgui, "layout_begin_column", js_nk_layout_begin_column, 0);
-  REG(imgui, "layout_end_column", js_nk_layout_end_column, 0);
+  // Layout — compat
+  REG(imgui, "layout_row", js_imgui_layout_row, 3);
+  REG(imgui, "layout_set_next", js_imgui_layout_set_next, 4);
+  REG(imgui, "layout_next", js_imgui_layout_next, 0);
+  REG(imgui, "layout_begin_column", js_imgui_layout_begin_column, 0);
+  REG(imgui, "layout_end_column", js_imgui_layout_end_column, 0);
 
-  REG(imgui, "button", js_nk_button, 1);
-  REG(imgui, "label", js_nk_label, 1);
-  REG(imgui, "text", js_nk_text, 1);
+  // Widgets — compat (ID-based state)
+  REG(imgui, "button", js_imgui_button, 1);
+  REG(imgui, "label", js_imgui_label, 1);
+  REG(imgui, "text", js_imgui_text, 1);
   REG(imgui, "text_colored", js_imgui_text_colored, 5);
   REG(imgui, "separator", js_imgui_separator, 0);
   REG(imgui, "same_line", js_imgui_same_line, 2);
-  REG(imgui, "checkbox", js_nk_checkbox, 2);
-  REG(imgui, "get_checkbox_state", js_nk_get_checkbox_state, 1);
-  REG(imgui, "set_checkbox_state", js_nk_set_checkbox_state, 2);
-  REG(imgui, "slider", js_nk_slider, 5);
-  REG(imgui, "set_slider_state", js_nk_set_slider_state, 2);
+  REG(imgui, "checkbox", js_imgui_checkbox_id, 2);
+  REG(imgui, "get_checkbox_state", js_imgui_get_checkbox_state, 1);
+  REG(imgui, "set_checkbox_state", js_imgui_set_checkbox_state, 2);
+  REG(imgui, "slider", js_imgui_slider, 5);
+  REG(imgui, "set_slider_state", js_imgui_set_slider_state, 2);
   REG(imgui, "slider_float", js_imgui_slider_float, 4);
-  REG(imgui, "textbox", js_nk_textbox, 1);
-  REG(imgui, "set_textbox_state", js_nk_set_textbox_state, 2);
+  REG(imgui, "textbox", js_imgui_textbox, 1);
+  REG(imgui, "set_textbox_state", js_imgui_set_textbox_state, 2);
   REG(imgui, "input_text", js_imgui_input_text, 2);
-  REG(imgui, "set_keyboard_focus_here", js_imgui_set_keyboard_focus_here, 1);
 
+  // Layout — imgui native
   REG(imgui, "get_cursor_pos", js_imgui_get_cursor_pos, 0);
   REG(imgui, "dummy", js_imgui_dummy, 2);
   REG(imgui, "begin_group", js_imgui_begin_group, 0);
   REG(imgui, "end_group", js_imgui_end_group, 0);
+  REG(imgui, "set_keyboard_focus_here", js_imgui_set_keyboard_focus_here, 1);
   REG(imgui, "progress_bar", js_imgui_progress_bar, 4);
   REG(imgui, "push_style_color", js_imgui_push_style_color, 5);
   REG(imgui, "pop_style_color", js_imgui_pop_style_color, 1);
 
-  REG(imgui, "draw_rect", js_nk_draw_rect, 8);
-  REG(imgui, "draw_control_text", js_nk_draw_control_text, 7);
-  REG(imgui, "draw_text", js_nk_draw_control_text, 7);
+  // Drawing
+  REG(imgui, "draw_rect", js_imgui_draw_rect, 8);
+  REG(imgui, "draw_control_text", js_imgui_draw_control_text, 7);
+  REG(imgui, "draw_text", js_imgui_draw_control_text, 7);
 
-  REG(imgui, "set_style_color", js_nk_set_style_color, 5);
-  REG(imgui, "get_style_color", js_nk_get_style_color, 1);
+  // Style
+  REG(imgui, "set_style_color", js_imgui_set_style_color, 5);
+  REG(imgui, "get_style_color", js_imgui_get_style_color, 1);
 
-  REG(imgui, "begin_panel", js_nk_begin_panel, 1);
-  REG(imgui, "end_panel", js_nk_end_panel, 0);
+  // Panel
+  REG(imgui, "begin_panel", js_imgui_begin_panel, 1);
+  REG(imgui, "end_panel", js_imgui_end_panel, 0);
 
+  // Table
   REG(imgui, "begin_table", js_imgui_begin_table, 3);
   REG(imgui, "end_table", js_imgui_end_table, 0);
   REG(imgui, "table_setup_column", js_imgui_table_setup_column, 3);
@@ -1061,12 +1198,15 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "table_next_row", js_imgui_table_next_row, 0);
   REG(imgui, "table_next_column", js_imgui_table_next_column, 0);
 
+  // Tree
   REG(imgui, "collapsing_header", js_imgui_collapsing_header, 1);
   REG(imgui, "tree_node", js_imgui_tree_node, 1);
   REG(imgui, "tree_pop", js_imgui_tree_pop, 0);
 
+  // Selectable
   REG(imgui, "selectable", js_imgui_selectable, 2);
 
+  // Drag & Drop
   REG(imgui, "begin_drag_drop_source", js_imgui_begin_drag_drop_source, 1);
   REG(imgui, "set_drag_drop_payload", js_imgui_set_drag_drop_payload, 2);
   REG(imgui, "end_drag_drop_source", js_imgui_end_drag_drop_source, 0);
@@ -1074,19 +1214,22 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "accept_drag_drop_payload", js_imgui_accept_drag_drop_payload, 1);
   REG(imgui, "end_drag_drop_target", js_imgui_end_drag_drop_target, 0);
 
+  // Window utilities
   REG(imgui, "set_next_window_pos", js_imgui_set_next_window_pos, 2);
   REG(imgui, "set_next_window_size", js_imgui_set_next_window_size, 2);
   REG(imgui, "show_demo_window", js_imgui_show_demo_window, 0);
 
+  // Scaling
   REG(imgui, "get_font_global_scale", js_imgui_get_font_scale, 0);
   REG(imgui, "set_font_global_scale", js_imgui_set_font_scale, 1);
 
+  // Input query
   REG(imgui, "want_capture_mouse", js_imgui_want_capture_mouse, 0);
   REG(imgui, "want_capture_keyboard", js_imgui_want_capture_keyboard, 0);
-  REG(imgui, "is_any_hovered", js_nk_is_any_hovered, 0);
+  REG(imgui, "is_any_hovered", js_imgui_is_any_hovered, 0);
 
-
-  js_register_nk_constants(ctx, imgui);
+  // Constants (both nk-compat and imgui-native)
+  js_register_compat_constants(ctx, imgui);
   js_register_imgui_constants(ctx, imgui);
 
   JS_SetPropertyStr(ctx, global, "imgui", imgui);

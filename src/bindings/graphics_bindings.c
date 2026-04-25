@@ -1,6 +1,24 @@
+// graphics_bindings.c - Graphics API JS 绑定
+//
+// 对齐 Reference: Graphics.DrawMesh(mesh, loc, quat, material, layer)
+//
+// 用于动态渲染 (RealtimeOnly/MapMeshAndRealTime):
+//   - Pawn 动态绘制
+//   - Door 开关动画
+//   - 其他需要每帧更新位置/旋转的 Thing
+//
+// API:
+//   graphics.draw_mesh(meshId, x, y, z, qx, qy, qz, qw, textureId, layer)
+//   graphics.create_quad_mesh() -> meshId
+//   graphics.free_mesh(meshId)
 
 #include "bedrock/utils/utils.h"
 
+// ... existing includes ...
+
+// In js_graphics_create_quad_mesh:
+// mesh_upload_to_gpu_with_material(&dm->mesh, (const struct
+// Material*)&dm->material);
 #include "../log.h"
 #include "bedrock/gfx/graphics.h"
 #include "bedrock/gfx/material.h"
@@ -13,7 +31,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ============================================================================
+// 常量
+// ============================================================================
+
 #define MAX_DYNAMIC_MESHES 2048
+
+// ============================================================================
+// DynamicMesh 结构
+// ============================================================================
 
 typedef struct {
   Mesh mesh;
@@ -23,6 +49,10 @@ typedef struct {
 
 static DynamicMesh g_dynamic_meshes[MAX_DYNAMIC_MESHES];
 static bool g_initialized = false;
+
+// ============================================================================
+// 初始化
+// ============================================================================
 
 static void ensure_initialized(void) {
   if (g_initialized)
@@ -36,9 +66,13 @@ static void ensure_initialized(void) {
               MAX_DYNAMIC_MESHES);
 }
 
+// ============================================================================
+// 辅助函数：四元数转旋转矩阵
+// ============================================================================
+
 static void quat_to_matrix4(float qx, float qy, float qz, float qw,
                             Matrix4 out) {
-
+  // 归一化四元数
   float len = sqrtf(qx * qx + qy * qy + qz * qz + qw * qw);
   if (len > 0.0001f) {
     qx /= len;
@@ -57,6 +91,7 @@ static void quat_to_matrix4(float qx, float qy, float qz, float qw,
   float wy = qw * qy;
   float wz = qw * qz;
 
+  // 列主序 (Column-major)
   out[0] = 1.0f - 2.0f * (yy + zz);
   out[1] = 2.0f * (xy + wz);
   out[2] = 2.0f * (xz - wy);
@@ -78,11 +113,25 @@ static void quat_to_matrix4(float qx, float qy, float qz, float qw,
   out[15] = 1.0f;
 }
 
+// static void make_transform_matrix(float x, float y, float z, float qx, float
+// qy,
+//                                   float qz, float qw, Matrix4 out) {
+// ... removed ...
+// }
+
+// ============================================================================
+// graphics.create_quad_mesh() -> meshId
+//
+// 创建一个单位四边形 Mesh (1x1，中心在原点)
+// 用于动态渲染 Thing
+// ============================================================================
+
 static JSValue js_graphics_create_quad_mesh(JSContext *ctx,
                                             JSValueConst this_val, int argc,
                                             JSValueConst *argv) {
   ensure_initialized();
 
+  // 查找空闲 slot
   int id = -1;
   for (int i = 0; i < MAX_DYNAMIC_MESHES; i++) {
     if (!g_dynamic_meshes[i].valid) {
@@ -101,28 +150,44 @@ static JSValue js_graphics_create_quad_mesh(JSContext *ctx,
 
   DynamicMesh *dm = &g_dynamic_meshes[id];
 
+  // 初始化 Mesh (4 顶点, 6 索引)
   mesh_init(&dm->mesh, 4, 6);
 
-  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, -0.5f, 1, 1, 1, 1, 0, 0);
-  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, 0.5f, 1, 1, 1, 1, 0, 1);
-  mesh_add_vertex(&dm->mesh, 0.5f, 0.0f, 0.5f, 1, 1, 1, 1, 1, 1);
-  mesh_add_vertex(&dm->mesh, 0.5f, 0.0f, -0.5f, 1, 1, 1, 1, 1, 0);
+  // 单位四边形顶点 (1x1, XZ 平面, Y=0 高度)
+  // [Phase 7] 修复: 从 XY 平面改为 XZ 平面，以适应俯视相机 (Top-Down)
+  // 顶点顺序: 西南(0), 西北(1), 东北(2), 东南(3)
+  // mesh_add_vertex(mesh, x, y, z, r, g, b, a, u, v)
+  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, -0.5f, 1, 1, 1, 1, 0, 0); // 西南
+  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, 0.5f, 1, 1, 1, 1, 0, 1);  // 西北
+  mesh_add_vertex(&dm->mesh, 0.5f, 0.0f, 0.5f, 1, 1, 1, 1, 1, 1);   // 东北
+  mesh_add_vertex(&dm->mesh, 0.5f, 0.0f, -0.5f, 1, 1, 1, 1, 1, 0);  // 东南
 
+  // 两个三角形 (CCW Winding for Top-Down View)
+  // 0(SW) -> 3(SE) -> 2(NE)
+  // 0(SW) -> 2(NE) -> 1(NW)
   mesh_add_triangle(&dm->mesh, 0, 3, 2);
   mesh_add_triangle(&dm->mesh, 0, 2, 1);
 
+  // 初始化默认材质 (必须在 mesh_upload 之前)
   material_init(&dm->material);
   material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);
   material_set_render_queue(&dm->material, 3000);
-
+  // 使用 TEXTURED 模式 (tex_index=0)，因为 Graphics.drawMesh
+  // 通常用于带纹理的渲染
   material_set_shader_type(&dm->material, SHADER_TYPE_TEXTURED);
 
+  // 上传到 GPU (使用 Material 的 shader_type)
   mesh_upload_to_gpu_with_material(&dm->mesh, &dm->material);
 
   dm->valid = true;
 
   return JS_NewInt32(ctx, id);
 }
+
+// ============================================================================
+// graphics.create_quad_mesh_uv(u0, v0, u1, v1) -> meshId
+// 创建自定义 UV 的四边形 mesh（用于 atlas 区域采样）
+// ============================================================================
 
 static JSValue js_graphics_create_quad_mesh_uv(JSContext *ctx,
                                                JSValueConst this_val, int argc,
@@ -140,6 +205,7 @@ static JSValue js_graphics_create_quad_mesh_uv(JSContext *ctx,
   JS_ToFloat64(ctx, &u1, argv[2]);
   JS_ToFloat64(ctx, &v1, argv[3]);
 
+  // 查找空闲 slot
   int id = -1;
   for (int i = 0; i < MAX_DYNAMIC_MESHES; i++) {
     if (!g_dynamic_meshes[i].valid) {
@@ -158,10 +224,11 @@ static JSValue js_graphics_create_quad_mesh_uv(JSContext *ctx,
 
   mesh_init(&dm->mesh, 4, 6);
 
-  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, -0.5f, 1, 1, 1, 1, (float)u0, (float)v0);
-  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f,  0.5f, 1, 1, 1, 1, (float)u0, (float)v1);
-  mesh_add_vertex(&dm->mesh,  0.5f, 0.0f,  0.5f, 1, 1, 1, 1, (float)u1, (float)v1);
-  mesh_add_vertex(&dm->mesh,  0.5f, 0.0f, -0.5f, 1, 1, 1, 1, (float)u1, (float)v0);
+  // 单位四边形顶点 (1x1, XZ 平面, Y=0)，UV 使用传入的 atlas 区域
+  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f, -0.5f, 1, 1, 1, 1, (float)u0, (float)v0); // SW
+  mesh_add_vertex(&dm->mesh, -0.5f, 0.0f,  0.5f, 1, 1, 1, 1, (float)u0, (float)v1); // NW
+  mesh_add_vertex(&dm->mesh,  0.5f, 0.0f,  0.5f, 1, 1, 1, 1, (float)u1, (float)v1); // NE
+  mesh_add_vertex(&dm->mesh,  0.5f, 0.0f, -0.5f, 1, 1, 1, 1, (float)u1, (float)v0); // SE
 
   mesh_add_triangle(&dm->mesh, 0, 3, 2);
   mesh_add_triangle(&dm->mesh, 0, 2, 1);
@@ -177,6 +244,10 @@ static JSValue js_graphics_create_quad_mesh_uv(JSContext *ctx,
 
   return JS_NewInt32(ctx, id);
 }
+
+// ============================================================================
+// graphics.free_mesh(meshId)
+// ============================================================================
 
 static JSValue js_graphics_free_mesh(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
@@ -203,6 +274,10 @@ static JSValue js_graphics_free_mesh(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// Texture Management
+// ============================================================================
+
 #define MAX_GRAPHICS_TEXTURES 256
 #define MAX_GRAPHICS_TEXTURE_PATH_LEN 256
 
@@ -215,12 +290,14 @@ typedef struct {
 
 static GraphicsTextureCache g_graphics_textures[MAX_GRAPHICS_TEXTURES];
 
+// stb_image externs (if not included via header)
 extern void stbi_set_flip_vertically_on_load(int flag);
 extern unsigned char *stbi_load_from_memory(const unsigned char *buffer,
                                             int len, int *x, int *y, int *comp,
                                             int req_comp);
 extern void stbi_image_free(void *ptr);
 
+// Helper: Read File Content
 static void *read_file_content(const char *path, size_t *outLen) {
   FILE *f = fopen(path, "rb");
   if (!f)
@@ -239,8 +316,9 @@ static void *read_file_content(const char *path, size_t *outLen) {
   return buf;
 }
 
+// Helper: Get or Load Texture
 static int get_or_load_graphics_texture(const char *path) {
-
+  // 1. Search existing
   for (int i = 0; i < MAX_GRAPHICS_TEXTURES; i++) {
     if (g_graphics_textures[i].valid &&
         strcmp(g_graphics_textures[i].path, path) == 0) {
@@ -248,6 +326,7 @@ static int get_or_load_graphics_texture(const char *path) {
     }
   }
 
+  // 2. Find free slot
   int slot = -1;
   for (int i = 0; i < MAX_GRAPHICS_TEXTURES; i++) {
     if (!g_graphics_textures[i].valid) {
@@ -261,11 +340,14 @@ static int get_or_load_graphics_texture(const char *path) {
     return -1;
   }
 
+  // 3. Load Texture
+  // This logic mimics thing_mesh.c loading
   size_t fileLen;
   unsigned char *fileContent =
       (unsigned char *)read_file_content(path, &fileLen);
   if (!fileContent) {
-
+    // 纹理文件不存在是正常情况（Graphic_Random 探测变体时）
+    // 改为 VERBOSE 级别，避免刷屏
     LOG_VERBOSE("Texture file not found: %s\n", path);
     return -1;
   }
@@ -305,6 +387,7 @@ static int get_or_load_graphics_texture(const char *path) {
   };
   sg_view view = sg_make_view(&view_desc);
 
+  // Store in cache
   strncpy(g_graphics_textures[slot].path, path,
           MAX_GRAPHICS_TEXTURE_PATH_LEN - 1);
   g_graphics_textures[slot].image = img;
@@ -316,6 +399,7 @@ static int get_or_load_graphics_texture(const char *path) {
   return slot;
 }
 
+// JS Binding: graphics.load_texture(path) -> textureId
 static JSValue js_graphics_load_texture(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
   if (argc < 1)
@@ -328,6 +412,17 @@ static JSValue js_graphics_load_texture(JSContext *ctx, JSValueConst this_val,
   JS_FreeCString(ctx, path);
   return JS_NewInt32(ctx, id);
 }
+
+// ============================================================================
+// graphics.draw_mesh(meshId, x, y, z, qx, qy, qz, qw, textureId, layer)
+//
+// 对齐: Reference Graphics.DrawMesh(mesh, loc, quat, material, layer)
+// ============================================================================
+
+// ============================================================================
+// graphics.draw_mesh(meshId, x, y, z, qx, qy, qz, qw, sx, sy, sz, textureId,
+// layer)
+// ============================================================================
 
 static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
@@ -378,33 +473,55 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
   }
 
+  // 构建 TRS 变换矩阵
   Matrix4 transform;
   Matrix4 rotate;
   Matrix4 scale;
 
+  // 1. Rotation
   quat_to_matrix4((float)qx, (float)qy, (float)qz, (float)qw, rotate);
 
+  // 2. Scale
+  // Identity with diagonal scaling
   memset(scale, 0, sizeof(Matrix4));
   scale[0] = (float)sx;
   scale[5] = (float)sy;
   scale[10] = (float)sz;
   scale[15] = 1.0f;
 
+  // 3. Combine: M = T * R * S
+  // Note: matrix4_mul(A, B, C) -> C = A * B
+  // Sokol matrix layout is usually column-major?
+  // Our matrix4_mul implementation in helpers/math utils?
+  // Assuming standard OpenGL: M = Translate * Rotate * Scale
+
   Matrix4 rs;
   matrix4_mul(rotate, scale, rs);
 
-  memcpy(transform, rs, sizeof(Matrix4));
-  transform[12] = (float)x;
-  transform[13] = (float)y;
-  transform[14] = (float)z;
+  // COORDINATE SYSTEM FIX (Phase 7):
+  // [Changed] Removal of Legacy Permutation.
+  // We now trust the Input Coordinates strictly as World Units.
+  // Transform:
+  //   X -> World X (East)
+  //   Y -> World Y (Altitude)
+  //   Z -> World Z (North)
 
+  memcpy(transform, rs, sizeof(Matrix4));
+  transform[12] = (float)x; // World X
+  transform[13] = (float)y; // World Y (Altitude)
+  transform[14] = (float)z; // World Z (North)
+
+  // Apply Texture - 直接设置 texture 和 view (不要创建新 view)
+  // 注意: 由于 3 个 pawn 共享 DynamicMesh，使用 material_set_texture 会导致
+  // view 被反复销毁/创建，当 submit 时之前复制的 Material 中的 view handle
   if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
       g_graphics_textures[textureId].valid) {
-
+    // 直接设置，避免创建/销毁 view
     dm->material.texture = g_graphics_textures[textureId].image;
     dm->material.texture_view = g_graphics_textures[textureId].view;
   }
 
+  // Parse MaterialBlock properties
   MaterialBlock block;
   memset(&block, 0, sizeof(MaterialBlock));
   MaterialBlock *pBlock = NULL;
@@ -412,6 +529,7 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
   if (argc > 13 && !JS_IsUndefined(argv[13]) && !JS_IsNull(argv[13])) {
     JSValue props = argv[13];
 
+    // color: [r, g, b, a]
     JSValue colorVal = JS_GetPropertyStr(ctx, props, "color");
     if (!JS_IsUndefined(colorVal)) {
       double r, g, b, a;
@@ -427,6 +545,7 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
       JS_FreeValue(ctx, colorVal);
     }
 
+    // colorTwo: [r, g, b, a]
     JSValue colorTwoVal = JS_GetPropertyStr(ctx, props, "colorTwo");
     if (!JS_IsUndefined(colorTwoVal)) {
       double r, g, b, a;
@@ -444,10 +563,17 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
     pBlock = &block;
   }
 
+  // 调用 C 层绘制
   graphics_draw_mesh(&dm->mesh, transform, &dm->material, pBlock, layer);
 
   return JS_UNDEFINED;
 }
+
+// ============================================================================
+// graphics.draw_mesh_at(meshId, x, y, z, textureId, layer)
+//
+// 简化版: 只有位置，无旋转 (identity quaternion)
+// ============================================================================
 
 static JSValue js_graphics_draw_mesh_at(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
@@ -482,9 +608,13 @@ static JSValue js_graphics_draw_mesh_at(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
   }
 
+  // 构建平移矩阵 (无旋转)
+  // [Phase 7] Direct World Mapping
+  // X -> X, Y -> Altitude, Z -> North
   Matrix4 transform = {1, 0, 0, 0, 0,        1,        0,        0,
                        0, 0, 1, 0, (float)x, (float)y, (float)z, 1};
 
+  // Apply Texture - 直接设置 (同 js_graphics_draw_mesh)
   if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
       g_graphics_textures[textureId].valid) {
     dm->material.texture = g_graphics_textures[textureId].image;
@@ -495,6 +625,10 @@ static JSValue js_graphics_draw_mesh_at(JSContext *ctx, JSValueConst this_val,
 
   return JS_UNDEFINED;
 }
+
+// ============================================================================
+// graphics.set_mesh_color(meshId, r, g, b, a)
+// ============================================================================
 
 static JSValue js_graphics_set_mesh_color(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
@@ -531,6 +665,10 @@ static JSValue js_graphics_set_mesh_color(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// graphics.stats()
+// ============================================================================
+
 static JSValue js_graphics_stats(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   ensure_initialized();
@@ -553,6 +691,10 @@ static JSValue js_graphics_stats(JSContext *ctx, JSValueConst this_val,
 
   return ret;
 }
+
+// ============================================================================
+// graphics.create_shader(vs, fs) -> shaderId
+// ============================================================================
 
 #include "bedrock/gfx/generic_shader.h"
 #include "bedrock/gfx/pipeline_cache.h"
@@ -585,6 +727,10 @@ static JSValue js_graphics_create_shader(JSContext *ctx, JSValueConst this_val,
   return JS_NewInt32(ctx, (int32_t)shd.id);
 }
 
+// ============================================================================
+// graphics.set_mesh_shader(meshId, shaderId)
+// ============================================================================
+
 static JSValue js_graphics_set_mesh_shader(JSContext *ctx,
                                            JSValueConst this_val, int argc,
                                            JSValueConst *argv) {
@@ -614,6 +760,10 @@ static JSValue js_graphics_set_mesh_shader(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// graphics.set_mesh_blend(meshId, blendMode)
+// ============================================================================
+
 static JSValue js_graphics_set_mesh_blend(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
   ensure_initialized();
@@ -640,6 +790,11 @@ static JSValue js_graphics_set_mesh_blend(JSContext *ctx, JSValueConst this_val,
 
   return JS_UNDEFINED;
 }
+
+// ============================================================================
+// graphics.set_mesh_shader_type(meshId, shaderType)
+// 设置 DynamicMesh 的 ShaderType (tex_index 分支)
+// ============================================================================
 
 static JSValue js_graphics_set_mesh_shader_type(JSContext *ctx,
                                                 JSValueConst this_val,
@@ -668,6 +823,10 @@ static JSValue js_graphics_set_mesh_shader_type(JSContext *ctx,
 
   return JS_UNDEFINED;
 }
+
+// ============================================================================
+// graphics.set_mesh_color_two(meshId, r, g, b, a)
+// ============================================================================
 
 static JSValue js_graphics_set_mesh_color_two(JSContext *ctx,
                                               JSValueConst this_val, int argc,
@@ -705,6 +864,10 @@ static JSValue js_graphics_set_mesh_color_two(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// graphics.set_mesh_mask_texture(meshId, textureId)
+// ============================================================================
+
 static JSValue js_graphics_set_mesh_mask_texture(JSContext *ctx,
                                                  JSValueConst this_val,
                                                  int argc, JSValueConst *argv) {
@@ -733,6 +896,10 @@ static JSValue js_graphics_set_mesh_mask_texture(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// graphics.set_mesh_param(meshId, index, value)
+// ============================================================================
+
 static JSValue js_graphics_set_mesh_param(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
   ensure_initialized();
@@ -760,6 +927,11 @@ static JSValue js_graphics_set_mesh_param(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// ============================================================================
+// graphics.draw_mesh_instanced(meshId, textureId, layer, transforms,
+// colors, count)
+// ============================================================================
+
 static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
                                                JSValueConst this_val, int argc,
                                                JSValueConst *argv) {
@@ -779,6 +951,9 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   if (JS_ToInt32(ctx, &layer, argv[2]) < 0)
     return JS_EXCEPTION;
 
+  // argv[3] = transforms (Float32Array)
+  // argv[4] = colors (Float32Array or null)
+
   if (JS_ToInt32(ctx, &count, argv[5]) < 0)
     return JS_EXCEPTION;
 
@@ -788,12 +963,14 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   if (!dm->valid)
     return JS_UNDEFINED;
 
+  // Verify TypedArrays
   size_t trans_offset, trans_len;
   JSValue trans_buf =
       JS_GetTypedArrayBuffer(ctx, argv[3], &trans_offset, &trans_len, NULL);
   if (JS_IsException(trans_buf))
     return JS_ThrowTypeError(ctx, "transforms must be Float32Array");
 
+  // Matrix4 = 16 floats = 64 bytes
   if (trans_len < (size_t)(count * 64)) {
     JS_FreeValue(ctx, trans_buf);
     return JS_ThrowRangeError(ctx, "transforms array too small");
@@ -807,6 +984,7 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
 
   const Matrix4 *transforms = (const Matrix4 *)(trans_ptr + trans_offset);
 
+  // Optional Colors
   const Vec4 *colors = NULL;
   JSValue col_buf = JS_UNDEFINED;
 
@@ -818,6 +996,7 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
       return JS_ThrowTypeError(ctx, "colors must be Float32Array or null");
     }
 
+    // Vec4 = 4 floats = 16 bytes
     if (col_len < (size_t)(count * 16)) {
       JS_FreeValue(ctx, trans_buf);
       JS_FreeValue(ctx, col_buf);
@@ -830,6 +1009,11 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
     }
   }
 
+  // Material setup (Reuse dm->material but update texture)
+  // textureId >= 10000: atlas 纹理池 (ATLAS_TEX_ID_OFFSET)
+  // textureId 0-255: graphics.load_texture 纹理池
+  // atlas_texture_get() 由 unified_mesh.c 提供
+
   sg_image old_tex = dm->material.texture;
   sg_view old_view = dm->material.texture_view;
 
@@ -839,12 +1023,12 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   sg_view tex_view;
 
   if (atlas_texture_get(textureId, &tex_img, &tex_view)) {
-
+    // atlas 纹理池 (Fleck 粒子等使用 atlas page textureId)
     dm->material.texture = tex_img;
     dm->material.texture_view = tex_view;
   } else if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
              g_graphics_textures[textureId].valid) {
-
+    // load_texture 纹理池
     dm->material.texture = g_graphics_textures[textureId].image;
     dm->material.texture_view = g_graphics_textures[textureId].view;
   }
@@ -852,6 +1036,7 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   graphics_draw_mesh_instanced(&dm->mesh, &dm->material, transforms, colors,
                                count, layer);
 
+  // Restore material (optional, but good practice)
   dm->material.texture = old_tex;
   dm->material.texture_view = old_view;
 
@@ -862,6 +1047,10 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
 
   return JS_UNDEFINED;
 }
+
+// ============================================================================
+// 模块初始化
+// ============================================================================
 
 int js_init_graphics_module(JSContext *ctx) {
   JSValue global = JS_GetGlobalObject(ctx);
@@ -888,6 +1077,7 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "stats",
                     JS_NewCFunction(ctx, js_graphics_stats, "stats", 0));
 
+  // New Bindings
   JS_SetPropertyStr(
       ctx, obj, "create_shader",
       JS_NewCFunction(ctx, js_graphics_create_shader, "create_shader", 2));
