@@ -108,30 +108,8 @@ function register_system_callbacks() {
   }
 }
 
-// RenderFrameCallbacks — mainthread hook for game-specific render setup
-// (atlas uploads, mesh collection, etc.). Each callback runs once per
-// frame inside render_frame() *before* ScaffoldCallbacks.runAll(dt).
-// Games register from their own scripts using:
-//   RenderFrameCallbacks.register(fn, "name");
-// Callback signature: function(dt) {}
-globalThis.RenderFrameCallbacks = {
-  _list: [],
-  register: function(fn, name) {
-    if (typeof fn !== 'function') {
-      throw new Error("[RenderFrameCallbacks] callback must be a function");
-    }
-    this._list.push({ fn: fn, name: name || "anonymous" });
-  },
-  runAll: function(dt) {
-    for (const cb of this._list) {
-      try {
-        cb.fn(dt);
-      } catch (e) {
-        jtask.log.error("[RenderFrameCallbacks] '" + cb.name + "' threw: " + e.message + "\n" + (e.stack || ""));
-      }
-    }
-  },
-};
+// RenderFrameCallbacks is now defined in bedrock/03_frame_callbacks.js
+// so game scripts can register before this service file evaluates.
 
 function render_frame() {
   try {

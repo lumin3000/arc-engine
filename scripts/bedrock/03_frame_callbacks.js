@@ -146,6 +146,32 @@ if (typeof LongEventHandler !== 'undefined') {
     }, ScaffoldPriority.LONG_EVENT_CHECK, "LongEventHandler.BlockCheck");
 }
 
+// ============================================================================
+// RenderFrameCallbacks — mainthread render-frame hooks. Defined here in
+// bedrock so games can register callbacks at module-load time, before
+// rt/render_service.js (which is bundled last) actually runs the loop.
+// See rt/render_service.js for the consumer (calls runAll(dt) inside
+// render_frame, before ScaffoldCallbacks.runAll).
+// ============================================================================
+globalThis.RenderFrameCallbacks = {
+  _list: [],
+  register: function(fn, name) {
+    if (typeof fn !== 'function') {
+      throw new Error("[RenderFrameCallbacks] callback must be a function");
+    }
+    this._list.push({ fn: fn, name: name || "anonymous" });
+  },
+  runAll: function(dt) {
+    for (const cb of this._list) {
+      try {
+        cb.fn(dt);
+      } catch (e) {
+        jtask.log.error("[RenderFrameCallbacks] '" + cb.name + "' threw: " + e.message + "\n" + (e.stack || ""));
+      }
+    }
+  },
+};
+
 if (globalThis.__BP_VERBOSE__) {
     jtask.log("[ScaffoldCallbacks] loaded");
 }
