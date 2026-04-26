@@ -33,6 +33,12 @@ typedef struct {
     // behaviour; UI-only or JS-driven games set this to true.
     bool disable_default_camera_controls;
 
+    // WASD pan speed (world units / sec). 0 falls back to engine default
+    // 3.0f. After Phase 6 World Units (1 unit = 1 cell), 3.0 is too slow
+    // for cell-based maps; consumers with large cell maps (mapgen) bump
+    // this to e.g. 60. Pixel-style games (gunslinger) leave at default.
+    float camera_pan_speed;
+
     // Optional: play this FMOD event at startup (e.g. "event:/ambiance").
     // NULL to skip.
     const char *startup_ambiance_event;

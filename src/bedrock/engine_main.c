@@ -148,7 +148,12 @@ static void engine_on_frame(void) {
   }
 
   if (!g_cfg.disable_default_camera_controls) {
-    float speed = 3.0f;
+    // Phase 6 World Units (1 unit = 1 cell): 3.0 cells/sec is too slow
+    // for cell-based maps (mapgen 250x250). Game overrides via
+    // Engine_Config.camera_pan_speed; fallback 3.0 keeps gunslinger feel.
+    float speed =
+        g_cfg.camera_pan_speed > 0.0f ? g_cfg.camera_pan_speed : 3.0f;
+
     float dx = 0.0f, dz = 0.0f;
     if (key_down(KEY_W)) dz += 1.0f;
     if (key_down(KEY_S)) dz -= 1.0f;
