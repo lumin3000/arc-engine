@@ -26,6 +26,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !defined(_WIN32)
+#include <sys/file.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
+#include <errno.h>
+#endif
+
 // ---------------------------------------------------------------------------
 // Globals exposed to engine bindings via engine_state.h. engine_main.c is
 // the sole owner; bindings and other TUs read through the accessors
@@ -247,6 +255,94 @@ static void parse_args(int argc, char *argv[]) {
 }
 
 // ---------------------------------------------------------------------------
+// Process singleton lock. Opt-in via Engine_Config.app_name. Enforces "no
+// two arc-engine processes with the same app_name running simultaneously".
+// Motivated by an automation incident where an AI loop launched 14
+// concurrent blueprinter instances on the user's machine because nothing
+// prevented it. The fd is held until process exit; kernel auto-releases
+// flock on termination (including SIGKILL / crash) — this is not a leak.
+
+#if !defined(_WIN32)
+static int s_singleton_lock_fd = -1;
+
+static bool acquire_singleton_lock(const Engine_Config *cfg, int argc,
+                                   char **argv) {
+  if (!cfg->app_name) return true;  // opt-in
+
+  char path[256];
+  snprintf(path, sizeof(path), "/tmp/%s.lock", cfg->app_name);
+
+  int fd = open(path, O_RDWR | O_CREAT, 0600);
+  if (fd < 0) {
+    fprintf(stderr,
+            "[singleton_lock] warn: open(%s) failed: %s — fail-open, "
+            "allowing launch\n",
+            path, strerror(errno));
+    return true;  // fail-open
+  }
+
+  if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+    // Someone else holds it. Read whatever they wrote so we can tell
+    // the user who's already running.
+    char buf[1024];
+    ssize_t n = pread(fd, buf, sizeof(buf) - 1, 0);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    fprintf(stderr,
+            "[singleton_lock] Another instance is already running:\n"
+            "%s\n"
+            "If stale: rm %s\n",
+            buf, path);
+    close(fd);
+    return false;
+  }
+
+  // We own the lock. Overwrite the file with our diagnostic info.
+  ftruncate(fd, 0);
+  lseek(fd, 0, SEEK_SET);
+
+  char cwd[512];
+  if (!getcwd(cwd, sizeof(cwd))) {
+    snprintf(cwd, sizeof(cwd), "<unknown>");
+  }
+
+  char argv_buf[1024];
+  size_t off = 0;
+  argv_buf[0] = '\0';
+  for (int i = 0; i < argc && off < sizeof(argv_buf) - 1; i++) {
+    int written = snprintf(argv_buf + off, sizeof(argv_buf) - off,
+                           "%s%s", i == 0 ? "" : " ", argv[i]);
+    if (written < 0) break;
+    off += (size_t)written;
+  }
+
+  char info[2048];
+  int len = snprintf(info, sizeof(info),
+                     "pid=%d\n"
+                     "started=%ld\n"
+                     "cwd=%s\n"
+                     "argv=%s\n",
+                     (int)getpid(), (long)time(NULL), cwd, argv_buf);
+  if (len > 0) {
+    ssize_t w = write(fd, info, (size_t)len);
+    (void)w;
+    fsync(fd);
+  }
+
+  // Hold fd until process exit. kernel releases flock on terminate.
+  s_singleton_lock_fd = fd;
+  return true;
+}
+#else
+static bool acquire_singleton_lock(const Engine_Config *cfg, int argc,
+                                   char **argv) {
+  (void)cfg; (void)argc; (void)argv;
+  // Windows path lands with §S3R.5 (CreateMutex). For now opt-in is a no-op.
+  return true;
+}
+#endif
+
+// ---------------------------------------------------------------------------
 // Public entry — object-style API. The engine is a process-level singleton
 // (sapp_run is global), so the handle returned by arc_engine_create() is
 // effectively a pointer to internal state. Calling create twice returns
@@ -263,6 +359,8 @@ Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv) {
     fprintf(stderr, "[arc_engine_create] cfg->window_title is required\n");
     return NULL;
   }
+
+  if (!acquire_singleton_lock(cfg, argc, argv)) return NULL;
 
   g_cfg = *cfg;
   g_engine_state.saved_argc = argc;

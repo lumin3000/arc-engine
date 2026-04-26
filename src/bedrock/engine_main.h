@@ -17,6 +17,13 @@ typedef struct {
     int window_w;                    // defaults to 1280 if 0
     int window_h;                    // defaults to 720  if 0
 
+    // Optional: process singleton lock. Set to enable a /tmp/<app_name>.lock
+    // flock-based check at arc_engine_create(). A second process with the
+    // same app_name finds the lock held, prints diagnostic info from the
+    // lock file (pid/started/cwd/argv) to stderr, and arc_engine_create
+    // returns NULL so the caller can exit non-zero. NULL = no lock (legacy).
+    const char *app_name;
+
     // Startup
     const char *default_run_mode;    // default value for --mode
     float master_volume;             // 0..1; 0.25 if 0 and sound is used
