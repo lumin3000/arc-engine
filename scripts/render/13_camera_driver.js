@@ -1,5 +1,5 @@
 
-class CameraDriver {
+class CameraController {
     constructor() {
         this._cachedRect = null;
         this._lastTick = -1;
@@ -32,10 +32,10 @@ class CameraDriver {
     }
 }
 
-globalThis.CameraDriver = CameraDriver;
+globalThis.CameraController = CameraController;
 
-GameInit.onPhase(GameInit.Phase.GAME_STARTED, function() {
-    if (!Find.cameraDriver) {
-        Find.cameraDriver = new CameraDriver();
+EngineBootstrap.onPhase(EngineBootstrap.Phase.GAME_STARTED, function() {
+    if (!EngineRefs.cameraController) {
+        EngineRefs.cameraController = new CameraController();
     }
 });

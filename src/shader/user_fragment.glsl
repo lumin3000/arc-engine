@@ -1,10 +1,9 @@
 // arc-engine default fragment extension — provides only generic
 // pixel handling (tex_index 0..3, FLAG_background_pixels, col_override
-// multiplies). Games that need extra branches (terrain variants, edge
-// detection, procedural effects) supply their own user_fragment.glsl
-// via gunslinger-style build rules that place the game copy into the
-// shader build directory before invoking sokol-shdc. See
-// docs/s16_review.md "S2 开放的议题" item 2 + arc-engine/CLAUDE.md §3.
+// multiplies). Games that need extra branches (e.g. extra texture
+// branches, post effects) supply their own user_fragment.glsl via
+// consumer-side build rules that place the game copy into the shader
+// build directory before invoking sokol-shdc. See arc-engine/CLAUDE.md §3.
 //
 // Contract inherited from shader_core.glsl:
 //   - uniforms:  Shader_Data (bg_repeat_tex0_atlas_uv, batch_props,

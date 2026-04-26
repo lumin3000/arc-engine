@@ -1,5 +1,5 @@
 
-var Root = (function() {
+var EngineRoot = (function() {
     'use strict';
 
     var _soundRoot = null;
@@ -16,14 +16,14 @@ var Root = (function() {
 
         init: function() {
             if (_initialized) {
-                jtask.log.error("[Root] Already initialized");
+                jtask.log.error("[EngineRoot] Already initialized");
                 return;
             }
 
-            jtask.log("[Root] Initializing...");
+            jtask.log("[EngineRoot] Initializing...");
 
             _initialized = true;
-            jtask.log("[Root] Initialized");
+            jtask.log("[EngineRoot] Initialized");
         },
 
         initWindowStack: function() {
@@ -32,7 +32,7 @@ var Root = (function() {
 
                 _windowStack = WindowStack;
 
-                jtask.log("[Root] WindowStack attached (lazy init)");
+                jtask.log("[EngineRoot] WindowStack attached (lazy init)");
             }
         },
 
@@ -46,7 +46,7 @@ var Root = (function() {
         },
 
         shutdown: function() {
-            jtask.log("[Root] Shutting down...");
+            jtask.log("[EngineRoot] Shutting down...");
             _windowStack = null;
             _soundRoot = null;
             _uiRoot = null;
@@ -55,6 +55,6 @@ var Root = (function() {
     };
 })();
 
-globalThis.Root = Root;
+globalThis.EngineRoot = EngineRoot;
 
-jtask.log("[Root] Module loaded");
+jtask.log("[EngineRoot] Module loaded");

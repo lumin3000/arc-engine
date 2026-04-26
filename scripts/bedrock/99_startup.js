@@ -6,7 +6,7 @@ const jtask = globalThis.jtask;
 //   - StartupFlow.registerStartupSteps(arr)  — generator steps run
 //                                              between DATA_LOADED and
 //                                              MAP_READY (loaded asynchronously
-//                                              under LongEventHandler)
+//                                              under BlockingTaskQueue)
 //
 // The TitleScreen object contract:
 //   active   : boolean — true while the title is visible
@@ -14,10 +14,10 @@ const jtask = globalThis.jtask;
 //
 // A "startup step" is a generator function (function*) that may yield
 // repeatedly to spread heavy work across frames; each yield value is
-// forwarded to LongEventHandler for progress display.
+// forwarded to BlockingTaskQueue for progress display.
 //
 // Games register both during bundle evaluation (before the first
-// scaffold tick).
+// frame stage tick).
 
 globalThis.StartupFlow = {
   _titleScreen: null,
@@ -45,15 +45,15 @@ globalThis.StartupFlow = {
 
 function* StartupRoutine() {
 
-  if (typeof Root !== 'undefined' && typeof Current !== 'undefined') {
-    Root.init();
-    Current.root = Root;
-    Root.initWindowStack();
+  if (typeof EngineRoot !== 'undefined' && typeof EngineState !== 'undefined') {
+    EngineRoot.init();
+    EngineState.root = EngineRoot;
+    EngineRoot.initWindowStack();
   }
-  if (typeof Game !== 'undefined' && typeof Current !== 'undefined') {
-    Game.init();
-    Current.game = Game;
-    Game.initManagers();
+  if (typeof EngineSession !== 'undefined' && typeof EngineState !== 'undefined') {
+    EngineSession.init();
+    EngineState.session = EngineSession;
+    EngineSession.initManagers();
   }
 
   while (!message.get_service("loader")) {
@@ -68,33 +68,33 @@ function* StartupRoutine() {
 
   yield;
 
-  if (typeof GameInit !== 'undefined') {
-    GameInit.triggerPhase(GameInit.Phase.CLASSES_DEFINED);
-    GameInit.triggerPhase(GameInit.Phase.DATA_LOADED);
+  if (typeof EngineBootstrap !== 'undefined') {
+    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.CLASSES_DEFINED);
+    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.DATA_LOADED);
   }
 
   for (const step of globalThis.StartupFlow._steps) {
     yield* step();
   }
 
-  if (typeof GameInit !== 'undefined') {
-    GameInit.triggerPhase(GameInit.Phase.MAP_READY);
-    GameInit.triggerPhase(GameInit.Phase.GAME_STARTED);
+  if (typeof EngineBootstrap !== 'undefined') {
+    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.MAP_READY);
+    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.GAME_STARTED);
   }
 
   jtask.log("[game] Startup sequence complete.");
 }
 
 function beginStartup() {
-  if (typeof LongEventHandler !== 'undefined') {
-    LongEventHandler.QueueLongEvent(StartupRoutine, "Initializing...", true);
+  if (typeof BlockingTaskQueue !== 'undefined') {
+    BlockingTaskQueue.enqueueBlockingTask(StartupRoutine, "Initializing...", true);
   } else {
-    jtask.log.error("[game] LongEventHandler missing!");
+    jtask.log.error("[game] BlockingTaskQueue missing!");
   }
 }
 
 var _started = false;
-ScaffoldCallbacks.register(function() {
+FrameStageCallbacks.register(function() {
   var ts = globalThis.StartupFlow._titleScreen;
   if (!ts) {
     if (!_started) {
@@ -111,4 +111,4 @@ ScaffoldCallbacks.register(function() {
     _started = true;
     beginStartup();
   }
-}, ScaffoldPriority.LONG_EVENT_CHECK - 1, "TitleScreen.Wait");
+}, FrameStagePriority.BLOCKING_TASK_CHECK - 1, "TitleScreen.Wait");

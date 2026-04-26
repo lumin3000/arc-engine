@@ -1,86 +1,86 @@
 
-var Find = (function() {
+var EngineRefs = (function() {
     'use strict';
 
     return {
 
         get root() {
-            return Current.root;
+            return EngineState.root;
         },
 
         get windowStack() {
-            return Current.root?.windowStack;
+            return EngineState.root?.windowStack;
         },
 
         get soundRoot() {
-            return Current.root?.soundRoot;
+            return EngineState.root?.soundRoot;
         },
 
-        get game() {
-            return Current.game;
+        get session() {
+            return EngineState.session;
         },
 
         get tickManager() {
-            return Current.game?.tickManager;
+            return EngineState.session?.tickManager;
         },
 
         get signalManager() {
-            return Current.game?.signalManager;
+            return EngineState.session?.signalManager;
         },
 
         get uniqueIDsManager() {
-            return Current.game?.uniqueIDsManager;
+            return EngineState.session?.uniqueIDsManager;
         },
 
         get maps() {
-            return Current.game?.maps;
+            return EngineState.session?.maps;
         },
 
         get currentMap() {
-            return Current.game?.currentMap;
+            return EngineState.session?.currentMap;
         },
 
         get selector() {
-            return Current.game?.selector;
+            return EngineState.session?.selector;
         },
 
         set selector(value) {
-            if (Current.game) {
-                Current.game.selector = value;
+            if (EngineState.session) {
+                EngineState.session.selector = value;
             }
         },
 
-        get cameraDriver() {
-            return Current.game?.cameraDriver;
+        get cameraController() {
+            return EngineState.session?.cameraController;
         },
 
-        set cameraDriver(value) {
-            if (Current.game) {
-                Current.game.cameraDriver = value;
+        set cameraController(value) {
+            if (EngineState.session) {
+                EngineState.session.cameraController = value;
             }
         },
 
         get world() {
-            return Current.game?.world ?? null;
+            return EngineState.session?.world ?? null;
         },
 
-        // Engine `Find` only exposes engine-owned references (root, game,
-        // currentMap, tickManager, cameraDriver, etc.). Games extend by
-        // assigning `Find.<name>` from their own scripts.
+        // EngineRefs only exposes engine-owned references (root, session,
+        // currentMap, tickManager, cameraController, etc.). Consumers extend
+        // by assigning EngineRefs.<name> from their own scripts.
 
-        get hasGame() {
-            return Current.hasGame;
+        get hasSession() {
+            return EngineState.hasSession;
         },
 
         get hasRoot() {
-            return Current.hasRoot;
+            return EngineState.hasRoot;
         },
 
         set currentMap(value) {
-            if (Current.game) {
-                Current.game.setCurrentMap(value);
+            if (EngineState.session) {
+                EngineState.session.setCurrentMap(value);
             } else {
-                jtask.log("[Find] WARN: Game not initialized, cannot set currentMap");
+                jtask.log("[EngineRefs] WARN: Session not initialized, cannot set currentMap");
             }
         },
 
@@ -98,6 +98,6 @@ var Find = (function() {
     };
 })();
 
-globalThis.Find = Find;
+globalThis.EngineRefs = EngineRefs;
 
-jtask.log("[Find] Module loaded (read-only shortcuts)");
+jtask.log("[EngineRefs] Module loaded (read-only shortcuts)");

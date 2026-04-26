@@ -1,12 +1,12 @@
 
-var Game = (function() {
+var EngineSession = (function() {
     'use strict';
 
     var _tickManager = null;
     var _signalManager = null;
     var _uniqueIDsManager = null;
     var _selector = null;
-    var _cameraDriver = null;
+    var _cameraController = null;
     var _currentMap = null;
     var _maps = [];
     var _initialized = false;
@@ -18,8 +18,8 @@ var Game = (function() {
         get uniqueIDsManager() { return _uniqueIDsManager; },
         get selector() { return _selector; },
         set selector(value) { _selector = value; },
-        get cameraDriver() { return _cameraDriver; },
-        set cameraDriver(value) { _cameraDriver = value; },
+        get cameraController() { return _cameraController; },
+        set cameraController(value) { _cameraController = value; },
         get currentMap() { return _currentMap; },
         set currentMap(map) { _currentMap = map; },
         get maps() { return _maps; },
@@ -27,22 +27,22 @@ var Game = (function() {
 
         init: function() {
             if (_initialized) {
-                jtask.log.error("[Game] Already initialized");
+                jtask.log.error("[EngineSession] Already initialized");
                 return;
             }
 
-            jtask.log("[Game] Initializing...");
+            jtask.log("[EngineSession] Initializing...");
 
             _maps = [];
             _currentMap = null;
 
             _initialized = true;
-            jtask.log("[Game] Initialized");
+            jtask.log("[EngineSession] Initialized");
         },
 
         initManagers: function() {
-            if (!_tickManager && typeof TickManager !== 'undefined') {
-                _tickManager = new TickManager();
+            if (!_tickManager && typeof TickScheduler !== 'undefined') {
+                _tickManager = new TickScheduler();
             }
             if (!_signalManager && typeof SignalManager !== 'undefined') {
                 _signalManager = new SignalManager();
@@ -61,7 +61,7 @@ var Game = (function() {
                     _tickManager.registerMap(map);
                 }
             }
-            jtask.log("[Game] Current map set");
+            jtask.log("[EngineSession] Current map set");
         },
 
         addMap: function(map) {
@@ -83,7 +83,7 @@ var Game = (function() {
         },
 
         shutdown: function() {
-            jtask.log("[Game] Shutting down...");
+            jtask.log("[EngineSession] Shutting down...");
 
             _maps = [];
             _currentMap = null;
@@ -92,14 +92,14 @@ var Game = (function() {
             _signalManager = null;
             _uniqueIDsManager = null;
             _selector = null;
-            _cameraDriver = null;
+            _cameraController = null;
 
             _initialized = false;
-            jtask.log("[Game] Shutdown complete");
+            jtask.log("[EngineSession] Shutdown complete");
         }
     };
 })();
 
-globalThis.Game = Game;
+globalThis.EngineSession = EngineSession;
 
-jtask.log("[Game] Module loaded");
+jtask.log("[EngineSession] Module loaded");

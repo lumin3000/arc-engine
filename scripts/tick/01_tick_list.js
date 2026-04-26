@@ -1,18 +1,18 @@
 
-const TickerType = Object.freeze({
-    Never: 0, Normal: 1, Rare: 2, Long: 3,
-    toString(v) { return ["Never","Normal","Rare","Long"][v] || "Unknown"; },
-    fromString(s) { return {Never:0,Normal:1,Rare:2,Long:3}[s] ?? 0; }
+const TickRate = Object.freeze({
+    None: 0, Every: 1, Sparse: 2, Slow: 3,
+    toString(v) { return ["None","Every","Sparse","Slow"][v] || "Unknown"; },
+    fromString(s) { return {None:0,Every:1,Sparse:2,Slow:3}[s] ?? 0; }
 });
-const TimeSpeed = Object.freeze({
+const SimSpeed = Object.freeze({
     Paused: 0, Normal: 1, Fast: 2, Superfast: 3, Ultrafast: 4,
     toString(v) { return ["Paused","Normal","Fast","Superfast","Ultrafast"][v] || "Unknown"; },
     fromString(s) { return {Paused:0,Normal:1,Fast:2,Superfast:3,Ultrafast:4}[s] ?? 0; }
 });
-globalThis.TickerType = TickerType;
-globalThis.TimeSpeed = TimeSpeed;
+globalThis.TickRate = TickRate;
+globalThis.SimSpeed = SimSpeed;
 
-class TickList {
+class TickBucket {
 
     constructor(tickType) {
 
@@ -32,11 +32,11 @@ class TickList {
 
     get _tickInterval() {
         switch (this._tickType) {
-            case TickerType.Normal:
+            case TickRate.Every:
                 return 1;
-            case TickerType.Rare:
+            case TickRate.Sparse:
                 return 250;
-            case TickerType.Long:
+            case TickRate.Slow:
                 return 2000;
             default:
                 return -1;
@@ -88,7 +88,7 @@ class TickList {
         this._toDeregister.push(tickable);
     }
 
-    tick(ticksGame) {
+    tick(ticksSimulation) {
 
         for (let i = 0; i < this._toRegister.length; i++) {
             const tickable = this._toRegister[i];
@@ -106,7 +106,7 @@ class TickList {
         }
         this._toDeregister.length = 0;
 
-        const currentBucket = this._buckets[ticksGame % this._tickInterval];
+        const currentBucket = this._buckets[ticksSimulation % this._tickInterval];
 
         for (let m = 0; m < currentBucket.length; m++) {
             const tickable = currentBucket[m];
@@ -116,7 +116,7 @@ class TickList {
             }
 
             try {
-                tickable.doTick();
+                tickable.tick();
             } catch (e) {
 
                 const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
@@ -174,15 +174,15 @@ class TickList {
 
     toString() {
         const typeNames = {
-            [TickerType.Never]: "Never",
-            [TickerType.Normal]: "Normal",
-            [TickerType.Rare]: "Rare",
-            [TickerType.Long]: "Long"
+            [TickRate.None]: "None",
+            [TickRate.Every]: "Every",
+            [TickRate.Sparse]: "Sparse",
+            [TickRate.Slow]: "Slow"
         };
-        return `TickList(${typeNames[this._tickType] ?? this._tickType})`;
+        return `TickBucket(${typeNames[this._tickType] ?? this._tickType})`;
     }
 }
 
-globalThis.TickList = TickList;
+globalThis.TickBucket = TickBucket;
 
-if (globalThis.__BP_VERBOSE__) jtask.log("[tick_list] TickList class loaded");
+if (globalThis.__BP_VERBOSE__) jtask.log("[tick_list] TickBucket class loaded");

@@ -1,5 +1,5 @@
 
-const GameInit = {
+const EngineBootstrap = {
 
     Phase: {
         CLASSES_DEFINED: 1,
@@ -19,7 +19,7 @@ const GameInit = {
 
     onPhase(phase, callback) {
         if (typeof callback !== 'function') {
-            jtask.log("[GameInit] ERROR: callback must be a function");
+            jtask.log("[EngineBootstrap] ERROR: callback must be a function");
             return;
         }
 
@@ -28,7 +28,7 @@ const GameInit = {
             try {
                 callback();
             } catch (e) {
-                jtask.log("[GameInit] Callback error: " + e.message + "\n" + (e.stack || ''));
+                jtask.log("[EngineBootstrap] Callback error: " + e.message + "\n" + (e.stack || ''));
             }
         } else {
 
@@ -41,19 +41,19 @@ const GameInit = {
 
     triggerPhase(phase) {
         if (phase <= this._currentPhase) {
-            jtask.log("[GameInit] WARNING: Phase " + this._phaseNames[phase] + " already triggered");
+            jtask.log("[EngineBootstrap] WARNING: Phase " + this._phaseNames[phase] + " already triggered");
             return;
         }
 
         this._currentPhase = phase;
-        jtask.log("[GameInit] Phase: " + this._phaseNames[phase]);
+        jtask.log("[EngineBootstrap] Phase: " + this._phaseNames[phase]);
 
         const callbacks = this._callbacks[phase] || [];
         for (const cb of callbacks) {
             try {
                 cb();
             } catch (e) {
-                jtask.log("[GameInit] Callback error in " + this._phaseNames[phase] + ": " + e.message + "\n" + (e.stack || ''));
+                jtask.log("[EngineBootstrap] Callback error in " + this._phaseNames[phase] + ": " + e.message + "\n" + (e.stack || ''));
             }
         }
 
@@ -69,8 +69,8 @@ const GameInit = {
     }
 };
 
-globalThis.GameInit = GameInit;
+globalThis.EngineBootstrap = EngineBootstrap;
 
 if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[GameInit] Module loaded");
+    jtask.log("[EngineBootstrap] Module loaded");
 }

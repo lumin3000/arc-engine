@@ -54,7 +54,7 @@ const RealTime = {
     }
 };
 
-const GenTicks = {
+const TickClock = {
 
     _tickDataProvider: null,
 
@@ -70,18 +70,18 @@ const GenTicks = {
 
     SECONDS_PER_TICK: 1 / 60,
 
-    get ticksAbs() {
+    get ticksAbsolute() {
         if (this._tickDataProvider) {
             const data = this._tickDataProvider();
-            return data?.ticksAbs ?? 0;
+            return data?.ticksAbsolute ?? 0;
         }
         return 0;
     },
 
-    get ticksGame() {
+    get ticksSimulation() {
         if (this._tickDataProvider) {
             const data = this._tickDataProvider();
-            return data?.ticksGame ?? 0;
+            return data?.ticksSimulation ?? 0;
         }
         return 0;
     },
@@ -99,11 +99,11 @@ const GenTicks = {
     },
 
     isTickInterval(period) {
-        return this.ticksGame % period === 0;
+        return this.ticksSimulation % period === 0;
     },
 
     isTickIntervalWithOffset(offset, period) {
-        return (this.ticksGame + offset) % period === 0;
+        return (this.ticksSimulation + offset) % period === 0;
     },
 
     getTickIntervalOffset(index, count, period) {
@@ -119,7 +119,7 @@ const GameTimer = {
 
     setTimeout(callback, delayTicks) {
         const id = this._nextId++;
-        const currentTick = GenTicks.ticksGame;
+        const currentTick = TickClock.ticksSimulation;
 
         this._timers.push({
             id: id,
@@ -142,7 +142,7 @@ const GameTimer = {
 
     setInterval(callback, intervalTicks) {
         const id = this._nextId++;
-        const currentTick = GenTicks.ticksGame;
+        const currentTick = TickClock.ticksSimulation;
 
         this._timers.push({
             id: id,
@@ -161,11 +161,11 @@ const GameTimer = {
     },
 
     setTimeoutSeconds(callback, delaySeconds) {
-        return this.setTimeout(callback, GenTicks.secondsToTicks(delaySeconds));
+        return this.setTimeout(callback, TickClock.secondsToTicks(delaySeconds));
     },
 
     setIntervalSeconds(callback, intervalSeconds) {
-        return this.setInterval(callback, GenTicks.secondsToTicks(intervalSeconds));
+        return this.setInterval(callback, TickClock.secondsToTicks(intervalSeconds));
     },
 
     tick(currentTick) {
@@ -203,9 +203,9 @@ const GameTimer = {
 };
 
 globalThis.RealTime = RealTime;
-globalThis.GenTicks = GenTicks;
+globalThis.TickClock = TickClock;
 globalThis.GameTimer = GameTimer;
 
 if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[time] RealTime, GenTicks, GameTimer loaded");
+    jtask.log("[time] RealTime, TickClock, GameTimer loaded");
 }

@@ -1,7 +1,7 @@
 
-globalThis.ScaffoldPriority = {
+globalThis.FrameStagePriority = {
 
-    LONG_EVENT_CHECK: 10,
+    BLOCKING_TASK_CHECK: 10,
 
     INPUT_EARLY: 100,
     HOTKEY: 110,
@@ -35,7 +35,7 @@ globalThis.ScaffoldPriority = {
     DIAGNOSTICS: 950,
 };
 
-ScaffoldPriority.GROUPS = {
+FrameStagePriority.GROUPS = {
     BLOCKING:     { min: 0,   max: 99,  name: "Blocking" },
     INPUT:        { min: 100, max: 199, name: "Input" },
     LOGIC:        { min: 200, max: 299, name: "Logic" },
@@ -43,26 +43,26 @@ ScaffoldPriority.GROUPS = {
     WORLD_RENDER: { min: 400, max: 599, name: "WorldRender" },
     SCREEN_SETUP: { min: 600, max: 699, name: "ScreenSetup" },
     SCREEN_RENDER:{ min: 700, max: 899, name: "ScreenRender" },
-    FRAME_END:    { min: 900, max: 999, name: "ScaffoldEnd" },
+    FRAME_END:    { min: 900, max: 999, name: "FrameEnd" },
 };
 
-globalThis.ScaffoldCallbacks = {
+globalThis.FrameStageCallbacks = {
     _list: [],
     _sorted: false,
 
     register: function(callback, priority, name) {
         if (typeof callback !== 'function') {
-            jtask.log("[ScaffoldCallbacks] ERROR: callback must be a function");
+            jtask.log("[FrameStageCallbacks] ERROR: callback must be a function");
             return;
         }
         if (typeof priority !== 'number') {
-            jtask.log("[ScaffoldCallbacks] ERROR: priority must be a number");
+            jtask.log("[FrameStageCallbacks] ERROR: priority must be a number");
             return;
         }
         this._list.push({ callback, priority, name: name || "(anonymous)" });
         this._sorted = false;
         if (globalThis.__BP_VERBOSE__) {
-            jtask.log("[ScaffoldCallbacks] +" + (name || "anon") + " @" + priority);
+            jtask.log("[FrameStageCallbacks] +" + (name || "anon") + " @" + priority);
         }
     },
 
@@ -71,7 +71,7 @@ globalThis.ScaffoldCallbacks = {
         if (idx !== -1) {
             const removed = this._list.splice(idx, 1)[0];
             if (globalThis.__BP_VERBOSE__) {
-                jtask.log("[ScaffoldCallbacks] -" + removed.name);
+                jtask.log("[FrameStageCallbacks] -" + removed.name);
             }
         }
     },
@@ -100,12 +100,12 @@ globalThis.ScaffoldCallbacks = {
 
                 if (this._blocked) {
                     if (globalThis.__BP_VERBOSE__) {
-                        jtask.log("[ScaffoldCallbacks] blocked by " + item.name);
+                        jtask.log("[FrameStageCallbacks] blocked by " + item.name);
                     }
                     return;
                 }
             } catch (e) {
-                jtask.log("[ScaffoldCallbacks] ERROR " + item.name + ": " + e.message);
+                jtask.log("[FrameStageCallbacks] ERROR " + item.name + ": " + e.message);
                 if (e.stack) jtask.log(e.stack);
             }
         }
@@ -121,11 +121,11 @@ globalThis.ScaffoldCallbacks = {
             this._list.sort((a, b) => a.priority - b.priority);
             this._sorted = true;
         }
-        jtask.log("[ScaffoldCallbacks] === " + this._list.length + " callbacks ===");
+        jtask.log("[FrameStageCallbacks] === " + this._list.length + " callbacks ===");
         for (const item of this._list) {
             let group = "?";
-            for (const k in ScaffoldPriority.GROUPS) {
-                const g = ScaffoldPriority.GROUPS[k];
+            for (const k in FrameStagePriority.GROUPS) {
+                const g = FrameStagePriority.GROUPS[k];
                 if (item.priority >= g.min && item.priority <= g.max) {
                     group = g.name;
                     break;
@@ -136,14 +136,14 @@ globalThis.ScaffoldCallbacks = {
     }
 };
 
-if (typeof LongEventHandler !== 'undefined') {
-    ScaffoldCallbacks.register(function(dt) {
-        if (LongEventHandler.ShouldWaitForEvent) {
+if (typeof BlockingTaskQueue !== 'undefined') {
+    FrameStageCallbacks.register(function(dt) {
+        if (BlockingTaskQueue.isBlocking) {
             coord.push_screen_space();
-            LongEventHandler.OnGUI();
-            ScaffoldCallbacks.block();
+            BlockingTaskQueue.drawProgress();
+            FrameStageCallbacks.block();
         }
-    }, ScaffoldPriority.LONG_EVENT_CHECK, "LongEventHandler.BlockCheck");
+    }, FrameStagePriority.BLOCKING_TASK_CHECK, "BlockingTaskQueue.BlockCheck");
 }
 
 // ============================================================================
@@ -151,7 +151,7 @@ if (typeof LongEventHandler !== 'undefined') {
 // bedrock so games can register callbacks at module-load time, before
 // rt/render_service.js (which is bundled last) actually runs the loop.
 // See rt/render_service.js for the consumer (calls runAll(dt) inside
-// render_frame, before ScaffoldCallbacks.runAll).
+// render_frame, before FrameStageCallbacks.runAll).
 // ============================================================================
 globalThis.RenderFrameCallbacks = {
   _list: [],
@@ -173,5 +173,5 @@ globalThis.RenderFrameCallbacks = {
 };
 
 if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[ScaffoldCallbacks] loaded");
+    jtask.log("[FrameStageCallbacks] loaded");
 }

@@ -1,5 +1,5 @@
 
-const LongEventHandler = {
+const BlockingTaskQueue = {
 
     _eventQueue: [],
 
@@ -12,7 +12,7 @@ const LongEventHandler = {
     _dotsTimer: 0,
     _dots: "",
 
-    QueueLongEvent(action, textKey, doAsynchronously, exceptionHandler, callback) {
+    enqueueBlockingTask(action, textKey, doAsynchronously, exceptionHandler, callback) {
         this._eventQueue.push({
             action: action,
             textKey: textKey || "Loading...",
@@ -22,7 +22,7 @@ const LongEventHandler = {
         });
     },
 
-    Update() {
+    tick() {
 
         if (!this._currentEvent && this._eventQueue.length > 0) {
             this._currentEvent = this._eventQueue.shift();
@@ -82,12 +82,12 @@ const LongEventHandler = {
     },
 
     _completeCurrentEvent() {
-        jtask.log("[LongEventHandler] Completing event: " + (this._currentEvent ? this._currentEvent.textKey : "null"));
+        jtask.log("[BlockingTaskQueue] Completing event: " + (this._currentEvent ? this._currentEvent.textKey : "null"));
         if (this._currentEvent && this._currentEvent.callback) {
             try {
                 this._currentEvent.callback();
             } catch (e) {
-                jtask.log.error("[LongEventHandler] Callback error: " + e.message);
+                jtask.log.error("[BlockingTaskQueue] Callback error: " + e.message);
             }
         }
         this._currentEvent = null;
@@ -98,7 +98,7 @@ const LongEventHandler = {
     },
 
     _handleException(e) {
-        jtask.log.error(`[LongEventHandler] Error in ${this._currentEvent?.textKey}: ${e.message}\n${e.stack}`);
+        jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${e.message}\n${e.stack}`);
         if (this._currentEvent && this._currentEvent.exceptionHandler) {
             this._currentEvent.exceptionHandler(e);
         }
@@ -106,17 +106,17 @@ const LongEventHandler = {
         this._currentIterator = null;
     },
 
-    get ShouldWaitForEvent() {
+    get isBlocking() {
         const waiting = this._currentEvent !== null || this._eventQueue.length > 0;
         if (waiting && globalThis.__BP_VERBOSE__ && RealTime.frameCount % 60 === 0) {
 
-            jtask.log("[LongEventHandler] Blocking: Event=" + (this._currentEvent ? this._currentEvent.textKey : "Vacant") + " Q=" + this._eventQueue.length);
+            jtask.log("[BlockingTaskQueue] Blocking: Event=" + (this._currentEvent ? this._currentEvent.textKey : "Vacant") + " Q=" + this._eventQueue.length);
         }
         return waiting;
     },
 
-    OnGUI() {
-        if (!this.ShouldWaitForEvent) return;
+    drawProgress() {
+        if (!this.isBlocking) return;
 
         draw.rect(0, 0, 480, 270, {
             col: [0.15, 0.15, 0.15, 1.0],
@@ -150,8 +150,8 @@ const LongEventHandler = {
     }
 };
 
-globalThis.LongEventHandler = LongEventHandler;
+globalThis.BlockingTaskQueue = BlockingTaskQueue;
 
 if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[LongEventHandler] Initialized. Ready to queue events.");
+    jtask.log("[BlockingTaskQueue] Initialized. Ready to queue events.");
 }

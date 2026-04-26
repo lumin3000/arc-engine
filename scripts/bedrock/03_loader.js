@@ -1,4 +1,4 @@
-// Generic file-loader engine. Drives a LongEvent generator that pulls
+// Generic file-loader engine. Drives a BlockingTask generator that pulls
 // JSON files from the loader service one at a time, feeds them to per-
 // file handlers registered by the game.
 //
@@ -7,7 +7,7 @@
 //   2. The summary handler (registered by the game) inspects the file
 //      and calls Loader.addFile(path, handler) for each follow-up file
 //      it wants to load. Files added during the summary handler become
-//      part of the same LongEvent — there is no second pass.
+//      part of the same BlockingTask — there is no second pass.
 //   3. The routine processes the file queue in registration order,
 //      invoking each handler with the parsed JSON object.
 //   4. When the queue drains, onCompleteCallback fires.
@@ -95,8 +95,8 @@ function* LoaderRoutine(basePath, onCompleteCallback) {
   while (loadState.fileIndex < loadState.files.length) {
     const file = loadState.files[loadState.fileIndex];
 
-    const traceScaffold = (globalThis.RealTime?.frameCount ?? -1);
-    jtask.log("[loader] Requesting: " + file.path + " at frame " + traceScaffold);
+    const traceFrame = (globalThis.RealTime?.frameCount ?? -1);
+    jtask.log("[loader] Requesting: " + file.path + " at frame " + traceFrame);
     jtask.send(loader_id, "load_for_game", { path: file.path });
 
     const startTime = RealTime.realtimeSinceStartupUs();
@@ -121,12 +121,12 @@ function* LoaderRoutine(basePath, onCompleteCallback) {
 G.loader_runRoutine = LoaderRoutine;
 
 G.loader_startLoad = function (basePath, onComplete) {
-  if (typeof LongEventHandler !== 'undefined') {
+  if (typeof BlockingTaskQueue !== 'undefined') {
     const routine = function* () {
       yield* LoaderRoutine(basePath, onComplete);
     };
-    LongEventHandler.QueueLongEvent(routine, "LoadingMap", true);
+    BlockingTaskQueue.enqueueBlockingTask(routine, "LoadingMap", true);
   } else {
-    jtask.log.error("[loader] LongEventHandler missing!");
+    jtask.log.error("[loader] BlockingTaskQueue missing!");
   }
 };

@@ -2,10 +2,10 @@
 //
 // The frame loop only. Owns:
 //   - jtask service registration ("render" + "game")
-//   - LongEventHandler.Update() per frame
+//   - BlockingTaskQueue.tick() per frame
 //   - mainthread_run(render_frame), which dispatches to:
 //       RenderFrameCallbacks.runAll(dt)   — game-side mainthread work
-//       ScaffoldCallbacks.runAll(dt)      — game-side worker-thread chain
+//       FrameStageCallbacks.runAll(dt)      — game-side worker-thread chain
 //   - imgui.begin_frame() if imgui is available
 //   - RealTime.update(dt)
 //   - file_loaded forwarding to G.loader_onFileLoaded
@@ -15,7 +15,7 @@
 // registers via:
 //   - StartupFlow.registerStartupSteps([...])  for staged startup work
 //   - RenderFrameCallbacks.register(fn, name)  for per-frame mainthread
-//   - ScaffoldCallbacks.register(fn, prio, name) for per-frame worker
+//   - FrameStageCallbacks.register(fn, prio, name) for per-frame worker
 
 const jtask = globalThis.jtask;
 globalThis.__BP_VERBOSE__ = false;
@@ -47,7 +47,7 @@ function render_frame() {
 
     RenderFrameCallbacks.runAll(dt);
 
-    ScaffoldCallbacks.runAll(dt);
+    FrameStageCallbacks.runAll(dt);
 
   } catch (e) {
     jtask.log.error("[render_frame] CRITICAL ERROR: " + e.message + "\n" + e.stack);
@@ -62,11 +62,11 @@ S.frame = function (msg) {
 
   const frame_t0 = RealTime.realtimeSinceStartupUs();
 
-  if (typeof LongEventHandler !== "undefined") {
+  if (typeof BlockingTaskQueue !== "undefined") {
     try {
-      LongEventHandler.Update();
+      BlockingTaskQueue.tick();
     } catch (e) {
-      jtask.log.error("[S.frame] LongEventHandler.Update() threw: " + e.message + "\n" + (e.stack || ""));
+      jtask.log.error("[S.frame] BlockingTaskQueue.tick() threw: " + e.message + "\n" + (e.stack || ""));
     }
   }
 
@@ -89,7 +89,7 @@ S.frame = function (msg) {
       const m = jtask.memory_usage();
       mem = (m.memory_used_size / 1024 / 1024).toFixed(2) + "MB";
     }
-    jtask.log.info("[RTT] Scaffold " + rtt_frame_count + " | RTT: " + rtt_us + "us | Avg: " + (rtt_total_us / rtt_frame_count).toFixed(1) + "us | Mem: " + mem);
+    jtask.log.info("[RTT] Frame " + rtt_frame_count + " | RTT: " + rtt_us + "us | Avg: " + (rtt_total_us / rtt_frame_count).toFixed(1) + "us | Mem: " + mem);
   }
 
   if (!ret.success) {
@@ -119,8 +119,6 @@ S.stdin_command = function (msg) {
     G.handleExternalCommand(parsed);
   }
 };
-
-S.query_damage = function (weapon, armor) {};
 
 S.file_loaded = function (msg) {
   if (typeof G.loader_onFileLoaded === "function") {

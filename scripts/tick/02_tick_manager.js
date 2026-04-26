@@ -1,100 +1,59 @@
 
-class TickManager {
+class TickScheduler {
 
     constructor() {
 
-        this._ticksGameInt = 0;
-
-        this.gameStartAbsTick = 1;
+        this._ticksSimInt = 0;
 
         this._realTimeToTickThrough = 0;
 
-        this._curTimeSpeed = TimeSpeed.Normal;
+        this._curSimSpeed = SimSpeed.Normal;
 
-        this.prePauseTimeSpeed = TimeSpeed.Normal;
+        this.prePauseSimSpeed = SimSpeed.Normal;
 
-        this._startingYearInt = 5500;
+        this._tickBucketEvery = new TickBucket(TickRate.Every);
+        this._tickBucketSparse = new TickBucket(TickRate.Sparse);
+        this._tickBucketSlow = new TickBucket(TickRate.Slow);
 
-        this._lastSettleTicksInt = 0;
-
-        this._tickListNormal = new TickList(TickerType.Normal);
-        this._tickListRare = new TickList(TickerType.Rare);
-        this._tickListLong = new TickList(TickerType.Long);
-
-        this._ticksThisScaffold = 0;
-
-        this._lastNothingHappeningCheckTick = -1;
-
-        this._nothingHappeningCached = false;
+        this._ticksThisFrame = 0;
 
         this._lastTickTimeMs = 0;
 
         this._maps = [];
-
-        this._forcedNormalSpeed = false;
-        this._forcedNormalSpeedUntil = 0;
     }
 
-    static get WorstAllowedFPS() {
+    static get MinAllowedFps() {
         return 22.0;
     }
 
-    static get MaxScaffoldTimeMs() {
-        return 1000.0 / TickManager.WorstAllowedFPS;
+    static get MaxFrameBudgetMs() {
+        return 1000.0 / TickScheduler.MinAllowedFps;
     }
 
-    get ticksGame() {
-        return this._ticksGameInt;
+    get ticksSimulation() {
+        return this._ticksSimInt;
     }
 
-    get ticksAbs() {
-
-        if (this.gameStartAbsTick === 0) {
-            jtask.log.error("Accessing TicksAbs but gameStartAbsTick is not set yet");
-            return this._ticksGameInt;
-        }
-
-        return this._ticksGameInt + this.gameStartAbsTick;
+    get ticksAbsolute() {
+        return this._ticksSimInt;
     }
 
-    get ticksSinceSettle() {
-        return this._ticksGameInt - this._lastSettleTicksInt;
-    }
+    get tickSpeedFactor() {
 
-    get settleTick() {
-        return this._lastSettleTicksInt;
-    }
-
-    get startingYear() {
-        return this._startingYearInt;
-    }
-
-    get tickRateMultiplier() {
-
-        if (this._isForcedNormalSpeed()) {
-            if (this._curTimeSpeed === TimeSpeed.Paused) {
+        switch (this._curSimSpeed) {
+            case SimSpeed.Paused:
                 return 0;
-            }
-            return 1;
-        }
-
-        switch (this._curTimeSpeed) {
-            case TimeSpeed.Paused:
-                return 0;
-            case TimeSpeed.Normal:
+            case SimSpeed.Normal:
                 return 1;
-            case TimeSpeed.Fast:
+            case SimSpeed.Fast:
                 return 3;
-            case TimeSpeed.Superfast:
+            case SimSpeed.Superfast:
 
                 if (this._maps.length === 0) {
                     return 18;
                 }
-                if (this._nothingHappeningInGame()) {
-                    return 12;
-                }
                 return 6;
-            case TimeSpeed.Ultrafast:
+            case SimSpeed.Ultrafast:
 
                 if (this._maps.length === 0) {
                     return 150;
@@ -105,12 +64,12 @@ class TickManager {
         }
     }
 
-    get ticksThisScaffold() {
-        return this._ticksThisScaffold;
+    get ticksThisFrame() {
+        return this._ticksThisFrame;
     }
 
     get _curTimePerTick() {
-        const multiplier = this.tickRateMultiplier;
+        const multiplier = this.tickSpeedFactor;
         if (multiplier === 0) {
             return 0;
         }
@@ -119,27 +78,15 @@ class TickManager {
     }
 
     get paused() {
-        if (this._curTimeSpeed !== TimeSpeed.Paused) {
-            return this._forcePaused;
-        }
-        return true;
+        return this._curSimSpeed === SimSpeed.Paused;
     }
 
-    get _forcePaused() {
-
-        return false;
+    get curSimSpeed() {
+        return this._curSimSpeed;
     }
 
-    get curTimeSpeed() {
-        return this._curTimeSpeed;
-    }
-
-    set curTimeSpeed(value) {
-        this._curTimeSpeed = value;
-    }
-
-    get hasSettledNewColony() {
-        return this._lastSettleTicksInt > 0;
+    set curSimSpeed(value) {
+        this._curSimSpeed = value;
     }
 
     get meanTickTime() {
@@ -148,21 +95,21 @@ class TickManager {
 
     togglePaused() {
 
-        if (this._curTimeSpeed !== TimeSpeed.Paused) {
+        if (this._curSimSpeed !== SimSpeed.Paused) {
 
-            this.prePauseTimeSpeed = this._curTimeSpeed;
-            this._curTimeSpeed = TimeSpeed.Paused;
-        } else if (this.prePauseTimeSpeed !== this._curTimeSpeed) {
+            this.prePauseSimSpeed = this._curSimSpeed;
+            this._curSimSpeed = SimSpeed.Paused;
+        } else if (this.prePauseSimSpeed !== this._curSimSpeed) {
 
-            this._curTimeSpeed = this.prePauseTimeSpeed;
+            this._curSimSpeed = this.prePauseSimSpeed;
         } else {
 
-            this._curTimeSpeed = TimeSpeed.Normal;
+            this._curSimSpeed = SimSpeed.Normal;
         }
     }
 
     pause() {
-        if (this._curTimeSpeed !== TimeSpeed.Paused) {
+        if (this._curSimSpeed !== SimSpeed.Paused) {
             this.togglePaused();
         }
     }
@@ -183,7 +130,7 @@ class TickManager {
 
     tickManagerUpdate(deltaTimeSeconds) {
 
-        this._ticksThisScaffold = 0;
+        this._ticksThisFrame = 0;
 
         if (this.paused) {
             return;
@@ -197,12 +144,12 @@ class TickManager {
             this._realTimeToTickThrough += deltaTimeSeconds;
         }
 
-        const tickRateMultiplier = this.tickRateMultiplier;
+        const tickSpeedFactor = this.tickSpeedFactor;
 
         const startTime = RealTime.realtimeSinceStartupMs();
 
         while (this._realTimeToTickThrough > 0 &&
-               this._ticksThisScaffold < tickRateMultiplier * 2) {
+               this._ticksThisFrame < tickSpeedFactor * 2) {
 
             const tickStartTime = RealTime.realtimeSinceStartupMs();
 
@@ -212,12 +159,12 @@ class TickManager {
 
             this._realTimeToTickThrough -= curTimePerTick;
 
-            this._ticksThisScaffold++;
+            this._ticksThisFrame++;
 
             this._lastTickTimeMs = tickEndTime - tickStartTime;
 
             const elapsedMs = RealTime.realtimeSinceStartupMs() - startTime;
-            if (this.paused || elapsedMs > TickManager.MaxScaffoldTimeMs) {
+            if (this.paused || elapsedMs > TickScheduler.MaxFrameBudgetMs) {
                 break;
             }
         }
@@ -227,8 +174,8 @@ class TickManager {
             this._realTimeToTickThrough = 0;
         }
 
-        if (globalThis.__BP_VERBOSE__ && this._ticksGameInt % 60 === 0 && this._ticksThisScaffold > 0) {
-            jtask.log(`[TickManager] ticksThisScaffold=${this._ticksThisScaffold}, multiplier=${tickRateMultiplier}, speed=${this._curTimeSpeed}`);
+        if (globalThis.__BP_VERBOSE__ && this._ticksSimInt % 60 === 0 && this._ticksThisFrame > 0) {
+            jtask.log(`[TickScheduler] ticksThisFrame=${this._ticksThisFrame}, multiplier=${tickSpeedFactor}, speed=${this._curSimSpeed}`);
         }
     }
 
@@ -243,45 +190,45 @@ class TickManager {
             }
         }
 
-        this._ticksGameInt++;
+        this._ticksSimInt++;
 
         if (profiling) t0 = RealTime.realtimeSinceStartupUs();
-        this._tickListNormal.tick(this._ticksGameInt);
+        this._tickBucketEvery.tick(this._ticksSimInt);
         if (profiling) {
             t1 = RealTime.realtimeSinceStartupUs();
             var normalUs = t1 - t0;
             t0 = t1;
         }
 
-        this._tickListRare.tick(this._ticksGameInt);
+        this._tickBucketSparse.tick(this._ticksSimInt);
         if (profiling) {
             t1 = RealTime.realtimeSinceStartupUs();
             var rareUs = t1 - t0;
             t0 = t1;
         }
 
-        this._tickListLong.tick(this._ticksGameInt);
+        this._tickBucketSlow.tick(this._ticksSimInt);
         if (profiling) {
             t1 = RealTime.realtimeSinceStartupUs();
             var longUs = t1 - t0;
 
             var totalUs = normalUs + rareUs + longUs;
             if (totalUs > 5000) {
-                jtask.log("[TickProfiler] tick#" + this._ticksGameInt +
-                    " Normal=" + (normalUs / 1000).toFixed(1) + "ms" +
-                    " Rare=" + (rareUs / 1000).toFixed(1) + "ms" +
-                    " Long=" + (longUs / 1000).toFixed(1) + "ms" +
-                    " (items: N=" + this._tickListNormal._count() +
-                    " R=" + this._tickListRare._count() +
-                    " L=" + this._tickListLong._count() + ")");
+                jtask.log("[TickProfiler] tick#" + this._ticksSimInt +
+                    " Every=" + (normalUs / 1000).toFixed(1) + "ms" +
+                    " Sparse=" + (rareUs / 1000).toFixed(1) + "ms" +
+                    " Slow=" + (longUs / 1000).toFixed(1) + "ms" +
+                    " (items: E=" + this._tickBucketEvery._count() +
+                    " S=" + this._tickBucketSparse._count() +
+                    " L=" + this._tickBucketSlow._count() + ")");
             }
         }
 
-        const preMapHooks = globalThis.__engine_pre_map_post_tick_hooks__;
+        const preMapHooks = globalThis.__engine_pre_session_post_tick_hooks__;
         if (preMapHooks) {
             for (let h = 0; h < preMapHooks.length; h++) {
-                try { preMapHooks[h](this._ticksGameInt); }
-                catch (e) { jtask.log(`[TickManager] preMapPostTick hook ${h} error: ${e}`); }
+                try { preMapHooks[h](this._ticksSimInt); }
+                catch (e) { jtask.log(`[TickScheduler] preSessionPostTick hook ${h} error: ${e}`); }
             }
         }
 
@@ -295,44 +242,35 @@ class TickManager {
         const postHooks = globalThis.__engine_post_tick_hooks__;
         if (postHooks) {
             for (let h = 0; h < postHooks.length; h++) {
-                try { postHooks[h](this._ticksGameInt); }
-                catch (e) { jtask.log(`[TickManager] postTick hook ${h} error: ${e}`); }
+                try { postHooks[h](this._ticksSimInt); }
+                catch (e) { jtask.log(`[TickScheduler] postTick hook ${h} error: ${e}`); }
             }
         }
 
         if (typeof GameTimer !== 'undefined') {
-            GameTimer.tick(this._ticksGameInt);
+            GameTimer.tick(this._ticksSimInt);
         }
     }
 
     removeAllFromMap(map) {
         const predicate = (tickable) => tickable.map === map;
-        this._tickListNormal.removeWhere(predicate);
-        this._tickListRare.removeWhere(predicate);
-        this._tickListLong.removeWhere(predicate);
+        this._tickBucketEvery.removeWhere(predicate);
+        this._tickBucketSparse.removeWhere(predicate);
+        this._tickBucketSlow.removeWhere(predicate);
     }
 
-    debugSetTicksGame(newTicksGame) {
-        this._ticksGameInt = newTicksGame;
-    }
-
-    notify_GeneratedPotentiallyHostileMap() {
-        this.pause();
-        this._signalForceNormalSpeedShort();
-    }
-
-    resetSettlementTicks() {
-        this._lastSettleTicksInt = this._ticksGameInt;
+    debugSetTicksSimulation(newTicks) {
+        this._ticksSimInt = newTicks;
     }
 
     reset() {
-        this._ticksGameInt = 0;
+        this._ticksSimInt = 0;
         this._realTimeToTickThrough = 0;
-        this._ticksThisScaffold = 0;
-        this._curTimeSpeed = TimeSpeed.Normal;
-        this._tickListNormal.reset();
-        this._tickListRare.reset();
-        this._tickListLong.reset();
+        this._ticksThisFrame = 0;
+        this._curSimSpeed = SimSpeed.Normal;
+        this._tickBucketEvery.reset();
+        this._tickBucketSparse.reset();
+        this._tickBucketSlow.reset();
     }
 
     registerMap(map) {
@@ -350,132 +288,96 @@ class TickManager {
 
     _tickListFor(tickable) {
 
-        if (tickable.isMonoHolder) {
-            return this._tickListNormal;
+        if (tickable.holdsChildren) {
+            return this._tickBucketEvery;
         }
 
-        let tickerType = tickable.def?.tickerType;
-        if (tickerType === undefined || tickerType === null) {
-            tickerType = TickerType.Never;
+        let tickRate = tickable.def?.tickRate;
+        if (tickRate === undefined || tickRate === null) {
+            tickRate = TickRate.None;
         }
 
-        if (typeof tickerType === 'string') {
-            tickerType = TickerType.fromString(tickerType);
+        if (typeof tickRate === 'string') {
+            tickRate = TickRate.fromString(tickRate);
         }
-        switch (tickerType) {
-            case TickerType.Never:
+        switch (tickRate) {
+            case TickRate.None:
                 return null;
-            case TickerType.Normal:
-                return this._tickListNormal;
-            case TickerType.Rare:
-                return this._tickListRare;
-            case TickerType.Long:
-                return this._tickListLong;
+            case TickRate.Every:
+                return this._tickBucketEvery;
+            case TickRate.Sparse:
+                return this._tickBucketSparse;
+            case TickRate.Slow:
+                return this._tickBucketSlow;
             default:
                 return null;
         }
     }
 
-    _nothingHappeningInGame() {
-
-        if (this._lastNothingHappeningCheckTick === this._ticksGameInt) {
-            return this._nothingHappeningCached;
-        }
-
-        this._nothingHappeningCached = false;
-        this._lastNothingHappeningCheckTick = this._ticksGameInt;
-
-        return this._nothingHappeningCached;
-    }
-
-    _isForcedNormalSpeed() {
-        if (this._forcedNormalSpeedUntil > this._ticksGameInt) {
-            return true;
-        }
-        return this._forcedNormalSpeed;
-    }
-
-    _signalForceNormalSpeedShort() {
-
-        this._forcedNormalSpeedUntil = this._ticksGameInt + 600;
-    }
-
     exposeData() {
         return {
-            ticksGame: this._ticksGameInt,
-            gameStartAbsTick: this.gameStartAbsTick,
-            startingYear: this._startingYearInt,
-            lastSettleTicks: this._lastSettleTicksInt
+            ticksSimulation: this._ticksSimInt
         };
     }
 
     loadData(data) {
-        if (data.ticksGame !== undefined) {
-            this._ticksGameInt = data.ticksGame;
-        }
-        if (data.gameStartAbsTick !== undefined) {
-            this.gameStartAbsTick = data.gameStartAbsTick;
-        }
-        if (data.startingYear !== undefined) {
-            this._startingYearInt = data.startingYear;
-        }
-        if (data.lastSettleTicks !== undefined) {
-            this._lastSettleTicksInt = data.lastSettleTicks;
+        if (data.ticksSimulation !== undefined) {
+            this._ticksSimInt = data.ticksSimulation;
         }
     }
 
     getStats() {
         return {
-            ticksGame: this._ticksGameInt,
-            ticksThisScaffold: this._ticksThisScaffold,
-            curTimeSpeed: TimeSpeed.toString(this._curTimeSpeed),
-            tickRateMultiplier: this.tickRateMultiplier,
+            ticksSimulation: this._ticksSimInt,
+            ticksThisFrame: this._ticksThisFrame,
+            curSimSpeed: SimSpeed.toString(this._curSimSpeed),
+            tickSpeedFactor: this.tickSpeedFactor,
             paused: this.paused,
             lastTickTimeMs: this._lastTickTimeMs,
             mapsCount: this._maps.length,
-            tickListNormal: this._tickListNormal.getStats(),
-            tickListRare: this._tickListRare.getStats(),
-            tickListLong: this._tickListLong.getStats()
+            tickBucketEvery: this._tickBucketEvery.getStats(),
+            tickBucketSparse: this._tickBucketSparse.getStats(),
+            tickBucketSlow: this._tickBucketSlow.getStats()
         };
     }
 
     toString() {
-        return `TickManager(ticks=${this._ticksGameInt}, speed=${TimeSpeed.toString(this._curTimeSpeed)})`;
+        return `TickScheduler(ticks=${this._ticksSimInt}, speed=${SimSpeed.toString(this._curSimSpeed)})`;
     }
 }
 
-globalThis.TickManager = TickManager;
+globalThis.TickScheduler = TickScheduler;
 
 if (typeof RealTime !== 'undefined' && RealTime.setTickStateProvider) {
     RealTime.setTickStateProvider(function() {
-        const tm = globalThis.Find?.tickManager;
+        const tm = globalThis.EngineRefs?.tickManager;
         if (!tm) return null;
         return {
             paused: tm.paused,
-            multiplier: tm.tickRateMultiplier
+            multiplier: tm.tickSpeedFactor
         };
     });
 }
 
-if (typeof GenTicks !== 'undefined' && GenTicks.setTickDataProvider) {
-    GenTicks.setTickDataProvider(function() {
-        const tm = globalThis.Find?.tickManager;
+if (typeof TickClock !== 'undefined' && TickClock.setTickDataProvider) {
+    TickClock.setTickDataProvider(function() {
+        const tm = globalThis.EngineRefs?.tickManager;
         if (!tm) return null;
         return {
-            ticksAbs: tm.ticksAbs,
-            ticksGame: tm.ticksGame
+            ticksAbsolute: tm.ticksAbsolute,
+            ticksSimulation: tm.ticksSimulation
         };
     });
 }
 
-if (typeof ScaffoldCallbacks !== 'undefined' && typeof ScaffoldPriority !== 'undefined') {
-    ScaffoldCallbacks.register(function(dt) {
-        const tm = globalThis.Find?.tickManager;
+if (typeof FrameStageCallbacks !== 'undefined' && typeof FrameStagePriority !== 'undefined') {
+    FrameStageCallbacks.register(function(dt) {
+        const tm = globalThis.EngineRefs?.tickManager;
         if (tm) {
 
             tm.tickManagerUpdate(dt / 1000);
         }
-    }, ScaffoldPriority.TICK, "TickManager.update");
+    }, FrameStagePriority.TICK, "TickScheduler.update");
 }
 
-if (globalThis.__BP_VERBOSE__) jtask.log("[tick_manager] TickManager class loaded");
+if (globalThis.__BP_VERBOSE__) jtask.log("[tick_manager] TickScheduler class loaded");

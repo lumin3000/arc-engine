@@ -1,37 +1,37 @@
 
-var Current = (function() {
+var EngineState = (function() {
     'use strict';
 
     var _root = null;
-    var _game = null;
+    var _session = null;
 
     return {
 
         get root() { return _root; },
         set root(value) {
             if (_root !== null && value !== null) {
-                jtask.log.error("[Current] Root already exists, cannot replace");
+                jtask.log.error("[EngineState] Root already exists, cannot replace");
                 return;
             }
             _root = value;
-            jtask.log("[Current] Root " + (value ? "created" : "destroyed"));
+            jtask.log("[EngineState] Root " + (value ? "created" : "destroyed"));
         },
 
-        get game() { return _game; },
-        set game(value) {
-            if (_game !== null && value !== null) {
-                jtask.log.error("[Current] Game already exists, cannot replace");
+        get session() { return _session; },
+        set session(value) {
+            if (_session !== null && value !== null) {
+                jtask.log.error("[EngineState] Session already exists, cannot replace");
                 return;
             }
-            _game = value;
-            jtask.log("[Current] Game " + (value ? "created" : "destroyed"));
+            _session = value;
+            jtask.log("[EngineState] Session " + (value ? "created" : "destroyed"));
         },
 
-        get hasGame() { return _game !== null; },
+        get hasSession() { return _session !== null; },
         get hasRoot() { return _root !== null; }
     };
 })();
 
-globalThis.Current = Current;
+globalThis.EngineState = EngineState;
 
-jtask.log("[Current] Module loaded");
+jtask.log("[EngineState] Module loaded");
