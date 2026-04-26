@@ -73,49 +73,17 @@ globalThis.markAtlasDesiresUpload = function () {
   atlas_needs_upload = true;
 };
 
-function register_system_callbacks() {
-  if (typeof ScaffoldCallbacks === 'undefined') {
-    return;
-  }
-
-  // Games can opt out of these defaults by setting
-  // globalThis.__ENGINE_SKIP_DEFAULT_CALLBACKS__ = true before this
-  // service initializes (e.g. in a game/<name>/000_*.js file).
-  // arc-mapgen registers its own Coord.*/RenderSetup/HUD chain in
-  // game/arc/00z_mapgen_render.js, so it sets this flag.
-  if (globalThis.__ENGINE_SKIP_DEFAULT_CALLBACKS__) {
-    return;
-  }
-
-  ScaffoldCallbacks.register(function(dt) {
-  }, ScaffoldPriority.RENDER_SETUP, "RenderSetup");
-
-  ScaffoldCallbacks.register(function(dt) {
-    coord.push_clip_space();
-  }, ScaffoldPriority.COORD_CLIP_SPACE, "Coord.ClipSpace");
-
-  ScaffoldCallbacks.register(function(dt) {
-    coord.push_world_space();
-  }, ScaffoldPriority.COORD_WORLD_SPACE, "Coord.WorldSpace");
-
-  ScaffoldCallbacks.register(function(dt) {
-    coord.push_screen_space();
-  }, ScaffoldPriority.COORD_SCREEN_SPACE, "Coord.ScreenSpace");
-
-  ScaffoldCallbacks.register(function(dt) {
-    var dcTotal = (typeof diag !== 'undefined' && diag.numDraw) ? diag.numDraw() : 0;
-    draw.text(4, 480, "Frame: " + frame_count + "  DC: " + dcTotal, {
-      pivot: draw.PIVOT_TOP_LEFT,
-      z_layer: draw.ZLAYER_UI,
-      col: [0.0, 1.0, 1.0, 1.0],
-      font_size: 18
-    });
-  }, ScaffoldPriority.HUD, "HUD.FrameCounter");
-
-  if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[render_service] system callbacks registered");
-  }
-}
+// The render-pipeline ScaffoldCallbacks (RenderSetup, Coord.ClipSpace,
+// Coord.WorldSpace, Coord.ScreenSpace, any HUD frame counter, etc.) are
+// the consumer's responsibility — what coord space terrain/buildings/
+// dynamic things draw in, where the screen-space chrome lives, and how
+// the HUD looks are all game decisions. arc-engine only owns the frame
+// loop (S.frame → mainthread_run(render_frame) → RenderFrameCallbacks +
+// ScaffoldCallbacks.runAll); games register the actual chain from their
+// own scripts:
+//
+//   - gunslinger:   scripts/game/gunslinger/00_default_callbacks.js
+//   - arc-mapgen:   scripts/game/arc/00z_mapgen_render.js
 
 // RenderFrameCallbacks is now defined in bedrock/03_frame_callbacks.js
 // so game scripts can register before this service file evaluates.
@@ -249,8 +217,6 @@ jtask.fork(function () {
       message.load_mod_scripts();
     }
   });
-
-  register_system_callbacks();
 
   const ret = jtask.mainthread_run(function () {
     render_frame();
