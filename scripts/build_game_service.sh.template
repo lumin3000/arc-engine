@@ -14,10 +14,18 @@
 #   C_SRC_DIR=<path>                directory to scan for duplicate C functions.
 #   BUNDLE_EXTRA_SERVICES="a.js b.js"  extra files to append at the end,
 #                                      after game modules (e.g. render_service).
+#   GAME_TOPLEVEL_DIRS="defs body things ..." game-side top-level subdirs
+#                                       under GAME_SCRIPTS_DIR/, bundled in
+#                                       the order given. Used by games whose
+#                                       scripts/ tree is NOT just under
+#                                       scripts/game/ (arc-mapgen has 38+
+#                                       top-level dirs).
 #
 # Module load order is:
 #   ENGINE bedrock / render / tick / config
-#   GAME bedrock (if present) / render (if present) / game/* subdirs
+#   GAME bedrock (if present) / render (if present)
+#   GAME_TOPLEVEL_DIRS in declared order
+#   scripts/game/* subdirs (sorted alphabetically, _ prefix excluded)
 
 set -e
 
@@ -64,11 +72,22 @@ for sub in bedrock render tick config; do
     bundle_dir "game/$sub" "$GAME_SCRIPTS_DIR/$sub"
 done
 
-# Game-specific modules under scripts/game/<name>/
+# Game-side top-level dirs in declared order (e.g. defs body things mapgen world)
+if [ -n "${GAME_TOPLEVEL_DIRS:-}" ]; then
+    for sub in $GAME_TOPLEVEL_DIRS; do
+        bundle_dir "game/$sub" "$GAME_SCRIPTS_DIR/$sub"
+    done
+fi
+
+# Game-specific modules under scripts/game/<name>/ (skip directories starting
+# with _ which the project uses for backups).
 if [ -d "$GAME_SCRIPTS_DIR/game" ]; then
     for dir in "$GAME_SCRIPTS_DIR/game/"*/; do
         [ ! -d "$dir" ] && continue
         local_name=$(basename "$dir")
+        case "$local_name" in
+            _*) continue ;;
+        esac
         bundle_dir "game/$local_name" "$dir"
     done
 fi
