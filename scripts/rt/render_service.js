@@ -108,6 +108,31 @@ function register_system_callbacks() {
   }
 }
 
+// RenderFrameCallbacks — mainthread hook for game-specific render setup
+// (atlas uploads, mesh collection, etc.). Each callback runs once per
+// frame inside render_frame() *before* ScaffoldCallbacks.runAll(dt).
+// Games register from their own scripts using:
+//   RenderFrameCallbacks.register(fn, "name");
+// Callback signature: function(dt) {}
+globalThis.RenderFrameCallbacks = {
+  _list: [],
+  register: function(fn, name) {
+    if (typeof fn !== 'function') {
+      throw new Error("[RenderFrameCallbacks] callback must be a function");
+    }
+    this._list.push({ fn: fn, name: name || "anonymous" });
+  },
+  runAll: function(dt) {
+    for (const cb of this._list) {
+      try {
+        cb.fn(dt);
+      } catch (e) {
+        jtask.log.error("[RenderFrameCallbacks] '" + cb.name + "' threw: " + e.message + "\n" + (e.stack || ""));
+      }
+    }
+  },
+};
+
 function render_frame() {
   try {
     const now = Number(message.now()) / 1000;
@@ -139,6 +164,8 @@ function render_frame() {
       atlas_needs_upload = false;
       jtask.log("[render] Atlas uploaded to GPU (1 slot)");
     }
+
+    RenderFrameCallbacks.runAll(dt);
 
     ScaffoldCallbacks.runAll(dt);
 
