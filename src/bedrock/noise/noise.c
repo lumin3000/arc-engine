@@ -1,8 +1,7 @@
 /*
  * noise.c - C 层噪声引擎实现
  *
- * 对齐: JS scripts/mapgen/noise/00_perlin.js
- * 同 seed 同坐标，C 输出必须与 JS 输出一致（差值 < 1e-4）
+ * 同 seed 同坐标，C 输出必须与 JS 等价实现一致（差值 < 1e-4）
  *
  * 关键对齐点:
  * - intValueNoise3D: JS 用 BigInt 避免溢出，C 用 uint32_t 位运算

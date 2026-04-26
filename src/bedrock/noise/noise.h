@@ -1,8 +1,7 @@
 /*
  * noise.h - C 层噪声引擎
  *
- * 对齐: JS scripts/mapgen/noise/00_perlin.js 的 Perlin/NoiseUtils 算法
- * 职责: 提供高性能噪声计算，JS 侧构建参数后一次性调 C 填满 Float32Array
+ * 职责: 提供高性能 Perlin/NoiseUtils 噪声计算，JS 侧构建参数后一次性调 C 填满 Float32Array
  *
  * 设计: noise 树由 NoiseNode 数组描述，每个节点有类型、参数、子节点索引
  *       noise_fill_grid 递归求值 noise 树，对每个 cell (x,z) 写入 out[]

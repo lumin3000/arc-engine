@@ -11,15 +11,11 @@
 //   - file_loaded forwarding to G.loader_onFileLoaded
 //   - stdin_command forwarding to G.handleExternalCommand
 //
-// Everything game-specific (atlas preload, plant sway, terrain section
-// mesh, HUD, RenderSetup / Coord.* / etc.) lives in the consumer's
-// scripts/game/ tree and registers via:
+// Everything game-specific lives in the consumer's scripts/ tree and
+// registers via:
 //   - StartupFlow.registerStartupSteps([...])  for staged startup work
 //   - RenderFrameCallbacks.register(fn, name)  for per-frame mainthread
 //   - ScaffoldCallbacks.register(fn, prio, name) for per-frame worker
-//
-// See: arc-mapgen/scripts/game/arc/00z_mapgen_render.js,
-//      sokol-javascript-game-gunslinger/scripts/game/gunslinger/01_default_callbacks.js
 
 const jtask = globalThis.jtask;
 globalThis.__BP_VERBOSE__ = false;

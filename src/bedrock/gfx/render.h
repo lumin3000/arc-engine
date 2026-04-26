@@ -96,7 +96,7 @@ typedef struct {
   Vec4 params;
   bool use_mvp;
   Matrix4 mvp;
-  sg_view custom_view;    // when valid, temporarily switch texture binding (blood canvas etc.)
+  sg_view custom_view;    // when valid, temporarily switch texture binding (game-defined target)
 } Render_Batch;
 
 typedef struct {

@@ -43,7 +43,7 @@ git submodule add git@github.com:lumin3000/arc-engine.git external/arc-engine
 ## 引擎边界
 
 - `bedrock/` **禁止** 依赖 `bindings/`（单向依赖）
-- 引擎不认识任何游戏符号（grep 不到 player / enemy / bullet ...）
+- 引擎不认识任何游戏专有名词（grep 不到任何游戏专属概念）
 - shader 的业务分支通过扩展点外挂，不在核心 shader 里硬编码
 
 详见 [CLAUDE.md](CLAUDE.md)。

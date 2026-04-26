@@ -58,14 +58,8 @@ const GenTicks = {
 
     _tickDataProvider: null,
 
-    _cameraDataProvider: null,
-
     setTickDataProvider(provider) {
         this._tickDataProvider = provider;
-    },
-
-    setCameraDataProvider(provider) {
-        this._cameraDataProvider = provider;
     },
 
     TICKS_PER_REAL_SECOND: 60,
@@ -114,35 +108,6 @@ const GenTicks = {
 
     getTickIntervalOffset(index, count, period) {
         return Math.ceil((period / count) * index) % period;
-    },
-
-    getCameraUpdateRate(thing) {
-
-        if (!this._cameraDataProvider) {
-            return 1;
-        }
-
-        const camData = this._cameraDataProvider();
-        if (!camData) {
-            return 1;
-        }
-
-        const currentMap = camData.currentMap;
-        if (!currentMap || thing.mapHeld !== currentMap) {
-            return 15;
-        }
-
-        const cameraDriver = camData.cameraDriver;
-        if (cameraDriver && typeof cameraDriver.inViewOf === 'function') {
-            if (!cameraDriver.inViewOf(thing)) {
-                return 15;
-            }
-
-            const zoom = cameraDriver.currentZoom ?? 0;
-            return Math.floor(zoom) + 1;
-        }
-
-        return 1;
     }
 };
 

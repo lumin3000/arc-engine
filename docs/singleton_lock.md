@@ -1,9 +1,9 @@
 # Process singleton lock
 
 Opt-in feature in `Engine_Config.app_name`. Set it to a short binary-style
-name (e.g. `"blueprinter"`, `"gunslinger"`); `arc_engine_create()` then
-flock-protects `/tmp/<app_name>.lock` so two processes with the same
-`app_name` can't run simultaneously.
+name (e.g. `"<game>"`); `arc_engine_create()` then flock-protects
+`/tmp/<app_name>.lock` so two processes with the same `app_name` can't
+run simultaneously.
 
 ## Behaviour
 
@@ -17,7 +17,7 @@ flock-protects `/tmp/<app_name>.lock` so two processes with the same
   the holder, then `arc_engine_create()` returns NULL. Caller's existing
   `arc_engine_run(NULL)` check exits non-zero.
 - Different `app_name` -> different lock file -> not mutually exclusive.
-  blueprinter and gunslinger can run side by side.
+  Distinct games can run side by side.
 
 ## Failure modes
 
@@ -35,6 +35,5 @@ later sprint with `CreateMutex`.
 
 ## Motivation
 
-An AI automation loop launched 14 blueprinter instances on the user's
-machine because nothing prevented it. The lock prevents that recurrence
-without requiring the host shell to coordinate.
+Prevents runaway processes (e.g. an AI automation loop spawning many
+instances) without requiring the host shell to coordinate.

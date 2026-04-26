@@ -21,12 +21,11 @@ void arc_register_main_js_bindings(JSContext *ctx) {
   js_init_diag_module(ctx);
   js_init_imgui_module(ctx);
   js_init_batch_module(ctx);
-  // coord / game / config APIs — required in worker ctx (game_service
-  // bundle's 03_player.js etc. call coord.screen_to_world). s1.6 called
-  // js_init_engine_module(g_context) only for the bootstrap ctx, but
-  // because js_init_message_module is weak-linked and invoked per-worker
-  // by jtask, the registrar (via js_init_message_module) is the right
-  // hook to reach every ctx.
+  // coord / game / config APIs — required in worker ctx (game-side
+  // scripts call coord.screen_to_world). js_init_message_module is
+  // weak-linked and invoked per-worker by jtask, so the registrar
+  // reached via js_init_message_module is the hook that covers every
+  // ctx.
   js_init_engine_module(ctx);
 }
 

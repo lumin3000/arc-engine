@@ -25,7 +25,7 @@ typedef struct {
     const char *app_name;
 
     // Startup
-    const char *default_run_mode;    // default value for --mode
+    const char *default_run_mode;    // default value for --mode (game-defined)
     float master_volume;             // 0..1; 0.25 if 0 and sound is used
     float zoom_level;                // initial zoom; 2.0 if 0
     Vec3 camera_initial_pos;
@@ -41,9 +41,9 @@ typedef struct {
     bool disable_default_camera_controls;
 
     // WASD pan speed (world units / sec). 0 falls back to engine default
-    // 3.0f. After Phase 6 World Units (1 unit = 1 cell), 3.0 is too slow
-    // for cell-based maps; consumers with large cell maps (mapgen) bump
-    // this to e.g. 60. Pixel-style games (gunslinger) leave at default.
+    // 3.0f. With World Units (1 unit = 1 cell) this is too slow for
+    // games with large cell maps; such games bump this to e.g. 60.
+    // Pixel-style games leave at default.
     float camera_pan_speed;
 
     // Optional: play this FMOD event at startup (e.g. "event:/ambiance").
@@ -72,8 +72,8 @@ typedef struct {
     // Invoked after render_init() — sokol context is live and the engine
     // has populated default VIEW_* slots with 1x1 dummies. This is the
     // correct place for the game to load textures and call
-    // engine_register_view() to override dummy slots (e.g. terrain flow/
-    // ripple/noise maps).
+    // engine_register_view() to override dummy slots (game-defined
+    // fragment shader textures).
     void (*on_render_ready)(void);
 
     // Invoked every frame inside the render pass, after the engine has

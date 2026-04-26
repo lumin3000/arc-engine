@@ -208,7 +208,7 @@ static JSValue js_batch_flush(JSContext *ctx, JSValueConst this_val,
     memcpy(new_batch.params, zero, sizeof(Vec4));
     new_batch.use_mvp = true;
     memcpy(new_batch.mvp, vp, sizeof(Matrix4));
-    // custom texture view (blood canvas etc.)
+    // custom texture view (game-defined target)
     if (custom_view_id != 0) {
         new_batch.custom_view.id = (uint32_t)custom_view_id;
     }

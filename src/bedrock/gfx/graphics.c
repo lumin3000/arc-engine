@@ -278,7 +278,7 @@ void graphics_submit_meshes(void) {
 
   // Count non-origin mesh requests (transform[12]/[13] != 0). Used for
   // diagnostic logging only — these are the meshes that actually need
-  // a per-frame transform, as opposed to e.g. terrain that draws at
+  // a per-frame transform, as opposed to baked geometry that draws at
   // origin via a single batched call.
   int transformed_count = 0;
   for (int i = 0; i < g_graphics.mesh_queue_count; i++) {

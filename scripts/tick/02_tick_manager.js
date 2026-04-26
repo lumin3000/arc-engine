@@ -167,17 +167,17 @@ class TickManager {
         }
     }
 
-    registerAllTickabilityFor(thing) {
-        const tickList = this._tickListFor(thing);
+    registerAllTickabilityFor(tickable) {
+        const tickList = this._tickListFor(tickable);
         if (tickList !== null) {
-            tickList.registerMono(thing);
+            tickList.register(tickable);
         }
     }
 
-    deRegisterAllTickabilityFor(thing) {
-        const tickList = this._tickListFor(thing);
+    deRegisterAllTickabilityFor(tickable) {
+        const tickList = this._tickListFor(tickable);
         if (tickList !== null) {
-            tickList.deregisterMono(thing);
+            tickList.deregister(tickable);
         }
     }
 
@@ -271,23 +271,19 @@ class TickManager {
                     " Normal=" + (normalUs / 1000).toFixed(1) + "ms" +
                     " Rare=" + (rareUs / 1000).toFixed(1) + "ms" +
                     " Long=" + (longUs / 1000).toFixed(1) + "ms" +
-                    " (items: N=" + this._tickListNormal._thingCount() +
-                    " R=" + this._tickListRare._thingCount() +
-                    " L=" + this._tickListLong._thingCount() + ")");
+                    " (items: N=" + this._tickListNormal._count() +
+                    " R=" + this._tickListRare._count() +
+                    " L=" + this._tickListLong._count() + ")");
             }
         }
 
-        try { globalThis.Find?.dateNotifier?.dateNotifierTick?.(); } catch (e) { jtask.log(`[TickManager] DateNotifier error: ${e}`); }
-        try { globalThis.Find?.scenario?.tickPrologue?.(); } catch (e) { jtask.log(`[TickManager] Prologue error: ${e}`); }
-        try { globalThis.Find?.world?.worldTick?.(); } catch (e) { jtask.log(`[TickManager] World error: ${e}`); }
-        try { globalThis.Find?.storyWatcher?.storyWatcherTick?.(); } catch (e) { jtask.log(`[TickManager] StoryWatcher error: ${e}`); }
-        try { globalThis.Find?.gameEnder?.gameEndTick?.(); } catch (e) { jtask.log(`[TickManager] GameEnder error: ${e}`); }
-        try { globalThis.Find?.storyteller?.storytellerTick?.(); } catch (e) { jtask.log(`[TickManager] Storyteller error: ${e}`); }
-
-        try { globalThis.RaidTrigger?.tick?.(); } catch (e) { jtask.log(`[TickManager] RaidTrigger error: ${e}`); }
-        try { globalThis.Find?.taleManager?.taleManagerTick?.(); } catch (e) { jtask.log(`[TickManager] TaleManager error: ${e}`); }
-        try { globalThis.Find?.questManager?.questManagerTick?.(); } catch (e) { jtask.log(`[TickManager] QuestManager error: ${e}`); }
-        try { globalThis.Find?.world?.worldPostTick?.(); } catch (e) { jtask.log(`[TickManager] WorldPostTick error: ${e}`); }
+        const preMapHooks = globalThis.__engine_pre_map_post_tick_hooks__;
+        if (preMapHooks) {
+            for (let h = 0; h < preMapHooks.length; h++) {
+                try { preMapHooks[h](this._ticksGameInt); }
+                catch (e) { jtask.log(`[TickManager] preMapPostTick hook ${h} error: ${e}`); }
+            }
+        }
 
         for (let j = 0; j < this._maps.length; j++) {
             const map = this._maps[j];
@@ -296,12 +292,13 @@ class TickManager {
             }
         }
 
-        try { globalThis.Find?.history?.historyTick?.(); } catch (e) { jtask.log(`[TickManager] History error: ${e}`); }
-        try { globalThis.GameComponentUtility?.gameComponentTick?.(); } catch (e) { jtask.log(`[TickManager] GameComponent error: ${e}`); }
-        try { globalThis.Find?.letterStack?.letterStackTick?.(); } catch (e) { jtask.log(`[TickManager] LetterStack error: ${e}`); }
-        try { globalThis.Find?.autosaver?.autosaverTick?.(); } catch (e) { jtask.log(`[TickManager] Autosaver error: ${e}`); }
-        try { globalThis.GrimeMonitor?.filthMonitorTick?.(); } catch (e) { jtask.log(`[TickManager] FilthMonitor error: ${e}`); }
-        try { globalThis.Find?.transportShipManager?.shipObjectsTick?.(); } catch (e) { jtask.log(`[TickManager] TransportShipManager error: ${e}`); }
+        const postHooks = globalThis.__engine_post_tick_hooks__;
+        if (postHooks) {
+            for (let h = 0; h < postHooks.length; h++) {
+                try { postHooks[h](this._ticksGameInt); }
+                catch (e) { jtask.log(`[TickManager] postTick hook ${h} error: ${e}`); }
+            }
+        }
 
         if (typeof GameTimer !== 'undefined') {
             GameTimer.tick(this._ticksGameInt);
@@ -309,7 +306,7 @@ class TickManager {
     }
 
     removeAllFromMap(map) {
-        const predicate = (thing) => thing.map === map;
+        const predicate = (tickable) => tickable.map === map;
         this._tickListNormal.removeWhere(predicate);
         this._tickListRare.removeWhere(predicate);
         this._tickListLong.removeWhere(predicate);
@@ -351,13 +348,13 @@ class TickManager {
         }
     }
 
-    _tickListFor(thing) {
+    _tickListFor(tickable) {
 
-        if (thing.isMonoHolder) {
+        if (tickable.isMonoHolder) {
             return this._tickListNormal;
         }
 
-        let tickerType = thing.def?.tickerType;
+        let tickerType = tickable.def?.tickerType;
         if (tickerType === undefined || tickerType === null) {
             tickerType = TickerType.Never;
         }
@@ -467,15 +464,6 @@ if (typeof GenTicks !== 'undefined' && GenTicks.setTickDataProvider) {
         return {
             ticksAbs: tm.ticksAbs,
             ticksGame: tm.ticksGame
-        };
-    });
-}
-
-if (typeof GenTicks !== 'undefined' && GenTicks.setCameraDataProvider) {
-    GenTicks.setCameraDataProvider(function() {
-        return {
-            currentMap: globalThis.Find?.currentMap,
-            cameraDriver: globalThis.Find?.cameraDriver
         };
     });
 }

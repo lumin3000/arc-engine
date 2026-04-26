@@ -121,7 +121,7 @@ static void quat_to_matrix4(float qx, float qy, float qz, float qw,
 // graphics.create_quad_mesh() -> meshId
 //
 // 创建一个单位四边形 Mesh (1x1，中心在原点)
-// 用于动态渲染 Thing
+// 用于动态 mesh 渲染
 // ============================================================================
 
 static JSValue js_graphics_create_quad_mesh(JSContext *ctx,

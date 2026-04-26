@@ -20,9 +20,6 @@ globalThis.RunMode = {
     },
     get showUI()       { return !!this.config.ui; },
     get showHUD()      { return !!this.config.hud; },
-    get forceMapGen()  { return !!this.config.forceMapGen; },
-    get spawnActors()  { return !!this.config.spawnActors; },
-    get testMessages() { return !!this.config.testMessages; },
 };
 
 jtask.log("[RunMode] Module loaded (mode resolved on first access)");

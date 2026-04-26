@@ -64,11 +64,9 @@ var Find = (function() {
             return Current.game?.world ?? null;
         },
 
-        // Note: worldGrid / worldObjects / mapDrawer / thingGrid used to
-        // live here, but they're game-specific data structures (RimWorld-
-        // style). Engine `Find` only exposes engine-owned references
-        // (root, game, currentMap, tickManager, cameraDriver, etc.).
-        // Games extend by assigning `Find.<name>` from their own scripts.
+        // Engine `Find` only exposes engine-owned references (root, game,
+        // currentMap, tickManager, cameraDriver, etc.). Games extend by
+        // assigning `Find.<name>` from their own scripts.
 
         get hasGame() {
             return Current.hasGame;

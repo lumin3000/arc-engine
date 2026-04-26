@@ -18,15 +18,15 @@ class TickList {
 
         this._tickType = tickType;
 
-        this._thingLists = [];
+        this._buckets = [];
 
-        this._thingsToRegister = [];
+        this._toRegister = [];
 
-        this._thingsToDeregister = [];
+        this._toDeregister = [];
 
         const interval = this._tickInterval;
         for (let i = 0; i < interval; i++) {
-            this._thingLists.push([]);
+            this._buckets.push([]);
         }
     }
 
@@ -45,18 +45,18 @@ class TickList {
 
     reset() {
 
-        for (let i = 0; i < this._thingLists.length; i++) {
-            this._thingLists[i].length = 0;
+        for (let i = 0; i < this._buckets.length; i++) {
+            this._buckets[i].length = 0;
         }
 
-        this._thingsToRegister.length = 0;
-        this._thingsToDeregister.length = 0;
+        this._toRegister.length = 0;
+        this._toDeregister.length = 0;
     }
 
     removeWhere(predicate) {
 
-        for (let i = 0; i < this._thingLists.length; i++) {
-            const list = this._thingLists[i];
+        for (let i = 0; i < this._buckets.length; i++) {
+            const list = this._buckets[i];
 
             for (let j = list.length - 1; j >= 0; j--) {
                 if (predicate(list[j])) {
@@ -65,70 +65,70 @@ class TickList {
             }
         }
 
-        for (let j = this._thingsToRegister.length - 1; j >= 0; j--) {
-            if (predicate(this._thingsToRegister[j])) {
-                this._thingsToRegister.splice(j, 1);
+        for (let j = this._toRegister.length - 1; j >= 0; j--) {
+            if (predicate(this._toRegister[j])) {
+                this._toRegister.splice(j, 1);
             }
         }
 
-        for (let j = this._thingsToDeregister.length - 1; j >= 0; j--) {
-            if (predicate(this._thingsToDeregister[j])) {
-                this._thingsToDeregister.splice(j, 1);
+        for (let j = this._toDeregister.length - 1; j >= 0; j--) {
+            if (predicate(this._toDeregister[j])) {
+                this._toDeregister.splice(j, 1);
             }
         }
     }
 
-    registerMono(thing) {
+    register(tickable) {
 
-        this._thingsToRegister.push(thing);
+        this._toRegister.push(tickable);
     }
 
-    deregisterMono(thing) {
+    deregister(tickable) {
 
-        this._thingsToDeregister.push(thing);
+        this._toDeregister.push(tickable);
     }
 
     tick(ticksGame) {
 
-        for (let i = 0; i < this._thingsToRegister.length; i++) {
-            const thing = this._thingsToRegister[i];
-            this._bucketOf(thing).push(thing);
+        for (let i = 0; i < this._toRegister.length; i++) {
+            const tickable = this._toRegister[i];
+            this._bucketOf(tickable).push(tickable);
         }
-        this._thingsToRegister.length = 0;
+        this._toRegister.length = 0;
 
-        for (let j = 0; j < this._thingsToDeregister.length; j++) {
-            const thing = this._thingsToDeregister[j];
-            const bucket = this._bucketOf(thing);
-            const idx = bucket.indexOf(thing);
+        for (let j = 0; j < this._toDeregister.length; j++) {
+            const tickable = this._toDeregister[j];
+            const bucket = this._bucketOf(tickable);
+            const idx = bucket.indexOf(tickable);
             if (idx > -1) {
                 bucket.splice(idx, 1);
             }
         }
-        this._thingsToDeregister.length = 0;
+        this._toDeregister.length = 0;
 
-        const currentBucket = this._thingLists[ticksGame % this._tickInterval];
+        const currentBucket = this._buckets[ticksGame % this._tickInterval];
 
         for (let m = 0; m < currentBucket.length; m++) {
-            const thing = currentBucket[m];
+            const tickable = currentBucket[m];
 
-            if (thing.destroyed) {
+            if (tickable.destroyed) {
                 continue;
             }
 
             try {
-                thing.doTick();
+                tickable.doTick();
             } catch (e) {
 
-                const pos = thing.spawned ? ` (at ${thing.position?.x ?? '?'},${thing.position?.z ?? '?'})` : "";
-                const thingStr = thing.toStringSafe?.() ?? thing.toString?.() ?? "Mono";
-                jtask.log.error(`Exception ticking ${thingStr}${pos}: ${e}\n${e.stack || ''}`);
+                const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
+                const label = tickable.toStringSafe?.() ?? tickable.toString?.() ?? "Tickable";
+                jtask.log.error(`Exception ticking ${label}${pos}: ${e}\n${e.stack || ''}`);
             }
         }
     }
 
-    _bucketOf(thing) {
+    _bucketOf(tickable) {
 
-        let num = thing.getHashCode();
+        let num = tickable.getHashCode();
 
         if (num < 0) {
             num = -num;
@@ -136,22 +136,22 @@ class TickList {
 
         const index = num % this._tickInterval;
 
-        return this._thingLists[index];
+        return this._buckets[index];
     }
 
-    _thingCount() {
+    _count() {
         var n = 0;
-        for (var i = 0; i < this._thingLists.length; i++) n += this._thingLists[i].length;
+        for (var i = 0; i < this._buckets.length; i++) n += this._buckets[i].length;
         return n;
     }
 
     getStats() {
-        let totalMonos = 0;
+        let total = 0;
         let nonEmptyBuckets = 0;
         let maxBucketSize = 0;
 
-        for (const bucket of this._thingLists) {
-            totalMonos += bucket.length;
+        for (const bucket of this._buckets) {
+            total += bucket.length;
             if (bucket.length > 0) {
                 nonEmptyBuckets++;
             }
@@ -163,12 +163,12 @@ class TickList {
         return {
             tickType: this._tickType,
             tickInterval: this._tickInterval,
-            totalBuckets: this._thingLists.length,
+            totalBuckets: this._buckets.length,
             nonEmptyBuckets: nonEmptyBuckets,
-            totalMonos: totalMonos,
+            total: total,
             maxBucketSize: maxBucketSize,
-            pendingRegister: this._thingsToRegister.length,
-            pendingDeregister: this._thingsToDeregister.length
+            pendingRegister: this._toRegister.length,
+            pendingDeregister: this._toDeregister.length
         };
     }
 

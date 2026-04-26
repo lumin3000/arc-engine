@@ -4,21 +4,21 @@
 
 int shader_type_to_tex_index(ShaderType shader_type) {
   switch (shader_type) {
-  case SHADER_TYPE_TERRAIN_FADE:
+  case SHADER_TYPE_USER_2:
     return 254;
-  case SHADER_TYPE_TERRAIN_HARD:
+  case SHADER_TYPE_USER_1:
     return 253;
-  case SHADER_TYPE_TERRAIN_FADE_ROUGH:
+  case SHADER_TYPE_USER_3:
     return 252;
-  case SHADER_TYPE_TERRAIN_WATER:
+  case SHADER_TYPE_USER_4:
     return 251;
-  case SHADER_TYPE_TERRAIN_WATER_MOVING:
+  case SHADER_TYPE_USER_5:
     return 247;
-  case SHADER_TYPE_TERRAIN_HARD_POLLUTED:
+  case SHADER_TYPE_USER_6:
     return 250;
-  case SHADER_TYPE_TERRAIN_FADE_POLLUTED:
+  case SHADER_TYPE_USER_7:
     return 249;
-  case SHADER_TYPE_TERRAIN_FADE_ROUGH_POLLUTED:
+  case SHADER_TYPE_USER_8:
     return 248;
   case SHADER_TYPE_TEXTURED:
     return 0;
