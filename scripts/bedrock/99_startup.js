@@ -1,28 +1,45 @@
 
 const jtask = globalThis.jtask;
 
-// Engine startup flow. Games may plug in a TitleScreen via
-// StartupFlow.registerTitleScreen(obj). Without a TitleScreen the
-// engine begins the startup sequence immediately; with one, the engine
-// draws the title screen each frame and enters startup once the title
-// marks itself inactive (e.g. after the user presses Start).
+// Engine startup flow. Games plug in via two extension points:
+//   - StartupFlow.registerTitleScreen(obj)   — pre-startup gate
+//   - StartupFlow.registerStartupSteps(arr)  — generator steps run
+//                                              between DATA_LOADED and
+//                                              MAP_READY (loaded asynchronously
+//                                              under LongEventHandler)
 //
 // The TitleScreen object contract:
 //   active   : boolean — true while the title is visible
 //   draw()   : called every frame as long as it exists
 //
-// Games register the TitleScreen from their own script during bundle
-// evaluation (e.g. 98_title_screen.js), which runs before the first
-// scaffold tick.
+// A "startup step" is a generator function (function*) that may yield
+// repeatedly to spread heavy work across frames; each yield value is
+// forwarded to LongEventHandler for progress display.
+//
+// Games register both during bundle evaluation (before the first
+// scaffold tick).
 
 globalThis.StartupFlow = {
   _titleScreen: null,
+  _steps: [],
 
   registerTitleScreen: function(ts) {
     if (ts && typeof ts.draw !== 'function') {
       throw new Error("[StartupFlow] TitleScreen must expose draw()");
     }
     this._titleScreen = ts;
+  },
+
+  registerStartupSteps: function(steps) {
+    if (!Array.isArray(steps)) {
+      throw new Error("[StartupFlow] registerStartupSteps expects an array of generator functions");
+    }
+    for (const s of steps) {
+      if (typeof s !== 'function') {
+        throw new Error("[StartupFlow] each startup step must be a generator function");
+      }
+      this._steps.push(s);
+    }
   },
 };
 
@@ -54,6 +71,13 @@ function* StartupRoutine() {
   if (typeof GameInit !== 'undefined') {
     GameInit.triggerPhase(GameInit.Phase.CLASSES_DEFINED);
     GameInit.triggerPhase(GameInit.Phase.DATA_LOADED);
+  }
+
+  for (const step of globalThis.StartupFlow._steps) {
+    yield* step();
+  }
+
+  if (typeof GameInit !== 'undefined') {
     GameInit.triggerPhase(GameInit.Phase.MAP_READY);
     GameInit.triggerPhase(GameInit.Phase.GAME_STARTED);
   }
