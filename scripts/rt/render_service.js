@@ -78,6 +78,15 @@ function register_system_callbacks() {
     return;
   }
 
+  // Games can opt out of these defaults by setting
+  // globalThis.__ENGINE_SKIP_DEFAULT_CALLBACKS__ = true before this
+  // service initializes (e.g. in a game/<name>/000_*.js file).
+  // arc-mapgen registers its own Coord.*/RenderSetup/HUD chain in
+  // game/arc/00z_mapgen_render.js, so it sets this flag.
+  if (globalThis.__ENGINE_SKIP_DEFAULT_CALLBACKS__) {
+    return;
+  }
+
   ScaffoldCallbacks.register(function(dt) {
   }, ScaffoldPriority.RENDER_SETUP, "RenderSetup");
 
