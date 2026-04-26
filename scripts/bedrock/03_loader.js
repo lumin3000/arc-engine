@@ -1,3 +1,22 @@
+// Generic file-loader engine. Drives a LongEvent generator that pulls
+// JSON files from the loader service one at a time, feeds them to per-
+// file handlers registered by the game.
+//
+// Flow:
+//   1. LoaderRoutine asks loader service to read basePath + summaryName
+//   2. The summary handler (registered by the game) inspects the file
+//      and calls Loader.addFile(path, handler) for each follow-up file
+//      it wants to load. Files added during the summary handler become
+//      part of the same LongEvent — there is no second pass.
+//   3. The routine processes the file queue in registration order,
+//      invoking each handler with the parsed JSON object.
+//   4. When the queue drains, onCompleteCallback fires.
+//
+// Games register their summary handler at bundle-evaluation time using:
+//   Loader.registerSummaryHandler({
+//     name: "_summary.json",
+//     handler: function(data) { ... Loader.addFile(...); ... }
+//   });
 
 function loadJSONFromPtr(ptr_info) {
   if (!ptr_info || !ptr_info.__ptr) {
@@ -8,37 +27,31 @@ function loadJSONFromPtr(ptr_info) {
   return JSON.parse(str);
 }
 
-function loadEntitiesFromArray(items, type) {
-  if (!items) return;
-  for (const item of items) {
-    const defId = G.def_register(item.def);
-    const x = item.pos?.[0] ?? item.x ?? 0;
-    const z = item.pos?.[2] ?? item.z ?? 0;
-    const i = G.entity_add({
-      type,
-      defId,
-      id: item.id,
-      x,
-      z,
-      hp: item.health ?? 100,
-      growth: Math.floor((item.growth ?? 0) * 10000),
-      age: item.age ?? 0,
-      unlitTicks: item.unlitTicks ?? 0,
-      stuffId: item.stuff ? G.def_register(item.stuff) : 0,
-      rot: item.rot ?? 0,
-      stack: item.stack ?? item.stackCount ?? 1,
-    });
-    if (i >= 0) {
-      G.grid_add(i, x, z);
-    }
-  }
-}
-
 let loadState = {
   basePath: "",
   files: [],
   fileIndex: 0,
   currentFileLoaded: false
+};
+
+let _summarySpec = null;
+
+globalThis.Loader = {
+  registerSummaryHandler: function(spec) {
+    if (!spec || typeof spec.name !== 'string' || typeof spec.handler !== 'function') {
+      throw new Error("[Loader] registerSummaryHandler requires { name: string, handler: function }");
+    }
+    _summarySpec = spec;
+  },
+
+  addFile: function(path, handler) {
+    if (typeof path !== 'string' || typeof handler !== 'function') {
+      throw new Error("[Loader] addFile requires (path: string, handler: function)");
+    }
+    loadState.files.push({ path: path, handler: handler });
+  },
+
+  basePath: function() { return loadState.basePath; },
 };
 
 G.loader_onFileLoaded = function (msg) {
@@ -59,6 +72,12 @@ G.loader_onFileLoaded = function (msg) {
 function* LoaderRoutine(basePath, onCompleteCallback) {
   jtask.log("[loader] Starting LoaderRoutine: " + basePath);
 
+  if (!_summarySpec) {
+    jtask.log.error("[loader] No summary handler registered. Call Loader.registerSummaryHandler(...) before starting load.");
+    if (onCompleteCallback) onCompleteCallback();
+    return;
+  }
+
   while (!message.get_service("loader")) {
     yield;
   }
@@ -68,51 +87,9 @@ function* LoaderRoutine(basePath, onCompleteCallback) {
   loadState.fileIndex = 0;
   loadState.files = [];
 
-  let summaryLoaded = false;
-
   loadState.files.push({
-    path: basePath + "_summary.json",
-    handler: function (data) {
-      if (!data) return;
-      const mapData = data.maps?.[0];
-      const mapInfo = mapData?.mapInfo;
-      const w = mapInfo?.size?.[0] || 150;
-      const h = mapInfo?.size?.[2] || 150;
-      const mapId = mapData?.uniqueID ?? 0;
-
-      G.grid_init(w, h);
-      G.section_init(w, h);
-
-      jtask.log(`[loader] Map Inited: ${w}x${h}`);
-
-      const thingsPath = basePath + "_things";
-      const prefix = "/map" + mapId + "_";
-
-      const addFile = (name, handler) => {
-        loadState.files.push({ path: thingsPath + prefix + name, handler });
-      };
-
-      addFile("pawn.json", (d) => { if (d) for (const p of d) G.pawn_add(p); });
-      addFile("plant.json", (d) => loadEntitiesFromArray(d, G.EntityType.PLANT));
-      addFile("building.json", (d) => loadEntitiesFromArray(d, G.EntityType.BUILDING));
-
-      const buildingFiles = [
-        "building_door.json", "building_cooler.json", "building_steamgeyser.json",
-        "building_ancientmechremains.json", "building_bed.json", "building_storage.json",
-        "building_gravengine.json"
-      ];
-
-      for (const f of buildingFiles) {
-        addFile(f, (d) => loadEntitiesFromArray(d, G.EntityType.BUILDING));
-      }
-
-      addFile("filth.json", (d) => loadEntitiesFromArray(d, G.EntityType.FILTH));
-      addFile("thingwithcomps.json", (d) => loadEntitiesFromArray(d, G.EntityType.ITEM));
-      addFile("apparel.json", (d) => loadEntitiesFromArray(d, G.EntityType.ITEM));
-      addFile("medicine.json", (d) => loadEntitiesFromArray(d, G.EntityType.ITEM));
-
-      summaryLoaded = true;
-    }
+    path: basePath + _summarySpec.name,
+    handler: _summarySpec.handler,
   });
 
   while (loadState.fileIndex < loadState.files.length) {
