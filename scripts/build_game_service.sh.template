@@ -79,17 +79,6 @@ if [ -n "${GAME_TOPLEVEL_DIRS:-}" ]; then
         bundle_dir "game/$sub" "$GAME_SCRIPTS_DIR/$sub"
     done
 fi
-# Bedrock/react_polyfill etc — when a game has scripts/bedrock/ but did NOT list
-# bedrock in GAME_TOPLEVEL_DIRS, we still bundle it after engine bedrock so
-# legacy polyfills work. (gunslinger doesn't have scripts/bedrock/ so this is
-# a no-op; arc-mapgen has scripts/bedrock/react_polyfill.js.)
-if [ -d "$GAME_SCRIPTS_DIR/bedrock" ]; then
-    case "${GAME_TOPLEVEL_DIRS:-} " in
-        *" bedrock "*) ;;
-        *) bundle_dir "game/bedrock" "$GAME_SCRIPTS_DIR/bedrock" ;;
-    esac
-fi
-
 # Game-specific modules under scripts/game/<name>/ (skip directories starting
 # with _ which the project uses for backups).
 if [ -d "$GAME_SCRIPTS_DIR/game" ]; then

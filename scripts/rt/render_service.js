@@ -1,16 +1,28 @@
+// arc-engine render service.
+//
+// The frame loop only. Owns:
+//   - jtask service registration ("render" + "game")
+//   - LongEventHandler.Update() per frame
+//   - mainthread_run(render_frame), which dispatches to:
+//       RenderFrameCallbacks.runAll(dt)   — game-side mainthread work
+//       ScaffoldCallbacks.runAll(dt)      — game-side worker-thread chain
+//   - imgui.begin_frame() if imgui is available
+//   - RealTime.update(dt)
+//   - file_loaded forwarding to G.loader_onFileLoaded
+//   - stdin_command forwarding to G.handleExternalCommand
+//
+// Everything game-specific (atlas preload, plant sway, terrain section
+// mesh, HUD, RenderSetup / Coord.* / etc.) lives in the consumer's
+// scripts/game/ tree and registers via:
+//   - StartupFlow.registerStartupSteps([...])  for staged startup work
+//   - RenderFrameCallbacks.register(fn, name)  for per-frame mainthread
+//   - ScaffoldCallbacks.register(fn, prio, name) for per-frame worker
+//
+// See: arc-mapgen/scripts/game/arc/00z_mapgen_render.js,
+//      sokol-javascript-game-gunslinger/scripts/game/gunslinger/01_default_callbacks.js
 
 const jtask = globalThis.jtask;
 globalThis.__BP_VERBOSE__ = false;
-
-let plant_sway_head = 0.0;
-const WIND_SPEED = 0.5;
-
-function updateFloraSwayHead() {
-  plant_sway_head += Math.min(WIND_SPEED, 1.0);
-  if (typeof render !== 'undefined' && render.set_sway_head) {
-    render.set_sway_head(plant_sway_head);
-  }
-}
 
 const S = {
   _gc: {
@@ -22,71 +34,6 @@ const S = {
 
 let frame_count = 0;
 let last_frame_time = 0;
-
-let terrain_atlas_uv_array = null;
-let terrain_textures_preloaded = false;
-let plant_textures_preloaded = false;
-let linked_textures_preloaded = false;
-let atlas_needs_upload = false;
-let atlas_prebaked_need_upload = false;
-const PREBAKED_ATLAS_DIR = "data/atlas";
-
-function* preloadAllAtlasTextures() {
-  jtask.log("[atlas] preloadAllAtlasTextures: starting");
-
-  const atlas = getTextureAtlas();
-
-  yield { status: "Reading prebaked atlas...", progress: 0.1 };
-  yield;
-
-  const slotIds = atlas.loadPrebakedRead(PREBAKED_ATLAS_DIR);
-  if (!slotIds) {
-    throw new Error("[atlas] FATAL: Prebaked atlas not found at " + PREBAKED_ATLAS_DIR + ". Run 'make atlas-prebake' first.");
-  }
-
-  if (typeof atlas.applyModPack === 'function') {
-    yield { status: "Packing mod textures...", progress: 0.3 };
-    atlas.applyModPack();
-  }
-
-  terrain_atlas_uv_array = atlas.getTerrainUvMapForC();
-  terrain_textures_preloaded = true;
-  plant_textures_preloaded = true;
-  linked_textures_preloaded = true;
-
-  atlas_prebaked_need_upload = true;
-  atlas_needs_upload = false;
-
-  yield { status: "Uploading atlas to GPU...", progress: 0.5 };
-
-  while (atlas_prebaked_need_upload) {
-    yield;
-  }
-
-  yield { status: "Prebaked atlas loaded", progress: 1.0 };
-  jtask.log("[atlas] preloadAllAtlasTextures: prebaked loaded (split-frame)");
-}
-
-globalThis.preloadAllAtlasTextures = preloadAllAtlasTextures;
-
-globalThis.markAtlasDesiresUpload = function () {
-  atlas_needs_upload = true;
-};
-
-// The render-pipeline ScaffoldCallbacks (RenderSetup, Coord.ClipSpace,
-// Coord.WorldSpace, Coord.ScreenSpace, any HUD frame counter, etc.) are
-// the consumer's responsibility — what coord space terrain/buildings/
-// dynamic things draw in, where the screen-space chrome lives, and how
-// the HUD looks are all game decisions. arc-engine only owns the frame
-// loop (S.frame → mainthread_run(render_frame) → RenderFrameCallbacks +
-// ScaffoldCallbacks.runAll); games register the actual chain from their
-// own scripts:
-//
-//   - gunslinger:   scripts/game/gunslinger/00_default_callbacks.js
-//   - arc-mapgen:   scripts/game/arc/00z_mapgen_render.js
-
-// RenderFrameCallbacks is now defined in bedrock/03_frame_callbacks.js
-// so game scripts can register before this service file evaluates.
 
 function render_frame() {
   try {
@@ -100,24 +47,6 @@ function render_frame() {
 
     if (typeof imgui !== 'undefined' && imgui.begin_frame) {
       imgui.begin_frame();
-    }
-
-    updateFloraSwayHead();
-
-    if (atlas_prebaked_need_upload) {
-      const atlas = getTextureAtlas();
-      if (atlas.finishPrebakedUpload()) {
-        jtask.log("[render] Prebaked atlas GPU upload done");
-      } else {
-        jtask.log.error("[render] Prebaked atlas GPU upload FAILED");
-      }
-      atlas_prebaked_need_upload = false;
-    }
-
-    if (atlas_needs_upload) {
-      getTextureAtlas().upload();
-      atlas_needs_upload = false;
-      jtask.log("[render] Atlas uploaded to GPU (1 slot)");
     }
 
     RenderFrameCallbacks.runAll(dt);
