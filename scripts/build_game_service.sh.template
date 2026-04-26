@@ -123,8 +123,41 @@ echo "Built $OUTPUT_FILE ($count files)"
 echo ""
 echo "=== Duplicate definition check ==="
 
+# Build the list of directories that were actually bundled. Use an
+# associative-array-style dedup via printf-sort-uniq because GAME_TOPLEVEL_DIRS
+# may overlap with the implicit bedrock|render|tick|config sweep below.
+_dup_scan_raw=$(mktemp)
+for sub in bedrock render tick config; do
+    [ -d "$ENGINE_SCRIPTS_DIR/$sub" ] && echo "$ENGINE_SCRIPTS_DIR/$sub" >> "$_dup_scan_raw"
+    [ -d "$GAME_SCRIPTS_DIR/$sub" ] && echo "$GAME_SCRIPTS_DIR/$sub" >> "$_dup_scan_raw"
+done
+for sub in ${GAME_TOPLEVEL_DIRS:-}; do
+    [ -d "$GAME_SCRIPTS_DIR/$sub" ] && echo "$GAME_SCRIPTS_DIR/$sub" >> "$_dup_scan_raw"
+done
+if [ -d "$GAME_SCRIPTS_DIR/game" ]; then
+    for dir in "$GAME_SCRIPTS_DIR/game/"*/; do
+        [ ! -d "$dir" ] && continue
+        local_name=$(basename "$dir")
+        case "$local_name" in
+            _*) continue ;;
+        esac
+        echo "$dir" >> "$_dup_scan_raw"
+    done
+fi
+if [ -n "${BUNDLE_EXTRA_SERVICES:-}" ]; then
+    for service_rel in $BUNDLE_EXTRA_SERVICES; do
+        sp="$ENGINE_SCRIPTS_DIR/$service_rel"
+        [ -f "$sp" ] && echo "$sp" >> "$_dup_scan_raw"
+    done
+fi
+DUP_SCAN_DIRS=()
+while IFS= read -r line; do
+    DUP_SCAN_DIRS+=("$line")
+done < <(sort -u "$_dup_scan_raw")
+rm -f "$_dup_scan_raw"
+
 EXPORTS=$(mktemp)
-for scan_dir in "$ENGINE_SCRIPTS_DIR" "$GAME_SCRIPTS_DIR"; do
+for scan_dir in "${DUP_SCAN_DIRS[@]}"; do
     # Match a plain single-= assignment to globalThis.NAME, reject ==/===.
     grep -rEn "globalThis\.[A-Za-z0-9_]+[[:space:]]*=[^=]" --include="*.js" "$scan_dir" 2>/dev/null | \
         grep -v "^[^:]*:[0-9]*:[[:space:]]*//" | \
@@ -153,7 +186,7 @@ if [ -n "$REAL_DUPLICATES" ]; then
     echo "ERROR: duplicate definitions found:"
     for dup in $REAL_DUPLICATES; do
         echo "  $dup:"
-        for scan_dir in "$ENGINE_SCRIPTS_DIR" "$GAME_SCRIPTS_DIR"; do
+        for scan_dir in "${DUP_SCAN_DIRS[@]}"; do
             grep -rn "globalThis\.$dup =" --include="*.js" "$scan_dir" 2>/dev/null | grep -v "^\s*//" | sed 's/^/    /'
         done
     done
@@ -191,13 +224,22 @@ if [ -n "${C_SRC_DIR:-}" ] && [ -d "$C_SRC_DIR" ]; then
 fi
 
 # ============================================================================
-# console.log check (both engine and game)
+# console.log check (only directories actually bundled into game_service)
 # ============================================================================
 echo ""
 echo "=== console.log check ==="
 
+# Build the list of directories that were actually bundled, so we don't
+# false-positive on tooling / node_modules / debug scripts that aren't
+# packaged at runtime. Reuse DUP_SCAN_DIRS minus the BUNDLE_EXTRA_SERVICES
+# files (those are .js files, not directories).
+SCAN_DIRS=()
+for d in "${DUP_SCAN_DIRS[@]}"; do
+    [ -d "$d" ] && SCAN_DIRS+=("$d")
+done
+
 CONSOLE_HITS=""
-for scan_dir in "$ENGINE_SCRIPTS_DIR" "$GAME_SCRIPTS_DIR"; do
+for scan_dir in "${SCAN_DIRS[@]}"; do
     hits=$(grep -rn "console\.\(log\|warn\|error\)" --include="*.js" "$scan_dir" 2>/dev/null | grep -v "^[^:]*:[0-9]*:\s*//" | grep -v "^[^:]*:[0-9]*:\s*\*" | grep -v "/_[^/]*/" || true)
     if [ -n "$hits" ]; then
         CONSOLE_HITS="$CONSOLE_HITS
