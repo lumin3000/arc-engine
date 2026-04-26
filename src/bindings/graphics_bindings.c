@@ -1,11 +1,9 @@
 // graphics_bindings.c - Graphics API JS 绑定
 //
-// 对齐 Reference: Graphics.DrawMesh(mesh, loc, quat, material, layer)
+// 对齐 Unity-style: Graphics.DrawMesh(mesh, loc, quat, material, layer)
 //
-// 用于动态渲染 (RealtimeOnly/MapMeshAndRealTime):
-//   - Pawn 动态绘制
-//   - Door 开关动画
-//   - 其他需要每帧更新位置/旋转的 Thing
+// 用于每帧重提交的动态 mesh：任何 transform / 旋转 / 材质会变的对象
+// （角色、可动门、投射物等）。引擎不区分调用者类型，由游戏决定。
 //
 // API:
 //   graphics.draw_mesh(meshId, x, y, z, qx, qy, qz, qw, textureId, layer)
@@ -512,8 +510,9 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
   transform[14] = (float)z; // World Z (North)
 
   // Apply Texture - 直接设置 texture 和 view (不要创建新 view)
-  // 注意: 由于 3 个 pawn 共享 DynamicMesh，使用 material_set_texture 会导致
-  // view 被反复销毁/创建，当 submit 时之前复制的 Material 中的 view handle
+  // 注意: 多个 mesh request 共享同一个 DynamicMesh 时，使用
+  // material_set_texture 会导致 view 被反复销毁/创建——此后 submit
+  // 拿到的旧 Material 复制里的 view handle 会指向已销毁的资源。
   if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
       g_graphics_textures[textureId].valid) {
     // 直接设置，避免创建/销毁 view

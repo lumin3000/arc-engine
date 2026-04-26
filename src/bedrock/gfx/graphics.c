@@ -276,21 +276,24 @@ void graphics_submit_meshes(void) {
   static int s_submit_debug = 0;
   s_submit_debug++;
 
-  int pre_pawn_count = 0;
+  // Count non-origin mesh requests (transform[12]/[13] != 0). Used for
+  // diagnostic logging only — these are the meshes that actually need
+  // a per-frame transform, as opposed to e.g. terrain that draws at
+  // origin via a single batched call.
+  int transformed_count = 0;
   for (int i = 0; i < g_graphics.mesh_queue_count; i++) {
     MeshDrawRequest *r = &g_graphics.mesh_queue[i];
     if (r->valid && (r->transform[12] != 0.0f || r->transform[13] != 0.0f)) {
-      pre_pawn_count++;
+      transformed_count++;
     }
   }
 
-  static int s_pawn_submit_debug = 0;
-  if (pre_pawn_count > 0 && s_pawn_submit_debug < 10) {
-    s_pawn_submit_debug++;
+  static int s_submit_diag_count = 0;
+  if (transformed_count > 0 && s_submit_diag_count < 10) {
+    s_submit_diag_count++;
     fprintf(stderr,
-            "[graphics] submit_meshes with pawns #%d: queue_count=%d, "
-            "pawn_count=%d\n",
-            s_pawn_submit_debug, g_graphics.mesh_queue_count, pre_pawn_count);
+            "[graphics] submit_meshes #%d: queue_count=%d, transformed=%d\n",
+            s_submit_diag_count, g_graphics.mesh_queue_count, transformed_count);
   }
 
   if (g_graphics.mesh_queue_count == 0 &&
@@ -310,42 +313,38 @@ void graphics_submit_meshes(void) {
   qsort(g_graphics.mesh_queue, g_graphics.mesh_queue_count,
         sizeof(MeshDrawRequest), compare_mesh_request_by_renderqueue);
 
-  static int s_qsort_debug = 0;
+  static int s_qsort_diag_count = 0;
 
-  int pawn_count = 0;
+  // Re-count after sort, log a few times for sanity checks.
+  int post_sort_transformed = 0;
   for (int ii = 0; ii < g_graphics.mesh_queue_count; ii++) {
     MeshDrawRequest *r = &g_graphics.mesh_queue[ii];
     if (r->valid && (r->transform[12] != 0.0f || r->transform[13] != 0.0f)) {
-      pawn_count++;
+      post_sort_transformed++;
     }
   }
-  if (pawn_count > 0 && s_qsort_debug < 3) {
-    s_qsort_debug++;
+  if (post_sort_transformed > 0 && s_qsort_diag_count < 3) {
+    s_qsort_diag_count++;
     fprintf(stderr,
-            "[graphics] F%d after qsort: total pawns=%d, queue_count=%d\n",
-            g_graphics_frame_counter, pawn_count, g_graphics.mesh_queue_count);
+            "[graphics] F%d after qsort: transformed=%d, queue_count=%d\n",
+            g_graphics_frame_counter, post_sort_transformed,
+            g_graphics.mesh_queue_count);
     for (int i = 0; i < g_graphics.mesh_queue_count; i++) {
       MeshDrawRequest *r = &g_graphics.mesh_queue[i];
       if (r->transform[12] != 0.0f || r->transform[13] != 0.0f) {
         fprintf(stderr,
-                "  pawn idx=%d, valid=%d, x=%.1f, y=%.1f, tex_view=%u, rq=%d\n",
+                "  mesh idx=%d, valid=%d, x=%.1f, y=%.1f, tex_view=%u, rq=%d\n",
                 i, r->valid, r->transform[12], r->transform[13],
                 r->material.texture_view.id, r->material.renderQueue);
       }
     }
   }
 
-  int rendered_pawn_count = 0;
-  int total_valid_count = 0;
-
-  int queue_count_at_loop_start = g_graphics.mesh_queue_count;
-
   for (int i = 0; i < g_graphics.mesh_queue_count; i++) {
     MeshDrawRequest *req = &g_graphics.mesh_queue[i];
     if (!req->valid)
       continue;
 
-    total_valid_count++;
     Mesh *mesh = req->mesh;
     Material *mat = &req->material;
 
