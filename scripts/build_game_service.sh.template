@@ -67,16 +67,27 @@ for sub in bedrock render tick config; do
     bundle_dir "engine/$sub" "$ENGINE_SCRIPTS_DIR/$sub"
 done
 
-# Game modules mirroring engine layout (optional additive)
-for sub in bedrock render tick config; do
-    bundle_dir "game/$sub" "$GAME_SCRIPTS_DIR/$sub"
-done
-
-# Game-side top-level dirs in declared order (e.g. defs body things mapgen world)
+# Game-side top-level dirs in declared order (e.g. defs body things mapgen world).
+# This is the *only* place game-side top-level dirs (other than scripts/game/<name>/)
+# get bundled, so games that want their own bedrock/render/tick/config extensions
+# must list them explicitly in GAME_TOPLEVEL_DIRS in the desired position.
+# (We used to auto-mirror engine dirs here, which broke load order whenever a
+# game listed render/ in GAME_TOPLEVEL_DIRS expecting it to come *after*
+# things/ — the auto-mirror always ran first.)
 if [ -n "${GAME_TOPLEVEL_DIRS:-}" ]; then
     for sub in $GAME_TOPLEVEL_DIRS; do
         bundle_dir "game/$sub" "$GAME_SCRIPTS_DIR/$sub"
     done
+fi
+# Bedrock/react_polyfill etc — when a game has scripts/bedrock/ but did NOT list
+# bedrock in GAME_TOPLEVEL_DIRS, we still bundle it after engine bedrock so
+# legacy polyfills work. (gunslinger doesn't have scripts/bedrock/ so this is
+# a no-op; arc-mapgen has scripts/bedrock/react_polyfill.js.)
+if [ -d "$GAME_SCRIPTS_DIR/bedrock" ]; then
+    case "${GAME_TOPLEVEL_DIRS:-} " in
+        *" bedrock "*) ;;
+        *) bundle_dir "game/bedrock" "$GAME_SCRIPTS_DIR/bedrock" ;;
+    esac
 fi
 
 # Game-specific modules under scripts/game/<name>/ (skip directories starting
