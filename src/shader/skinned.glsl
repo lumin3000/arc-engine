@@ -6,14 +6,19 @@
 @ctype vec4 Vec4
 
 @block skin_utils
-void skinned_pos_nrm(in vec4 pos, in vec4 nrm, in vec4 skin_weights, in uvec4 skin_indices, out vec4 skin_pos, out vec4 skin_nrm) {
+// joint_row identifies which row of joint_tex holds this instance's joint
+// matrices. When all instances are drawn in a single call this equals
+// gl_InstanceIndex; when the consumer splits draws into buckets (e.g. per
+// material) it must pass the original instance row through inst_meta.x so
+// joint sampling still hits the right joints.
+void skinned_pos_nrm(in vec4 pos, in vec4 nrm, in vec4 skin_weights, in uvec4 skin_indices, in int joint_row, out vec4 skin_pos, out vec4 skin_nrm) {
     skin_pos = vec4(0.0, 0.0, 0.0, 1.0);
     skin_nrm = vec4(0.0, 0.0, 0.0, 0.0);
     vec4 weights = skin_weights / dot(skin_weights, vec4(1.0));
     ivec2 uv;
     vec4 xxxx, yyyy, zzzz;
     if (weights.x > 0.0) {
-        uv = ivec2(3 * skin_indices.x, gl_InstanceIndex);
+        uv = ivec2(3 * skin_indices.x, joint_row);
         xxxx = texelFetch(sampler2D(joint_tex, joint_smp), uv, 0);
         yyyy = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(1,0), 0);
         zzzz = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(2,0), 0);
@@ -21,7 +26,7 @@ void skinned_pos_nrm(in vec4 pos, in vec4 nrm, in vec4 skin_weights, in uvec4 sk
         skin_nrm.xyz += vec3(dot(nrm,xxxx), dot(nrm,yyyy), dot(nrm,zzzz)) * weights.x;
     }
     if (weights.y > 0.0) {
-        uv = ivec2(3 * skin_indices.y, gl_InstanceIndex);
+        uv = ivec2(3 * skin_indices.y, joint_row);
         xxxx = texelFetch(sampler2D(joint_tex, joint_smp), uv, 0);
         yyyy = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(1,0), 0);
         zzzz = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(2,0), 0);
@@ -29,7 +34,7 @@ void skinned_pos_nrm(in vec4 pos, in vec4 nrm, in vec4 skin_weights, in uvec4 sk
         skin_nrm.xyz += vec3(dot(nrm,xxxx), dot(nrm,yyyy), dot(nrm,zzzz)) * weights.y;
     }
     if (weights.z > 0.0) {
-        uv = ivec2(3 * skin_indices.z, gl_InstanceIndex);
+        uv = ivec2(3 * skin_indices.z, joint_row);
         xxxx = texelFetch(sampler2D(joint_tex, joint_smp), uv, 0);
         yyyy = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(1,0), 0);
         zzzz = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(2,0), 0);
@@ -37,7 +42,7 @@ void skinned_pos_nrm(in vec4 pos, in vec4 nrm, in vec4 skin_weights, in uvec4 sk
         skin_nrm.xyz += vec3(dot(nrm,xxxx), dot(nrm,yyyy), dot(nrm,zzzz)) * weights.z;
     }
     if (weights.w > 0.0) {
-        uv = ivec2(3 * skin_indices.w, gl_InstanceIndex);
+        uv = ivec2(3 * skin_indices.w, joint_row);
         xxxx = texelFetch(sampler2D(joint_tex, joint_smp), uv, 0);
         yyyy = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(1,0), 0);
         zzzz = texelFetch(sampler2D(joint_tex, joint_smp), uv + ivec2(2,0), 0);
@@ -65,6 +70,7 @@ in vec2 texcoord0;
 in vec4 inst_xxxx;
 in vec4 inst_yyyy;
 in vec4 inst_zzzz;
+in vec4 inst_meta;  // x = joint_tex row index (orig instance index)
 
 out vec2 fs_uv;
 out vec3 fs_nrm;
@@ -73,7 +79,8 @@ out vec3 fs_nrm;
 
 void main() {
     vec4 pos, nrm;
-    skinned_pos_nrm(position, normal, jweights, jindices, pos, nrm);
+    int joint_row = int(inst_meta.x);
+    skinned_pos_nrm(position, normal, jweights, jindices, joint_row, pos, nrm);
 
     // transform to world space using per-instance model matrix (transposed 4x3)
     pos = vec4(dot(pos,inst_xxxx), dot(pos,inst_yyyy), dot(pos,inst_zzzz), 1.0);
