@@ -8,7 +8,6 @@
 #include "message.h"
 #include "quickjs-libc.h"
 #include "quickjs.h"
-#include "quickjs_coroutine.h"
 #include "quickjs_searchpath.h"
 #include "serialize.h"
 #include "service.h"
@@ -105,7 +104,6 @@ JSContext *g_bootstrap_ctx = NULL;
 static bool g_initialized = false;
 static JSRuntime *g_runtime = NULL;
 static JSContext *g_context = NULL;
-static JSCoroutineManager *g_coroutine_mgr = NULL;
 
 JSContext *js_runtime_get_context(void) {
   return g_context;
@@ -649,11 +647,6 @@ int js_runtime_init(void) {
   }
   g_bootstrap_ctx = g_context;
 
-  g_coroutine_mgr = JS_NewCoroutineManager(g_runtime);
-  if (g_coroutine_mgr) {
-    JS_EnableCoroutines(g_context, g_coroutine_mgr);
-  }
-
   js_init_searchpath(g_context);
   js_std_add_helpers(g_context, 0, NULL);
 
@@ -755,11 +748,6 @@ void js_runtime_shutdown(void) {
 
   jtask_join();
   jtask_shutdown();
-
-  if (g_coroutine_mgr) {
-    JS_FreeCoroutineManager(g_coroutine_mgr);
-    g_coroutine_mgr = NULL;
-  }
 
   if (g_context) {
     JS_FreeContext(g_context);
