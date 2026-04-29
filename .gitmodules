@@ -9,7 +9,8 @@
 	url = git@github.com:lumin3000/quickjs.git
 [submodule "external/Tina"]
 	path = external/Tina
-	url = https://github.com/slembcke/Tina.git
+	url = git@github.com:lumin3000/tina.git
+	branch = wasm
 [submodule "external/ozz-animation"]
 	path = external/ozz-animation
 	url = https://github.com/guillaumeblanc/ozz-animation.git
