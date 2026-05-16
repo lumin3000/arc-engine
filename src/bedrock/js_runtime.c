@@ -171,6 +171,18 @@ static JSValue js_std_loadfile(JSContext *ctx, JSValueConst this_val, int argc,
   if (!path)
     return JS_EXCEPTION;
 
+  // Optional second arg: { binary: true } → return ArrayBuffer; default string.
+  int binary = 0;
+  if (argc >= 2 && JS_IsObject(argv[1])) {
+    JSValue bin_val = JS_GetPropertyStr(ctx, argv[1], "binary");
+    binary = JS_ToBool(ctx, bin_val);
+    JS_FreeValue(ctx, bin_val);
+    if (binary < 0) {
+      JS_FreeCString(ctx, path);
+      return JS_EXCEPTION;
+    }
+  }
+
   size_t buf_len;
   uint8_t *buf = js_load_file(ctx, &buf_len, path);
   JS_FreeCString(ctx, path);
@@ -178,7 +190,12 @@ static JSValue js_std_loadfile(JSContext *ctx, JSValueConst this_val, int argc,
   if (!buf)
     return JS_NULL;
 
-  JSValue result = JS_NewStringLen(ctx, (const char *)buf, buf_len);
+  JSValue result;
+  if (binary) {
+    result = JS_NewArrayBufferCopy(ctx, buf, buf_len);
+  } else {
+    result = JS_NewStringLen(ctx, (const char *)buf, buf_len);
+  }
   js_free(ctx, buf);
   return result;
 }
