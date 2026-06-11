@@ -49,6 +49,9 @@ float ozz_joint_texture_pixel_width(void);
 float ozz_joint_texture_u(ozz_instance_t* ozz);
 float ozz_joint_texture_v(ozz_instance_t* ozz);
 int ozz_num_triangle_indices(ozz_instance_t* ozz);
+// joint model-space position (translation of sampled model_matrices);
+// returns false if joint name not found or skeleton not loaded
+bool ozz_get_joint_model_pos(ozz_instance_t* ozz, const char* joint_name, float out_pos[3]);
 
 #if defined(__cplusplus)
 } // extern "C"

@@ -10,7 +10,9 @@
 #include "ozz/base/containers/vector.h"
 #include "ozz/base/maths/soa_transform.h"
 #include "ozz/base/maths/vec_float.h"
+#include "ozz/base/maths/simd_math.h"
 #include "framework/mesh.h"
+#include <string.h>
 
 #include "ozzutil.h"
 
@@ -387,4 +389,25 @@ int ozz_num_triangle_indices(ozz_instance_t* ozz) {
     assert(state.valid && ozz);
     ozz_private_t* self = (ozz_private_t*) ozz;
     return self->num_triangle_indices;
+}
+
+bool ozz_get_joint_model_pos(ozz_instance_t* ozz, const char* joint_name, float out_pos[3]) {
+    assert(state.valid && ozz);
+    if (!joint_name || !out_pos) return false;
+    ozz_private_t* self = (ozz_private_t*) ozz;
+    if (!self->skel_loaded) return false;
+
+    const auto names = self->skel.joint_names();
+    const int num_joints = self->skel.num_joints();
+    for (int i = 0; i < num_joints; i++) {
+        if (strcmp(names[i], joint_name) != 0) continue;
+        if (i >= (int)self->model_matrices.size()) return false;
+        float tmp[4];
+        ozz::math::StorePtrU(self->model_matrices[i].cols[3], tmp);
+        out_pos[0] = tmp[0];
+        out_pos[1] = tmp[1];
+        out_pos[2] = tmp[2];
+        return true;
+    }
+    return false;
 }
