@@ -183,6 +183,122 @@ static JSValue js_graphics_create_quad_mesh(JSContext *ctx,
 }
 
 // ============================================================================
+// graphics.create_mesh(positions, colors, uvs, indices, shaderType) -> meshId
+// 从 TypedArray 创建任意网格（instanced 物品渲染的网格来源）
+//   positions: Float32Array (n*3)            必需
+//   colors:    Float32Array (n*4) 或 null    缺省全白
+//   uvs:       Float32Array (n*2) 或 null    缺省 0
+//   indices:   Int32Array   (tri*3)          必需
+//   shaderType: int (ShaderType 枚举值, 如 SHADER_TYPE_NONE=0 纯顶点色)
+// ============================================================================
+
+static bool typed_array_floats(JSContext *ctx, JSValueConst val,
+                               const float **out_ptr, size_t *out_bytes) {
+  size_t off, len;
+  JSValue buf = JS_GetTypedArrayBuffer(ctx, val, &off, &len, NULL);
+  if (JS_IsException(buf))
+    return false;
+  size_t full;
+  uint8_t *ptr = JS_GetArrayBuffer(ctx, &full, buf);
+  JS_FreeValue(ctx, buf);
+  if (!ptr)
+    return false;
+  *out_ptr = (const float *)(ptr + off);
+  *out_bytes = len;
+  return true;
+}
+
+static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
+                                       int argc, JSValueConst *argv) {
+  ensure_initialized();
+
+  if (argc < 5) {
+    return JS_ThrowTypeError(
+        ctx, "graphics.create_mesh requires (positions, colors, uvs, indices, "
+             "shaderType)");
+  }
+
+  int id = -1;
+  for (int i = 0; i < MAX_DYNAMIC_MESHES; i++) {
+    if (!g_dynamic_meshes[i].valid) {
+      id = i;
+      break;
+    }
+  }
+  if (id < 0)
+    return JS_ThrowRangeError(ctx, "graphics: no free mesh slots");
+
+  const float *positions;
+  size_t pos_bytes;
+  if (!typed_array_floats(ctx, argv[0], &positions, &pos_bytes))
+    return JS_ThrowTypeError(ctx, "create_mesh: positions must be Float32Array");
+  const int vert_count = (int)(pos_bytes / (3 * sizeof(float)));
+  if (vert_count <= 0)
+    return JS_ThrowRangeError(ctx, "create_mesh: empty positions");
+
+  const float *colors = NULL;
+  size_t col_bytes = 0;
+  if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {
+    if (!typed_array_floats(ctx, argv[1], &colors, &col_bytes) ||
+        col_bytes < (size_t)vert_count * 4 * sizeof(float))
+      return JS_ThrowTypeError(ctx, "create_mesh: colors must be Float32Array(n*4)");
+  }
+
+  const float *uvs = NULL;
+  size_t uv_bytes = 0;
+  if (!JS_IsNull(argv[2]) && !JS_IsUndefined(argv[2])) {
+    if (!typed_array_floats(ctx, argv[2], &uvs, &uv_bytes) ||
+        uv_bytes < (size_t)vert_count * 2 * sizeof(float))
+      return JS_ThrowTypeError(ctx, "create_mesh: uvs must be Float32Array(n*2)");
+  }
+
+  const float *indices_f;
+  size_t idx_bytes;
+  if (!typed_array_floats(ctx, argv[3], &indices_f, &idx_bytes))
+    return JS_ThrowTypeError(ctx, "create_mesh: indices must be Int32Array");
+  const int *indices = (const int *)indices_f;
+  const int tri_count = (int)(idx_bytes / (3 * sizeof(int)));
+  if (tri_count <= 0)
+    return JS_ThrowRangeError(ctx, "create_mesh: empty indices");
+
+  int32_t shader_type = 0;
+  if (JS_ToInt32(ctx, &shader_type, argv[4]) < 0)
+    return JS_EXCEPTION;
+
+  DynamicMesh *dm = &g_dynamic_meshes[id];
+  mesh_init(&dm->mesh, vert_count, tri_count);
+  mesh_set_vertices(&dm->mesh, positions, vert_count);
+  if (colors) {
+    mesh_set_colors(&dm->mesh, colors, vert_count);
+  } else {
+    for (int i = 0; i < vert_count; i++) {
+      dm->mesh.colors[i * 4 + 0] = 1.0f;
+      dm->mesh.colors[i * 4 + 1] = 1.0f;
+      dm->mesh.colors[i * 4 + 2] = 1.0f;
+      dm->mesh.colors[i * 4 + 3] = 1.0f;
+    }
+  }
+  if (uvs) {
+    mesh_set_uvs(&dm->mesh, uvs, vert_count);
+  } else {
+    memset(dm->mesh.uvs, 0, (size_t)vert_count * 2 * sizeof(float));
+  }
+  mesh_set_triangles(&dm->mesh, indices, tri_count);
+
+  material_init(&dm->material);
+  material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);
+  material_set_render_queue(&dm->material, 3000);
+  material_set_shader_type(&dm->material, (ShaderType)shader_type);
+
+  mesh_upload_to_gpu_with_material(&dm->mesh, &dm->material);
+  dm->valid = true;
+
+  LOG_INFO("graphics.create_mesh: id=%d verts=%d tris=%d shader=%d", id,
+           vert_count, tri_count, shader_type);
+  return JS_NewInt32(ctx, id);
+}
+
+// ============================================================================
 // graphics.create_quad_mesh_uv(u0, v0, u1, v1) -> meshId
 // 创建自定义 UV 的四边形 mesh（用于 atlas 区域采样）
 // ============================================================================
@@ -1058,6 +1174,9 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "create_quad_mesh",
                     JS_NewCFunction(ctx, js_graphics_create_quad_mesh,
                                     "create_quad_mesh", 0));
+  JS_SetPropertyStr(ctx, obj, "create_mesh",
+                    JS_NewCFunction(ctx, js_graphics_create_mesh,
+                                    "create_mesh", 5));
   JS_SetPropertyStr(ctx, obj, "create_quad_mesh_uv",
                     JS_NewCFunction(ctx, js_graphics_create_quad_mesh_uv,
                                     "create_quad_mesh_uv", 4));
