@@ -78,6 +78,8 @@ void mesh_free(Mesh *mesh) {
     free(mesh->colors);
   if (mesh->uvs)
     free(mesh->uvs);
+  if (mesh->normals)
+    free(mesh->normals);
   if (mesh->triangles)
     free(mesh->triangles);
   if (mesh->gpu_vertices)
@@ -107,6 +109,14 @@ static bool mesh_ensure_vert_capacity(Mesh *mesh, int needed) {
 
   if (!new_verts || !new_cols || !new_uvs) {
     return false;
+  }
+
+  if (mesh->normals) {
+    float *new_normals =
+        (float *)realloc(mesh->normals, new_cap * 3 * sizeof(float));
+    if (!new_normals)
+      return false;
+    mesh->normals = new_normals;
   }
 
   mesh->vertices = new_verts;
@@ -169,6 +179,22 @@ void mesh_set_uvs(Mesh *mesh, const float *uvs, int count) {
       return;
   }
   memcpy(mesh->uvs, uvs, count * 2 * sizeof(float));
+  mesh->dirty = true;
+}
+
+void mesh_set_normals(Mesh *mesh, const float *normals, int count) {
+  if (!mesh || !normals)
+    return;
+  if (count > mesh->vert_capacity) {
+    if (!mesh_ensure_vert_capacity(mesh, count - mesh->vert_count))
+      return;
+  }
+  if (!mesh->normals) {
+    mesh->normals = (float *)malloc(mesh->vert_capacity * 3 * sizeof(float));
+    if (!mesh->normals)
+      return;
+  }
+  memcpy(mesh->normals, normals, count * 3 * sizeof(float));
   mesh->dirty = true;
 }
 
@@ -293,6 +319,12 @@ void mesh_upload_to_gpu_with_material(Mesh *mesh, const struct Material *mat) {
     vdata[i].quad_flags = 0;
     vdata[i]._padding[0] = 0;
     vdata[i]._padding[1] = 0;
+
+    if (mesh->normals) {
+      vdata[i].normal[0] = (int8_t)(mesh->normals[i * 3 + 0] * 127.0f);
+      vdata[i].normal[1] = (int8_t)(mesh->normals[i * 3 + 1] * 127.0f);
+      vdata[i].normal[2] = (int8_t)(mesh->normals[i * 3 + 2] * 127.0f);
+    }
   }
 
   size_t vbuf_size = mesh->vert_count * sizeof(Vertex);

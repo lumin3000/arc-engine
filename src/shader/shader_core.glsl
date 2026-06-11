@@ -12,6 +12,7 @@ in vec2 local_uv0;
 in vec2 size0;
 in vec4 extras0;
 in vec4 uv_rect0;
+in vec4 normal0;
 
 out vec4 color;
 out vec2 uv;
@@ -22,6 +23,7 @@ out vec4 uv_rect;
 
 out vec3 pos;
 out vec3 world_pos;
+out vec3 v_normal;
 
 layout(binding=1) uniform VS_MVP {
 	mat4 mvp;
@@ -61,6 +63,8 @@ void main() {
 	} else {
 		world_pos = position;
 	}
+
+	v_normal = normal0.xyz;
 }
 @end
 
@@ -83,6 +87,7 @@ in vec4 uv_rect;
 
 in vec3 pos;
 in vec3 world_pos;
+in vec3 v_normal;
 
 out vec4 col_out;
 
@@ -108,6 +113,7 @@ in vec4 inst_m1;
 in vec4 inst_m2;
 in vec4 inst_m3;
 in vec4 inst_color;
+in vec4 normal0;
 
 out vec4 color;
 out vec2 uv;
@@ -118,6 +124,7 @@ out vec4 uv_rect;
 
 out vec3 pos;
 out vec3 world_pos;
+out vec3 v_normal;
 
 layout(binding=1) uniform VS_MVP {
 	mat4 mvp;
@@ -157,6 +164,9 @@ void main() {
 
     vec4 world_p = inst_m * vec4(position, 1.0);
     world_pos = world_p.xyz;
+
+    vec3 n_rot = mat3(inst_m) * normal0.xyz;
+    v_normal = (dot(n_rot, n_rot) > 0.0001) ? normalize(n_rot) : vec3(0.0);
 }
 @end
 

@@ -13,6 +13,7 @@ typedef struct {
   float *vertices;
   float *colors;
   float *uvs;
+  float *normals;   // 3/vert; NULL = unlit (packs as zero normal)
   int *triangles;
 
   int vert_count;
@@ -40,6 +41,8 @@ void mesh_set_vertices(Mesh *mesh, const float *verts, int count);
 void mesh_set_colors(Mesh *mesh, const float *colors, int count);
 
 void mesh_set_uvs(Mesh *mesh, const float *uvs, int count);
+
+void mesh_set_normals(Mesh *mesh, const float *normals, int count);
 
 void mesh_set_triangles(Mesh *mesh, const int *tris, int count);
 

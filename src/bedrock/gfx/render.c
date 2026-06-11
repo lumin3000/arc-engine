@@ -21,6 +21,7 @@
 #undef ATTR_quad_size0
 #undef ATTR_quad_extras0
 #undef ATTR_quad_uv_rect0
+#undef ATTR_quad_normal0
 #undef ATTR_quad_inst_uv_rect0
 
 #define ATTR_quad_position 0
@@ -30,6 +31,7 @@
 #define ATTR_quad_size0 4
 #define ATTR_quad_extras0 5
 #define ATTR_quad_uv_rect0 6
+#define ATTR_quad_normal0 7
 #define ATTR_quad_inst_uv_rect0                                                \
   6
 
@@ -504,6 +506,8 @@ void render_init(void) {
               [ATTR_quad_uv_rect0] = {.format = SG_VERTEXFORMAT_FLOAT4,
                                       .offset =
                                           offsetof(Vertex, uv_rect)},
+              [ATTR_quad_normal0] = {.format = SG_VERTEXFORMAT_BYTE4N,
+                                     .offset = offsetof(Vertex, normal)},
           }}};
 
   pipeline_desc.colors[0].blend = (sg_blend_state){
@@ -574,7 +578,11 @@ void render_init(void) {
                  [ATTR_quad_inst_inst_color] = {.format =
                                                     SG_VERTEXFORMAT_FLOAT4,
                                                 .buffer_index = 1,
-                                                .offset = 64}}},
+                                                .offset = 64},
+                 [ATTR_quad_inst_normal0] = {.format = SG_VERTEXFORMAT_BYTE4N,
+                                             .buffer_index = 0,
+                                             .offset =
+                                                 offsetof(Vertex, normal)}}},
 
        .colors[0].blend = pipeline_desc.colors[0].blend};
 

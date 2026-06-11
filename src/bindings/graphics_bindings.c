@@ -190,6 +190,7 @@ static JSValue js_graphics_create_quad_mesh(JSContext *ctx,
 //   uvs:       Float32Array (n*2) 或 null    缺省 0
 //   indices:   Int32Array   (tri*3)          必需
 //   shaderType: int (ShaderType 枚举值, 如 SHADER_TYPE_NONE=0 纯顶点色)
+//   normals:   Float32Array (n*3) 或省略     缺省零法线=不参与光照
 // ============================================================================
 
 static bool typed_array_floats(JSContext *ctx, JSValueConst val,
@@ -265,6 +266,14 @@ static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
   if (JS_ToInt32(ctx, &shader_type, argv[4]) < 0)
     return JS_EXCEPTION;
 
+  const float *normals = NULL;
+  size_t nrm_bytes = 0;
+  if (argc >= 6 && !JS_IsNull(argv[5]) && !JS_IsUndefined(argv[5])) {
+    if (!typed_array_floats(ctx, argv[5], &normals, &nrm_bytes) ||
+        nrm_bytes < (size_t)vert_count * 3 * sizeof(float))
+      return JS_ThrowTypeError(ctx, "create_mesh: normals must be Float32Array(n*3)");
+  }
+
   DynamicMesh *dm = &g_dynamic_meshes[id];
   mesh_init(&dm->mesh, vert_count, tri_count);
   mesh_set_vertices(&dm->mesh, positions, vert_count);
@@ -284,6 +293,9 @@ static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
     memset(dm->mesh.uvs, 0, (size_t)vert_count * 2 * sizeof(float));
   }
   mesh_set_triangles(&dm->mesh, indices, tri_count);
+  if (normals) {
+    mesh_set_normals(&dm->mesh, normals, vert_count);
+  }
 
   material_init(&dm->material);
   material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);

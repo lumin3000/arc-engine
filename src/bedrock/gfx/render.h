@@ -23,6 +23,7 @@ typedef struct {
   uint8_t quad_flags;
   uint8_t _padding[2];
   Vec4 uv_rect;
+  int8_t normal[4];   // BYTE4N; zero = unlit (vertex color direct out)
 } Vertex;
 #pragma pack(pop)
 

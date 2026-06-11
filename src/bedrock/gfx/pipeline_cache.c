@@ -45,6 +45,8 @@ void pipeline_cache_init(void) {
   desc.layout.attrs[ATTR_quad_extras0].offset = offsetof(Vertex, _pad0);
   desc.layout.attrs[ATTR_quad_uv_rect0].format = SG_VERTEXFORMAT_FLOAT4;
   desc.layout.attrs[ATTR_quad_uv_rect0].offset = offsetof(Vertex, uv_rect);
+  desc.layout.attrs[ATTR_quad_normal0].format = SG_VERTEXFORMAT_BYTE4N;
+  desc.layout.attrs[ATTR_quad_normal0].offset = offsetof(Vertex, normal);
 
   desc.index_type = SG_INDEXTYPE_UINT32;
   desc.cull_mode = SG_CULLMODE_NONE;

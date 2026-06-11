@@ -1228,6 +1228,15 @@ static JSValue js_upload(JSContext *ctx, JSValueConst this_val, int argc,
     JS_FreeValue(ctx, sway_buf);
   }
 
+  float *normal_data = NULL;
+  if (argc >= 11 && !JS_IsUndefined(argv[10]) && !JS_IsNull(argv[10])) {
+    size_t n_off, n_len;
+    JSValue n_buf = JS_GetTypedArrayBuffer(ctx, argv[10], &n_off, &n_len, &bpe);
+    uint8_t *n_base = (uint8_t *)JS_GetArrayBuffer(ctx, &ab_len, n_buf);
+    normal_data = n_base ? (float *)(n_base + n_off) : NULL;
+    JS_FreeValue(ctx, n_buf);
+  }
+
   int vert_count = vert_len / sizeof(float) / 3;
   int index_count = tri_len / sizeof(uint32_t);
 
@@ -1270,6 +1279,12 @@ static JSValue js_upload(JSContext *ctx, JSValueConst this_val, int argc,
     gpu_verts[i].quad_flags = 0;
 
     gpu_verts[i]._padding[0] = sway_data ? sway_data[i] : 0;
+
+    if (normal_data) {
+      gpu_verts[i].normal[0] = (int8_t)(normal_data[i * 3 + 0] * 127.0f);
+      gpu_verts[i].normal[1] = (int8_t)(normal_data[i * 3 + 1] * 127.0f);
+      gpu_verts[i].normal[2] = (int8_t)(normal_data[i * 3 + 2] * 127.0f);
+    }
   }
 
   uint32_t *indices32 = (uint32_t *)malloc(index_count * sizeof(uint32_t));
