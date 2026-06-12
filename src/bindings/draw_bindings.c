@@ -4,6 +4,7 @@
 #define pclose _pclose
 #endif
 #include "draw_bindings.h"
+#include "../../external/sokol/c/sokol_app.h"
 #include "../log.h"
 #include "bedrock/gfx/draw.h"
 #include "bedrock/gfx/render.h"
@@ -121,7 +122,9 @@ static JSValue js_render_exec(JSContext *ctx, JSValueConst this_val,
 static JSValue js_render_quit(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv) {
   (void)ctx; (void)this_val; (void)argc; (void)argv;
-  exit(0);
+  // 裸 exit(0) 会绕过 sapp cleanup_cb（消费者 on_cleanup 资源释放链），
+  // 留存的第三方库内存进静态析构期触发泄漏断言 abort
+  sapp_request_quit();
   return JS_UNDEFINED;
 }
 
