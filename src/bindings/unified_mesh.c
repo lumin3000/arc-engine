@@ -1147,6 +1147,30 @@ static JSValue js_free_slot(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
+// 设置 slot 的渲染队列 (mesh queue 按 renderQueue 升序提交)。
+// 背景级内容 (地形/水面) 必须低于默认 RQ_GEOMETRY(2000)，否则 jtask
+// 流水线把 [上帧后段 + 本帧前段] 合并提交时，同队列退化为插入序，
+// 全屏不透明地形会画在 section 内容之后整张盖掉。
+static JSValue js_set_render_queue(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv) {
+  if (argc < 2)
+    return JS_ThrowTypeError(ctx, "set_render_queue requires (slot_id, rq)");
+
+  int32_t slot_id, rq;
+  if (JS_ToInt32(ctx, &slot_id, argv[0]) < 0 ||
+      JS_ToInt32(ctx, &rq, argv[1]) < 0)
+    return JS_EXCEPTION;
+  if (slot_id < 0 || slot_id >= MAX_UNIFIED_MESHES)
+    return JS_ThrowRangeError(ctx, "Invalid slot ID");
+
+  UnifiedMesh *um = &g_unified_meshes[slot_id];
+  if (!um->valid)
+    return JS_ThrowInternalError(ctx, "Slot not allocated");
+
+  material_set_render_queue(&um->material, rq);
+  return JS_UNDEFINED;
+}
+
 static JSValue js_upload(JSContext *ctx, JSValueConst this_val, int argc,
                          JSValueConst *argv) {
   ensure_initialized();
@@ -1490,6 +1514,9 @@ int js_init_unified_mesh_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "upload",
                     JS_NewCFunction(ctx, js_upload, "upload", 6));
   JS_SetPropertyStr(ctx, obj, "draw", JS_NewCFunction(ctx, js_draw, "draw", 1));
+  JS_SetPropertyStr(ctx, obj, "set_render_queue",
+                    JS_NewCFunction(ctx, js_set_render_queue,
+                                    "set_render_queue", 2));
 
   JS_SetPropertyStr(ctx, obj, "upload_atlas",
                     JS_NewCFunction(ctx, js_upload_atlas, "upload_atlas", 3));
