@@ -527,6 +527,88 @@ static int get_or_load_graphics_texture(const char *path) {
   return slot;
 }
 
+// ============================================================================
+// graphics.texture_from_pixels(rgbaBuf, w, h) -> textureId（大地图 B6b 替身）
+// 从内存 RGBA 像素创建动态纹理（dynamic_update, 供 texture_update 重传）
+// graphics.texture_update(textureId, rgbaBuf) — 整张重传（sokol 无局部更新）
+// ============================================================================
+
+static JSValue js_graphics_texture_from_pixels(JSContext *ctx, JSValueConst this_val,
+                                               int argc, JSValueConst *argv) {
+  if (argc < 3)
+    return JS_ThrowTypeError(ctx, "texture_from_pixels(rgbaBuf, w, h)");
+
+  int32_t w = 0, h = 0;
+  JS_ToInt32(ctx, &w, argv[1]);
+  JS_ToInt32(ctx, &h, argv[2]);
+  if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
+    return JS_ThrowRangeError(ctx, "texture_from_pixels: bad dims %dx%d", w, h);
+
+  size_t off, len, bpe;
+  JSValue buf = JS_GetTypedArrayBuffer(ctx, argv[0], &off, &len, &bpe);
+  if (JS_IsException(buf)) return buf;
+  size_t ab_len;
+  uint8_t *base = JS_GetArrayBuffer(ctx, &ab_len, buf);
+  JS_FreeValue(ctx, buf);
+  if (!base || len < (size_t)(w * h * 4))
+    return JS_ThrowRangeError(ctx, "texture_from_pixels: buffer too small");
+
+  int slot = -1;
+  for (int i = 0; i < MAX_GRAPHICS_TEXTURES; i++) {
+    if (!g_graphics_textures[i].valid) { slot = i; break; }
+  }
+  if (slot < 0)
+    return JS_ThrowInternalError(ctx, "texture_from_pixels: texture cache full");
+
+  sg_image img = sg_make_image(&(sg_image_desc){
+      .width = w,
+      .height = h,
+      .pixel_format = SG_PIXELFORMAT_RGBA8,
+      .usage.dynamic_update = true,
+  });
+  if (sg_query_image_state(img) != SG_RESOURCESTATE_VALID)
+    return JS_ThrowInternalError(ctx, "texture_from_pixels: sg_make_image failed");
+  sg_update_image(img, &(sg_image_data){
+      .mip_levels[0] = { .ptr = base + off, .size = (size_t)(w * h * 4) },
+  });
+
+  sg_view view = sg_make_view(&(sg_view_desc){ .texture.image = img });
+  snprintf(g_graphics_textures[slot].path, MAX_GRAPHICS_TEXTURE_PATH_LEN,
+           "__pixels_%d_%dx%d__", slot, w, h);
+  g_graphics_textures[slot].image = img;
+  g_graphics_textures[slot].view = view;
+  g_graphics_textures[slot].valid = true;
+  return JS_NewInt32(ctx, slot);
+}
+
+static JSValue js_graphics_texture_update(JSContext *ctx, JSValueConst this_val,
+                                          int argc, JSValueConst *argv) {
+  if (argc < 2)
+    return JS_ThrowTypeError(ctx, "texture_update(textureId, rgbaBuf)");
+  int32_t id = 0;
+  JS_ToInt32(ctx, &id, argv[0]);
+  if (id < 0 || id >= MAX_GRAPHICS_TEXTURES || !g_graphics_textures[id].valid)
+    return JS_ThrowRangeError(ctx, "texture_update: invalid texture %d", id);
+
+  sg_image_desc desc = sg_query_image_desc(g_graphics_textures[id].image);
+  size_t need = (size_t)(desc.width * desc.height * 4);
+
+  size_t off, len, bpe;
+  JSValue buf = JS_GetTypedArrayBuffer(ctx, argv[1], &off, &len, &bpe);
+  if (JS_IsException(buf)) return buf;
+  size_t ab_len;
+  uint8_t *base = JS_GetArrayBuffer(ctx, &ab_len, buf);
+  JS_FreeValue(ctx, buf);
+  if (!base || len < need)
+    return JS_ThrowRangeError(ctx, "texture_update: buffer too small (%d < %d)",
+                              (int)len, (int)need);
+
+  sg_update_image(g_graphics_textures[id].image, &(sg_image_data){
+      .mip_levels[0] = { .ptr = base + off, .size = need },
+  });
+  return JS_UNDEFINED;
+}
+
 // JS Binding: graphics.load_texture(path) -> textureId
 static JSValue js_graphics_load_texture(JSContext *ctx, JSValueConst this_val,
                                         int argc, JSValueConst *argv) {
@@ -1200,6 +1282,12 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(
       ctx, obj, "draw_mesh",
       JS_NewCFunction(ctx, js_graphics_draw_mesh, "draw_mesh", 13));
+  JS_SetPropertyStr(
+      ctx, obj, "texture_from_pixels",
+      JS_NewCFunction(ctx, js_graphics_texture_from_pixels, "texture_from_pixels", 3));
+  JS_SetPropertyStr(
+      ctx, obj, "texture_update",
+      JS_NewCFunction(ctx, js_graphics_texture_update, "texture_update", 2));
   JS_SetPropertyStr(
       ctx, obj, "draw_mesh_at",
       JS_NewCFunction(ctx, js_graphics_draw_mesh_at, "draw_mesh_at", 6));
