@@ -1,6 +1,36 @@
 #include "material.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#define X(name, start, end, desc)                                             \
+  _Static_assert((start) < (end), #name " 区间非法 (start >= end)");
+RENDER_QUEUE_BANDS(X)
+#undef X
+
+bool render_queue_valid(int renderQueue) {
+#define X(name, start, end, desc)                                             \
+  if (renderQueue >= (start) && renderQueue < (end))                          \
+    return true;
+  RENDER_QUEUE_BANDS(X)
+#undef X
+  return false;
+}
+
+// 带外队列号 = 基础设施误用，FATAL（渲染契约门 2，详见消费者
+// docs/plan_render_contract.md）。dump 注册表让违规者知道去哪登记。
+static void render_queue_reject(int renderQueue) {
+  fprintf(stderr,
+          "[FATAL] renderQueue %d 未注册——渲染队列号必须从 material.h "
+          "RENDER_QUEUE_BANDS 注册表发放:\n",
+          renderQueue);
+#define X(name, start, end, desc)                                             \
+  fprintf(stderr, "    %-20s [%4d, %4d)  %s\n", #name, (start), (end), desc);
+  RENDER_QUEUE_BANDS(X)
+#undef X
+  exit(1);
+}
 
 int shader_type_to_tex_index(ShaderType shader_type) {
   switch (shader_type) {
@@ -136,6 +166,8 @@ void material_set_color_v4(Material *mat, const Vec4 color) {
 void material_set_render_queue(Material *mat, int renderQueue) {
   if (!mat)
     return;
+  if (!render_queue_valid(renderQueue))
+    render_queue_reject(renderQueue);
   mat->renderQueue = renderQueue;
 }
 

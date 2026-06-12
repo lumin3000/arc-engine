@@ -169,7 +169,7 @@ static JSValue js_graphics_create_quad_mesh(JSContext *ctx,
   // 初始化默认材质 (必须在 mesh_upload 之前)
   material_init(&dm->material);
   material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);
-  material_set_render_queue(&dm->material, 3000);
+  material_set_render_queue(&dm->material, RQ_TRANSPARENT);
   // 使用 TEXTURED 模式 (tex_index=0)，因为 Graphics.drawMesh
   // 通常用于带纹理的渲染
   material_set_shader_type(&dm->material, SHADER_TYPE_TEXTURED);
@@ -301,7 +301,7 @@ static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
 
   material_init(&dm->material);
   material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);
-  material_set_render_queue(&dm->material, 3000);
+  material_set_render_queue(&dm->material, RQ_TRANSPARENT);
   material_set_shader_type(&dm->material, (ShaderType)shader_type);
 
   mesh_upload_to_gpu_with_material(&dm->mesh, &dm->material);
@@ -363,7 +363,7 @@ static JSValue js_graphics_create_quad_mesh_uv(JSContext *ctx,
 
   material_init(&dm->material);
   material_set_color(&dm->material, 1.0f, 1.0f, 1.0f, 1.0f);
-  material_set_render_queue(&dm->material, 3000);
+  material_set_render_queue(&dm->material, RQ_TRANSPARENT);
   material_set_shader_type(&dm->material, SHADER_TYPE_TEXTURED);
 
   mesh_upload_to_gpu_with_material(&dm->mesh, &dm->material);
@@ -1326,6 +1326,18 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "draw_mesh_instanced",
                     JS_NewCFunction(ctx, js_graphics_draw_mesh_instanced,
                                     "draw_mesh_instanced", 6));
+
+  // 渲染队列带注册表(material.h RENDER_QUEUE_BANDS)暴露给 JS——单一事实源,
+  // JS 侧禁止抄写数字。graphics.RQ.GEOMETRY / graphics.RQ.GEOMETRY_END 等。
+  {
+    JSValue rq = JS_NewObject(ctx);
+#define X(name, start, end, desc)                                              \
+  JS_SetPropertyStr(ctx, rq, #name + 3, JS_NewInt32(ctx, (start)));           \
+  JS_SetPropertyStr(ctx, rq, #name "_END" + 3, JS_NewInt32(ctx, (end)));
+    RENDER_QUEUE_BANDS(X)
+#undef X
+    JS_SetPropertyStr(ctx, obj, "RQ", rq);
+  }
 
   JS_SetPropertyStr(ctx, global, "graphics", obj);
   JS_FreeValue(ctx, global);

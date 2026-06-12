@@ -258,3 +258,29 @@ if [ -n "$CONSOLE_HITS" ]; then
 else
     echo "OK: no console.log usage"
 fi
+
+echo "=== render queue literal check ==="
+
+# 渲染契约门 3 (consumer docs/plan_render_contract.md):
+# renderQueue 数字必须从注册表发放 (graphics.RQ.* / RenderContract.*)。
+# 裸数字字面量直接拒绝构建。白名单: 游戏级登记处 00_render_contract.js。
+RQ_HITS=""
+for scan_dir in "${SCAN_DIRS[@]}"; do
+    hits=$(grep -rn -E "(renderQueue\s*[:=]\s*[0-9]|set_render_queue\([^,)]+,\s*[0-9])" --include="*.js" "$scan_dir" 2>/dev/null | grep -v "00_render_contract\.js" | grep -v "^[^:]*:[0-9]*:\s*//" | grep -v "^[^:]*:[0-9]*:\s*\*" || true)
+    if [ -n "$hits" ]; then
+        RQ_HITS="$RQ_HITS
+$hits"
+    fi
+done
+RQ_HITS=$(echo "$RQ_HITS" | sed '/^$/d')
+
+if [ -n "$RQ_HITS" ]; then
+    echo "ERROR: 裸 renderQueue 数字 (渲染契约违规):"
+    echo "$RQ_HITS" | sed 's/^/    /'
+    echo ""
+    echo "  Fix: 队列号从注册表发放 — 引擎带用 graphics.RQ.*,"
+    echo "       游戏级具名号在 00_render_contract.js 登记后引用"
+    exit 1
+else
+    echo "OK: no raw renderQueue literals"
+fi

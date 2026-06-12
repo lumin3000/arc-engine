@@ -159,7 +159,8 @@ void graphics_draw_mesh(Mesh *mesh, const Matrix4 transform, Material *material,
   req->layer = layer;
   req->valid = true;
 
-  req->material.renderQueue += layer;
+  // layer 偏移不得把队列号顶出注册带（渲染契约门 2）
+  material_set_render_queue(&req->material, req->material.renderQueue + layer);
 
   {
 

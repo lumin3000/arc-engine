@@ -7,7 +7,7 @@ class Material {
         this.textureId = -1;
         this.blendMode = BlendMode.Alpha;
 
-        this.renderQueue = 3000;
+        this.renderQueue = graphics.RQ.TRANSPARENT;
 
         this.uvOffset = { x: 0, y: 0 };
         this.uvScale = { x: 1, y: 1 };

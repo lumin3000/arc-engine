@@ -1167,6 +1167,20 @@ static JSValue js_set_render_queue(JSContext *ctx, JSValueConst this_val,
   if (!um->valid)
     return JS_ThrowInternalError(ctx, "Slot not allocated");
 
+  if (!render_queue_valid(rq)) {
+    // 渲染回调链可能吞掉 JS 异常(表现为静默卡死), 违规必须先在 stderr 喊出来
+    fprintf(stderr,
+            "[unified_mesh] 渲染契约违规: slot %d renderQueue %d 未注册——"
+            "必须用 graphics.RQ.* 发放的号 (注册表: material.h "
+            "RENDER_QUEUE_BANDS)\n",
+            slot_id, rq);
+    return JS_ThrowInternalError(
+        ctx,
+        "renderQueue %d 未注册——必须用 graphics.RQ.* 发放的号 "
+        "(注册表: material.h RENDER_QUEUE_BANDS)",
+        rq);
+  }
+
   material_set_render_queue(&um->material, rq);
   return JS_UNDEFINED;
 }
