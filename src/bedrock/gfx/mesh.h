@@ -17,7 +17,7 @@ typedef struct {
   int *triangles;
 
   int vert_count;
-  int tri_count;
+  int tri_count;    // 注意: 语义为"索引数"非三角数 (sg_draw 直接消费, 见遗漏#3)
   int vert_capacity;
   int tri_capacity;
 

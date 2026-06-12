@@ -275,7 +275,9 @@ static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
   }
 
   DynamicMesh *dm = &g_dynamic_meshes[id];
-  mesh_init(&dm->mesh, vert_count, tri_count);
+  // Mesh.tri_count 语义是"索引数"(graphics.c sg_draw 直接用)——传三角数会三倍截断
+  // (架构文档附录·遗漏#3)
+  mesh_init(&dm->mesh, vert_count, tri_count * 3);
   mesh_set_vertices(&dm->mesh, positions, vert_count);
   if (colors) {
     mesh_set_colors(&dm->mesh, colors, vert_count);
@@ -292,7 +294,7 @@ static JSValue js_graphics_create_mesh(JSContext *ctx, JSValueConst this_val,
   } else {
     memset(dm->mesh.uvs, 0, (size_t)vert_count * 2 * sizeof(float));
   }
-  mesh_set_triangles(&dm->mesh, indices, tri_count);
+  mesh_set_triangles(&dm->mesh, indices, tri_count * 3);
   if (normals) {
     mesh_set_normals(&dm->mesh, normals, vert_count);
   }
