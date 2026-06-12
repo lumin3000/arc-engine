@@ -166,7 +166,17 @@ globalThis.RenderFrameCallbacks = {
       try {
         cb.fn(dt);
       } catch (e) {
-        jtask.log.error("[RenderFrameCallbacks] '" + cb.name + "' threw: " + e.message + "\n" + (e.stack || ""));
+        // 主线程渲染 ctx 的 jtask.log 可能没有 .error 子函数(那是 jtask
+        // service 侧 jslib 加的)——catch 里再抛会杀死整个帧循环且零日志
+        // (渲染契约 P1 验收时的"静默卡死")。此处必须用兜底链路喊出来。
+        const msg = "[RenderFrameCallbacks] '" + cb.name + "' threw: " +
+          ((e && e.message) || String(e)) + "\n" + ((e && e.stack) || "");
+        try {
+          if (jtask.log && typeof jtask.log.error === 'function') jtask.log.error(msg);
+          else jtask.log(msg);
+        } catch (_) {
+          if (typeof print === 'function') print(msg);
+        }
       }
     }
   },

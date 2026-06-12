@@ -443,10 +443,22 @@ void graphics_submit_meshes_range(int rq_min, int rq_max, bool clear_after,
   graphics_submit_meshes_range_count(rq_min, rq_max, clear_after, debug_color);
 }
 
+// 渲染契约 P3: 按注册带统计每帧 mesh dc（diag.rqBands() 数据源）。
+// 末位槽计未注册带（理论上被门禁挡住, 此处兜底观测）。
+static int g_band_dc[RQ_BAND_COUNT + 1];
+static int g_band_dc_prev[RQ_BAND_COUNT + 1];
+
+const int *graphics_band_dc_prev(void) { return g_band_dc_prev; }
+
 int graphics_submit_meshes_range_count(int rq_min, int rq_max, bool clear_after,
                                        const Vec4 debug_color) {
-  if (g_graphics.mesh_queue_count == 0)
+  if (g_graphics.mesh_queue_count == 0) {
+    if (clear_after) {
+      memcpy(g_band_dc_prev, g_band_dc, sizeof(g_band_dc));
+      memset(g_band_dc, 0, sizeof(g_band_dc));
+    }
     return 0;
+  }
   int dc_count = 0;
 
   extern Draw_Frame draw_frame;
@@ -533,10 +545,17 @@ int graphics_submit_meshes_range_count(int rq_min, int rq_max, bool clear_after,
     g_graphics.draw_calls_this_frame++;
     g_graphics.triangles_this_frame += mesh->tri_count / 3;
     dc_count++;
+
+    {
+      int bi = render_queue_band_index(rq);
+      g_band_dc[bi >= 0 ? bi : RQ_BAND_COUNT]++;
+    }
   }
 
   if (clear_after) {
     g_graphics.mesh_queue_count = 0;
+    memcpy(g_band_dc_prev, g_band_dc, sizeof(g_band_dc));
+    memset(g_band_dc, 0, sizeof(g_band_dc));
   }
   return dc_count;
 }

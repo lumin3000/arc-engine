@@ -18,6 +18,15 @@ bool render_queue_valid(int renderQueue) {
   return false;
 }
 
+int render_queue_band_index(int renderQueue) {
+#define X(name, start, end, desc)                                             \
+  if (renderQueue >= (start) && renderQueue < (end))                          \
+    return name##_BAND_IDX;
+  RENDER_QUEUE_BANDS(X)
+#undef X
+  return -1;
+}
+
 // 带外队列号 = 基础设施误用，FATAL（渲染契约门 2，详见消费者
 // docs/plan_render_contract.md）。dump 注册表让违规者知道去哪登记。
 static void render_queue_reject(int renderQueue) {

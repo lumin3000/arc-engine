@@ -49,6 +49,15 @@ enum {
 
 bool render_queue_valid(int renderQueue);
 
+// 带序号 (按注册表声明序, 0-based); 带外返回 -1。RQ_BAND_COUNT 为注册带总数。
+enum {
+#define X(name, start, end, desc) name##_BAND_IDX,
+  RENDER_QUEUE_BANDS(X)
+#undef X
+      RQ_BAND_COUNT
+};
+int render_queue_band_index(int renderQueue);
+
 typedef struct Material {
 
   sg_image texture;

@@ -14,6 +14,7 @@
 #include "quickjs.h"
 #include "../bedrock/gfx/render_diagnostics.h"
 #include "../bedrock/gfx/render.h"
+#include "../bedrock/gfx/material.h"
 #include "../../external/sokol/c/sokol_gfx.h"
 #include <stdio.h>
 
@@ -166,6 +167,29 @@ static JSValue js_diag_dc_breakdown(JSContext *ctx, JSValueConst this_val,
   return obj;
 }
 
+// diag.rqBands() -> { BACKGROUND: n, BACKGROUND_BLEND: n, ..., UNREGISTERED: n }
+// 渲染契约 P3: 上一帧 mesh 队列按注册带(material.h RENDER_QUEUE_BANDS)的
+// dc 分布——一键回答"某带里现在都有谁在画"。
+static JSValue js_diag_rq_bands(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv) {
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+
+  extern const int *graphics_band_dc_prev(void);
+  const int *bands = graphics_band_dc_prev();
+
+  JSValue obj = JS_NewObject(ctx);
+#define X(name, start, end, desc)                                              \
+  JS_SetPropertyStr(ctx, obj, #name + 3,                                      \
+                    JS_NewInt32(ctx, bands[name##_BAND_IDX]));
+  RENDER_QUEUE_BANDS(X)
+#undef X
+  JS_SetPropertyStr(ctx, obj, "UNREGISTERED",
+                    JS_NewInt32(ctx, bands[RQ_BAND_COUNT]));
+  return obj;
+}
+
 // ============================================================================
 // stdin 命令处理
 // ============================================================================
@@ -235,6 +259,8 @@ int js_init_diag_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_diag_num_draw, "numDraw", 0));
   JS_SetPropertyStr(ctx, obj, "dcBreakdown",
                     JS_NewCFunction(ctx, js_diag_dc_breakdown, "dcBreakdown", 0));
+  JS_SetPropertyStr(ctx, obj, "rqBands",
+                    JS_NewCFunction(ctx, js_diag_rq_bands, "rqBands", 0));
 
   JS_SetPropertyStr(ctx, global, "diag", obj);
   JS_FreeValue(ctx, global);
