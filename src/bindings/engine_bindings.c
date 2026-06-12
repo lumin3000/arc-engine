@@ -295,6 +295,17 @@ static JSValue js_coord_set_camera_zoom(JSContext *js_ctx,
   return JS_UNDEFINED;
 }
 
+static JSValue js_coord_get_camera_zoom(JSContext *js_ctx,
+                                        JSValueConst this_val, int argc,
+                                        JSValueConst *argv) {
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  if (!ctx.gs)
+    return JS_ThrowInternalError(js_ctx, "get_camera_zoom: game state not ready");
+  return JS_NewFloat64(js_ctx, ctx.gs->zoom_level);
+}
+
 static JSValue js_app_quit(JSContext *js_ctx, JSValueConst this_val, int argc,
                            JSValueConst *argv) {
   (void)this_val;
@@ -406,6 +417,9 @@ int js_init_engine_module(JSContext *js_ctx) {
   JS_SetPropertyStr(
       js_ctx, coord_obj, "set_camera_zoom",
       JS_NewCFunction(js_ctx, js_coord_set_camera_zoom, "set_camera_zoom", 1));
+  JS_SetPropertyStr(
+      js_ctx, coord_obj, "get_camera_zoom",
+      JS_NewCFunction(js_ctx, js_coord_get_camera_zoom, "get_camera_zoom", 0));
 
   JS_SetPropertyStr(js_ctx, global, "coord", coord_obj);
 
