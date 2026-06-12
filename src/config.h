@@ -7,7 +7,7 @@
 
 #define DEFAULT_ZOOM_LEVEL 2.0f
 
-#define MIN_ZOOM_LEVEL 0.1f
+#define MIN_ZOOM_LEVEL 0.03f  // 大地图 B8: L3 全图档需视野 >800 格(实测视野≈37.5/zoom)
 
 #define MAX_ZOOM_LEVEL 200.0f
 
