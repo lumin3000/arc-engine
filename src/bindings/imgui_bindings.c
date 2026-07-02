@@ -25,6 +25,7 @@ extern void simgui_new_frame_wrapper(int width, int height, double delta_time);
 extern void simgui_render_wrapper(void);
 extern void simgui_shutdown_wrapper(void);
 extern bool simgui_handle_event_wrapper(const sapp_event *event);
+extern int simgui_get_draw_call_count(void);
 
 // ============================================================================
 // Global state
@@ -634,6 +635,65 @@ static JSValue js_imgui_set_font_scale(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.push_font(size) — 同字体切字号（ImGui 1.92 动态字体图集），与 pop_font 配对
+static JSValue js_imgui_push_font(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "imgui.push_font requires size");
+  double size;
+  if (JS_ToFloat64(ctx, &size, argv[0]) < 0)
+    return JS_EXCEPTION;
+  if (!(size > 0.0))
+    return JS_ThrowTypeError(ctx, "imgui.push_font: size must be > 0");
+  igPushFont(NULL, (float)size);
+  return JS_UNDEFINED;
+}
+
+static JSValue js_imgui_pop_font(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv) {
+  igPopFont();
+  return JS_UNDEFINED;
+}
+
+// imgui.calc_text_size(text, [size]) -> {w, h}
+static JSValue js_imgui_calc_text_size(JSContext *ctx, JSValueConst this_val,
+                                       int argc, JSValueConst *argv) {
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "imgui.calc_text_size requires text");
+  const char *str = JS_ToCString(ctx, argv[0]);
+  if (!str)
+    return JS_EXCEPTION;
+  int pushed = 0;
+  if (argc >= 2 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+    double size;
+    if (JS_ToFloat64(ctx, &size, argv[1]) < 0) {
+      JS_FreeCString(ctx, str);
+      return JS_EXCEPTION;
+    }
+    if (!(size > 0.0)) {
+      JS_FreeCString(ctx, str);
+      return JS_ThrowTypeError(ctx, "imgui.calc_text_size: size must be > 0");
+    }
+    igPushFont(NULL, (float)size);
+    pushed = 1;
+  }
+  ImVec2 sz = igCalcTextSize(str, NULL, false, -1.0f);
+  if (pushed)
+    igPopFont();
+  JS_FreeCString(ctx, str);
+  JSValue obj = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, obj, "w", JS_NewFloat64(ctx, sz.x));
+  JS_SetPropertyStr(ctx, obj, "h", JS_NewFloat64(ctx, sz.y));
+  return obj;
+}
+
+// imgui.get_draw_call_count() — 上一帧 ImGui draw command 总数（合批预算量测）
+static JSValue js_imgui_get_draw_call_count(JSContext *ctx,
+                                            JSValueConst this_val, int argc,
+                                            JSValueConst *argv) {
+  return JS_NewInt32(ctx, simgui_get_draw_call_count());
+}
+
 static JSValue js_imgui_want_capture_mouse(JSContext *ctx,
                                            JSValueConst this_val, int argc,
                                            JSValueConst *argv) {
@@ -1224,6 +1284,12 @@ int js_init_imgui_module(JSContext *ctx) {
   // Scaling
   REG(imgui, "get_font_global_scale", js_imgui_get_font_scale, 0);
   REG(imgui, "set_font_global_scale", js_imgui_set_font_scale, 1);
+
+  // Font size tiers + measurement + batch budget
+  REG(imgui, "push_font", js_imgui_push_font, 1);
+  REG(imgui, "pop_font", js_imgui_pop_font, 0);
+  REG(imgui, "calc_text_size", js_imgui_calc_text_size, 2);
+  REG(imgui, "get_draw_call_count", js_imgui_get_draw_call_count, 0);
 
   // Input query
   REG(imgui, "want_capture_mouse", js_imgui_want_capture_mouse, 0);
