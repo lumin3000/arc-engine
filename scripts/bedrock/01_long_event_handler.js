@@ -115,8 +115,18 @@ const BlockingTaskQueue = {
         return waiting;
     },
 
+    // 消费者可接管阻塞期 UI: 置为函数后, 阻塞帧不再画下面的默认灰框,
+    // 由该函数全权负责本帧的加载期画面 (帧链在 BLOCKING_TASK_CHECK 截断,
+    // 这是阻塞期间唯一还在跑的 UI 出口)。
+    customProgressUI: null,
+
     drawProgress() {
         if (!this.isBlocking) return;
+
+        if (typeof this.customProgressUI === 'function') {
+            this.customProgressUI();
+            return;
+        }
 
         draw.rect(0, 0, 480, 270, {
             col: [0.15, 0.15, 0.15, 1.0],
