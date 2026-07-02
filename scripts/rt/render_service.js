@@ -104,6 +104,10 @@ S.external = function (msg) {
     S.frame(msg);
     return;
   }
+  // stdin 行经 js_runtime_handle_external_command 打成 "external" 消息, 载荷是原始字符串
+  if (typeof msg === "string") {
+    S.stdin_command(msg);
+  }
 };
 
 S.stdin_command = function (msg) {
@@ -115,7 +119,39 @@ S.stdin_command = function (msg) {
       return;
     }
   }
-  if (parsed && parsed.cmd && typeof G.handleExternalCommand === "function") {
+  if (!parsed || !parsed.cmd) return;
+
+  // 引擎内建命令: 任何模式的活体实例都可经 stdin 驱动(诊断/取证), 无需游戏侧注册
+  if (parsed.cmd === "screenshot") {
+    const path = parsed.path || "/tmp/engine_screenshot.png";
+    jtask.mainthread_run(function () {
+      render.screenshot(path);
+      jtask.log("[render] stdin screenshot → " + path);
+    });
+    return;
+  }
+  if (parsed.cmd === "quit") {
+    jtask.log("[render] stdin quit");
+    jtask.mainthread_run(function () {
+      app_quit(0);
+    });
+    return;
+  }
+  if (parsed.cmd === "eval") {
+    const src = parsed.js || "";
+    jtask.mainthread_run(function () {
+      let out;
+      try {
+        out = String(eval(src));
+      } catch (e) {
+        out = "eval error: " + e.message;
+      }
+      jtask.log("[render] stdin eval → " + out);
+    });
+    return;
+  }
+
+  if (typeof G.handleExternalCommand === "function") {
     G.handleExternalCommand(parsed);
   }
 };
