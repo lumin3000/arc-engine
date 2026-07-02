@@ -19,12 +19,21 @@ void simgui_setup_wrapper(void) {
     simgui_setup(&desc);
 
     ImGuiIO& io = ImGui::GetIO();
+    // 优先全量字库(otf); 旧 1.8M 裁剪子集(ttf)作为消费者未放置全量文件时的回退
     ImFont* font = io.Fonts->AddFontFromFileTTF(
-        "res/fonts/SourceHanSansSC-Regular.ttf",
+        "res/fonts/SourceHanSansSC-Regular.otf",
         16.0f,
         NULL,
         NULL
     );
+    if (!font) {
+        font = io.Fonts->AddFontFromFileTTF(
+            "res/fonts/SourceHanSansSC-Regular.ttf",
+            16.0f,
+            NULL,
+            NULL
+        );
+    }
     if (font) {
         io.FontDefault = font;
     } else {
