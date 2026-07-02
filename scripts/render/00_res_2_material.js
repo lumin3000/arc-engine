@@ -75,27 +75,33 @@ const MaterialPool = {
         }
 
         const parts = texPath.split("/");
-        let fileName = parts[parts.length - 1];
+        const fileName = parts[parts.length - 1];
 
-        if (texPath.includes("/Linked/") || texPath.includes("_Atlas")) {
+        // Linked 目录的基名默认指向连接图集 (Xxx → Xxx_Atlas_Smooth), 但同目录
+        // 下也有非图集的普通贴图 (如各类 Icon) — 图集名不存在时回退原名,
+        // 而不是无条件改写 (原实现把原名文件解析成不存在的图集名 → 纹理丢失)
+        const candidates = [];
+        if ((texPath.includes("/Linked/") || texPath.includes("_Atlas"))
+            && !fileName.includes("Atlas")) {
+            candidates.push(fileName + "_Atlas_Smooth");
+        }
+        candidates.push(fileName);
 
-            if (!fileName.includes("Atlas")) {
-                fileName = fileName + "_Atlas_Smooth";
+        let firstFullFileName = null;
+        for (const name of candidates) {
+            const fullFileName = name.endsWith(".png")
+                ? name + suffix
+                : name + suffix + ".png";
+            firstFullFileName = firstFullFileName ?? fullFileName;
+            for (const root of this.TEXTURE_PATHS) {
+                const fullPath = root + "/" + fullFileName;
+                if (this._fileExists(fullPath)) {
+                    return fullPath;
+                }
             }
         }
 
-        const fullFileName = fileName.endsWith(".png")
-            ? fileName + suffix
-            : fileName + suffix + ".png";
-
-        for (const root of this.TEXTURE_PATHS) {
-            const fullPath = root + "/" + fullFileName;
-            if (this._fileExists(fullPath)) {
-                return fullPath;
-            }
-        }
-
-        return this.TEXTURE_PATHS[0] + "/" + fullFileName;
+        return this.TEXTURE_PATHS[0] + "/" + firstFullFileName;
     },
 
     matFrom(path, shaderDef, color, silent = false) {
