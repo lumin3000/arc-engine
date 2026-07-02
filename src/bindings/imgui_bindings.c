@@ -490,7 +490,7 @@ static JSValue js_imgui_set_textbox_state(JSContext *ctx, JSValueConst this_val,
 // Drawing
 // ============================================================================
 
-// imgui.draw_rect(x, y, w, h, r, g, b, a) — 绝对坐标绘制矩形
+// imgui.draw_rect(x, y, w, h, r, g, b, a, [rounding]) — 绝对坐标绘制填充矩形
 static JSValue js_imgui_draw_rect(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv) {
   if (argc < 8)
@@ -505,6 +505,9 @@ static JSValue js_imgui_draw_rect(JSContext *ctx, JSValueConst this_val, int arg
   JS_ToInt32(ctx, &g, argv[5]);
   JS_ToInt32(ctx, &b, argv[6]);
   JS_ToInt32(ctx, &a, argv[7]);
+  double rounding = 0.0;
+  if (argc > 8)
+    JS_ToFloat64(ctx, &rounding, argv[8]);
 
   ImDrawList *dl = igGetWindowDrawList();
   if (!dl)
@@ -515,11 +518,48 @@ static JSValue js_imgui_draw_rect(JSContext *ctx, JSValueConst this_val, int arg
   ImVec2_c p_min = {(float)x, (float)y};
   ImVec2_c p_max = {(float)(x + w), (float)(y + h)};
   ImU32 col = ((ImU32)a << 24) | ((ImU32)b << 16) | ((ImU32)g << 8) | (ImU32)r;
-  ImDrawList_AddRectFilled(dl, p_min, p_max, col, 0.0f, 0);
+  ImDrawList_AddRectFilled(dl, p_min, p_max, col, (float)rounding, 0);
   return JS_UNDEFINED;
 }
 
-// imgui.draw_control_text(text, x, y, w, h, colorId, flags)
+// imgui.draw_rect_stroke(x, y, w, h, r, g, b, a, [thickness], [rounding]) — 描边矩形
+static JSValue js_imgui_draw_rect_stroke(JSContext *ctx, JSValueConst this_val,
+                                         int argc, JSValueConst *argv) {
+  if (argc < 8)
+    return JS_UNDEFINED;
+  double x, y, w, h;
+  int r, g, b, a;
+  JS_ToFloat64(ctx, &x, argv[0]);
+  JS_ToFloat64(ctx, &y, argv[1]);
+  JS_ToFloat64(ctx, &w, argv[2]);
+  JS_ToFloat64(ctx, &h, argv[3]);
+  JS_ToInt32(ctx, &r, argv[4]);
+  JS_ToInt32(ctx, &g, argv[5]);
+  JS_ToInt32(ctx, &b, argv[6]);
+  JS_ToInt32(ctx, &a, argv[7]);
+  double thickness = 1.0;
+  double rounding = 0.0;
+  if (argc > 8)
+    JS_ToFloat64(ctx, &thickness, argv[8]);
+  if (argc > 9)
+    JS_ToFloat64(ctx, &rounding, argv[9]);
+
+  ImDrawList *dl = igGetWindowDrawList();
+  if (!dl)
+    dl = igGetForegroundDrawList_ViewportPtr(NULL);
+  if (!dl)
+    return JS_UNDEFINED;
+
+  ImVec2_c p_min = {(float)x, (float)y};
+  ImVec2_c p_max = {(float)(x + w), (float)(y + h)};
+  ImU32 col = ((ImU32)a << 24) | ((ImU32)b << 16) | ((ImU32)g << 8) | (ImU32)r;
+  ImDrawList_AddRect(dl, p_min, p_max, col, (float)rounding, 0, (float)thickness);
+  return JS_UNDEFINED;
+}
+
+// imgui.draw_control_text(text, x, y, w, h, color, flags)
+// color: [r,g,b,a] 数组(0-255)生效; 旧调用传 int colorId 时维持白色(兼容)。
+// flags: 0x01 水平居中 / 0x02 右对齐; 非左对齐时同时在 rect 内垂直居中。
 static JSValue js_imgui_draw_control_text(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
   if (argc < 5)
@@ -534,14 +574,39 @@ static JSValue js_imgui_draw_control_text(JSContext *ctx, JSValueConst this_val,
   JS_ToFloat64(ctx, &w, argv[3]);
   JS_ToFloat64(ctx, &h, argv[4]);
 
+  ImU32 col = 0xFFFFFFFF;
+  if (argc > 5 && JS_IsArray(argv[5])) {
+    int c[4] = {255, 255, 255, 255};
+    for (int i = 0; i < 4; i++) {
+      JSValue elem = JS_GetPropertyUint32(ctx, argv[5], i);
+      if (!JS_IsUndefined(elem))
+        JS_ToInt32(ctx, &c[i], elem);
+      JS_FreeValue(ctx, elem);
+    }
+    col = ((ImU32)c[3] << 24) | ((ImU32)c[2] << 16) | ((ImU32)c[1] << 8) |
+          (ImU32)c[0];
+  }
+
+  int flags = 0;
+  if (argc > 6)
+    JS_ToInt32(ctx, &flags, argv[6]);
+
   ImDrawList *dl = igGetWindowDrawList();
   if (!dl)
     dl = igGetForegroundDrawList_ViewportPtr(NULL);
 
   if (dl) {
-    // Default: white text, left aligned
-    ImU32 col = 0xFFFFFFFF;
-    ImVec2_c pos = {(float)x, (float)y};
+    float tx = (float)x;
+    float ty = (float)y;
+    if (flags & 0x03) { // ALIGNCENTER / ALIGNRIGHT: 需要测量
+      ImVec2 sz = igCalcTextSize(text, NULL, false, -1.0f);
+      if (flags & 0x01)
+        tx = (float)(x + (w - sz.x) * 0.5);
+      else if (flags & 0x02)
+        tx = (float)(x + w - sz.x);
+      ty = (float)(y + (h - sz.y) * 0.5);
+    }
+    ImVec2_c pos = {tx, ty};
     ImDrawList_AddText_Vec2(dl, pos, col, text, NULL);
   }
 
@@ -1240,7 +1305,8 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "pop_style_color", js_imgui_pop_style_color, 1);
 
   // Drawing
-  REG(imgui, "draw_rect", js_imgui_draw_rect, 8);
+  REG(imgui, "draw_rect", js_imgui_draw_rect, 9);
+  REG(imgui, "draw_rect_stroke", js_imgui_draw_rect_stroke, 10);
   REG(imgui, "draw_control_text", js_imgui_draw_control_text, 7);
   REG(imgui, "draw_text", js_imgui_draw_control_text, 7);
 
