@@ -26,6 +26,7 @@ extern void simgui_render_wrapper(void);
 extern void simgui_shutdown_wrapper(void);
 extern bool simgui_handle_event_wrapper(const sapp_event *event);
 extern int simgui_get_draw_call_count(void);
+extern float simgui_get_font_em_scale(void);
 
 // ============================================================================
 // Global state
@@ -720,6 +721,13 @@ static JSValue js_imgui_pop_font(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.get_font_em_scale() — (ascent-descent)/unitsPerEm 补偿系数, 使
+// push_font(N*scale) 的字形 em 高 = N px (对齐浏览器/CSS 字号口径)
+static JSValue js_imgui_get_font_em_scale(JSContext *ctx, JSValueConst this_val,
+                                          int argc, JSValueConst *argv) {
+  return JS_NewFloat64(ctx, simgui_get_font_em_scale());
+}
+
 // imgui.calc_text_size(text, [size]) -> {w, h}
 static JSValue js_imgui_calc_text_size(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv) {
@@ -1350,6 +1358,7 @@ int js_init_imgui_module(JSContext *ctx) {
   // Scaling
   REG(imgui, "get_font_global_scale", js_imgui_get_font_scale, 0);
   REG(imgui, "set_font_global_scale", js_imgui_set_font_scale, 1);
+  REG(imgui, "get_font_em_scale", js_imgui_get_font_em_scale, 0);
 
   // Font size tiers + measurement + batch budget
   REG(imgui, "push_font", js_imgui_push_font, 1);

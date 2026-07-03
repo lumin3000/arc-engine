@@ -8,7 +8,44 @@
 #define SOKOL_IMGUI_IMPL
 #include "../../../external/sokol/sokol_imgui.h"
 
+extern "C" {
+#include "../../../external/stb/stb_truetype.h"
+}
+#include <cstdlib>
+
 static bool s_simgui_initialized = false;
+static float s_font_em_scale = 0.0f;  // 0 = setup 未跑, 消费者读到应 fail-fast
+
+// stb_truetype 把字号解释为 (ascent-descent) 像素行高, 浏览器/CSS 把 font-size
+// 解释为 em 大小。补偿系数 = (asc-desc)/unitsPerEm, 从加载的字体度量派生
+// (思源黑体为 1.448)。引擎只计算并暴露, 是否启用由消费者决定 (默认行为不变)。
+static float compute_font_em_scale(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 1.0f;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len <= 0) { fclose(f); return 1.0f; }
+    unsigned char *buf = (unsigned char *)malloc((size_t)len);
+    if (!buf || fread(buf, 1, (size_t)len, f) != (size_t)len) {
+        fclose(f);
+        free(buf);
+        fprintf(stderr, "[imgui] WARNING: font em-scale read failed: %s\n", path);
+        return 1.0f;
+    }
+    fclose(f);
+    stbtt_fontinfo info;
+    float scale = 1.0f;
+    if (stbtt_InitFont(&info, buf, stbtt_GetFontOffsetForIndex(buf, 0))) {
+        // ScaleForMappingEmToPixels(1) = 1/unitsPerEm, ScaleForPixelHeight(1) = 1/(asc-desc)
+        scale = stbtt_ScaleForMappingEmToPixels(&info, 1.0f)
+              / stbtt_ScaleForPixelHeight(&info, 1.0f);
+    } else {
+        fprintf(stderr, "[imgui] WARNING: font em-scale stbtt_InitFont failed: %s\n", path);
+    }
+    free(buf);
+    return scale;
+}
 
 extern "C" {
 
@@ -20,24 +57,18 @@ void simgui_setup_wrapper(void) {
 
     ImGuiIO& io = ImGui::GetIO();
     // 优先全量字库(otf); 旧 1.8M 裁剪子集(ttf)作为消费者未放置全量文件时的回退
-    ImFont* font = io.Fonts->AddFontFromFileTTF(
-        "res/fonts/SourceHanSansSC-Regular.otf",
-        16.0f,
-        NULL,
-        NULL
-    );
+    const char* font_path = "res/fonts/SourceHanSansSC-Regular.otf";
+    ImFont* font = io.Fonts->AddFontFromFileTTF(font_path, 16.0f, NULL, NULL);
     if (!font) {
-        font = io.Fonts->AddFontFromFileTTF(
-            "res/fonts/SourceHanSansSC-Regular.ttf",
-            16.0f,
-            NULL,
-            NULL
-        );
+        font_path = "res/fonts/SourceHanSansSC-Regular.ttf";
+        font = io.Fonts->AddFontFromFileTTF(font_path, 16.0f, NULL, NULL);
     }
     if (font) {
         io.FontDefault = font;
+        s_font_em_scale = compute_font_em_scale(font_path);
     } else {
         io.Fonts->AddFontDefault();
+        s_font_em_scale = 1.0f;  // ImGui 内置 ProggyClean 无该口径问题
         fprintf(stderr, "[imgui] WARNING: Failed to load SourceHanSansSC, using default font\n");
     }
 
@@ -72,6 +103,10 @@ void simgui_render_wrapper(void) {
 
 int simgui_get_draw_call_count(void) {
     return s_last_draw_calls;
+}
+
+float simgui_get_font_em_scale(void) {
+    return s_font_em_scale;
 }
 
 void simgui_shutdown_wrapper(void) {
