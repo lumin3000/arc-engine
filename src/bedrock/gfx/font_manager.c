@@ -416,7 +416,10 @@ const char *font_manager_glyph_ex(struct font_manager *F, int font_id, int codep
     *g = og;
 
     if (is_space_codepoint(codepoint)) {
-        updated = 1;
+        // 空白字符只留 advance 度量, 不产生位图; 但必须照常走下方 update
+        // 入哈希缓存 —— 否则每次绘制都 touch-miss 置 dirty, 整张图集每帧重传
+        // (dynamic image 同帧双 update 竞态 → 文本批次整帧变实心块, 见
+        // docs/plan_ui_routef.md §18.2)
         g->w = g->h = 0;
         og.w = og.h = 0;
     }
