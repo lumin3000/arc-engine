@@ -615,6 +615,18 @@ void render_init(void) {
 
   hex_to_rgba_vec4(0x090a14ff, clear_col);
 
+  // 闪烁判别开关: ARC_DEBUG_CLEAR=RRGGBB 把清屏底色换成显眼色——
+  // 若肉眼闪烁跟着变成该颜色, 说明闪烁帧是"内容没画上、底色透出"(掉批/空帧);
+  // 若仍是黑闪, 则是绘制物自身变暗。仅调试用, 不影响正常构建。
+  {
+    const char *dbg_clear = getenv("ARC_DEBUG_CLEAR");
+    if (dbg_clear && dbg_clear[0]) {
+      unsigned int rgb = (unsigned int)strtoul(dbg_clear, NULL, 16);
+      hex_to_rgba_vec4((rgb << 8) | 0xff, clear_col);
+      fprintf(stderr, "[render] ARC_DEBUG_CLEAR active: clear color #%06x\n", rgb);
+    }
+  }
+
   render_state.pass_action = (sg_pass_action){
       .colors[0] = {.load_action = SG_LOADACTION_CLEAR,
                     .clear_value = {clear_col[0], clear_col[1], clear_col[2],

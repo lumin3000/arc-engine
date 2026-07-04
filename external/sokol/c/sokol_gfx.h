@@ -5319,6 +5319,9 @@ SOKOL_GFX_API_DECL sg_d3d11_view_info sg_d3d11_query_view_info(sg_view view);
 
 // Metal: return __bridge-casted MTLDevice
 SOKOL_GFX_API_DECL const void* sg_mtl_device(void);
+/* arc-engine local patch (see impl): Metal command queue getter for
+   frame-fence diagnostics. */
+SOKOL_GFX_API_DECL const void* sg_mtl_command_queue(void);
 // Metal: return __bridge-casted MTLRenderCommandEncoder when inside render pass (otherwise zero)
 SOKOL_GFX_API_DECL const void* sg_mtl_render_command_encoder(void);
 // Metal: return __bridge-casted MTLComputeCommandEncoder when inside compute pass (otherwise zero)
@@ -26168,6 +26171,22 @@ SOKOL_API_IMPL const void* sg_mtl_device(void) {
     #if defined(SOKOL_METAL)
         if (nil != _sg.mtl.device) {
             return (__bridge const void*) _sg.mtl.device;
+        } else {
+            return 0;
+        }
+    #else
+        return 0;
+    #endif
+}
+
+/* arc-engine local patch: expose the Metal command queue so diagnostics
+   (screenshot readback) can fence against in-flight frame work by
+   committing an empty command buffer on the SAME queue and waiting on it.
+   Mirrors sg_mtl_device(); re-apply when vendoring a new sokol. */
+SOKOL_API_IMPL const void* sg_mtl_command_queue(void) {
+    #if defined(SOKOL_METAL)
+        if (nil != _sg.mtl.cmd_queue) {
+            return (__bridge const void*) _sg.mtl.cmd_queue;
         } else {
             return 0;
         }

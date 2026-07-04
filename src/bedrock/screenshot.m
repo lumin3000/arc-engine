@@ -1,11 +1,15 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <unistd.h>
 
 #include "stb_image_write.h"
 
 #define SOKOL_METAL
 #include "../../external/sokol/c/sokol_app.h"
+
+// sokol 本地补丁提供的 Metal 命令队列 getter(sokol_gfx.h 内实现)。
+extern const void *sg_mtl_command_queue(void);
 
 static int g_screenshot_pending = 0;
 static char g_screenshot_path[1024] = {0};
@@ -43,6 +47,23 @@ int screenshot_capture(void) {
     if (!texture) {
         fprintf(stderr, "[screenshot] Failed to get texture from drawable\n");
         return -1;
+    }
+
+    // sg_commit() 只是异步提交命令缓冲; 不等 GPU 画完就 getBytes 会读到
+    // 半渲染帧——paint-order 靠后的动态物(pawn/手持物)还没画上, 截图里表现为
+    // 该处一帧黑块伪影(诊断截图与 P6 "进程内 load 黑块伪影"同根)。
+    // 修法: 向 sokol 同一命令队列提交空命令缓冲并等待完成——FIFO 保证它排在
+    // 本帧命令缓冲之后, 等到它完成即本帧已画完。
+    {
+        id<MTLCommandQueue> queue =
+            (__bridge id<MTLCommandQueue>)sg_mtl_command_queue();
+        if (queue) {
+            id<MTLCommandBuffer> fence = [queue commandBuffer];
+            [fence commit];
+            [fence waitUntilCompleted];
+        } else {
+            fprintf(stderr, "[screenshot] WARN: no Metal queue, capture may be torn\n");
+        }
     }
 
     NSUInteger width = texture.width;
