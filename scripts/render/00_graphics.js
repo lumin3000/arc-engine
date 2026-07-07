@@ -18,7 +18,11 @@ const Illustrations = {
             return;
         }
 
-        const meshId = this._getSharedQuadMesh();
+        // 材质可携带专属 UV 子网格 (graphics.create_quad_mesh_uv 产物,
+        // 用于 atlas 子区域采样); 未携带时用共享全幅 quad
+        const meshId = (material && material._uvMeshId != null)
+            ? material._uvMeshId
+            : this._getSharedQuadMesh();
         if (meshId === null) {
             return;
         }

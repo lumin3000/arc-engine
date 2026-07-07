@@ -725,8 +725,16 @@ static JSValue js_graphics_draw_mesh(JSContext *ctx, JSValueConst this_val,
   // 注意: 多个 mesh request 共享同一个 DynamicMesh 时，使用
   // material_set_texture 会导致 view 被反复销毁/创建——此后 submit
   // 拿到的旧 Material 复制里的 view handle 会指向已销毁的资源。
-  if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
-      g_graphics_textures[textureId].valid) {
+  // textureId >= 10000: atlas 纹理池 (ATLAS_TEX_ID_OFFSET, 同 draw_mesh_instanced)
+  extern bool atlas_texture_get(int texture_id, sg_image *out_image,
+                                sg_view *out_view);
+  sg_image atlas_img;
+  sg_view atlas_view;
+  if (atlas_texture_get(textureId, &atlas_img, &atlas_view)) {
+    dm->material.texture = atlas_img;
+    dm->material.texture_view = atlas_view;
+  } else if (textureId >= 0 && textureId < MAX_GRAPHICS_TEXTURES &&
+             g_graphics_textures[textureId].valid) {
     // 直接设置，避免创建/销毁 view
     dm->material.texture = g_graphics_textures[textureId].image;
     dm->material.texture_view = g_graphics_textures[textureId].view;
