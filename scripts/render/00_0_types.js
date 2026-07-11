@@ -30,6 +30,11 @@ const ShaderType = {
     Transparent: 11,
     MetaOverlay: 12,
     EdgeDetect: 13,
+    // USER_9..12 与 C 侧 material.h 末尾追加槽位对应
+    User9: 14,
+    User10: 15,
+    User11: 16,
+    User12: 17,
 };
 
 globalThis.BlendMode = BlendMode;

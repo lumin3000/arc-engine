@@ -59,6 +59,14 @@ int shader_type_to_tex_index(ShaderType shader_type) {
     return 249;
   case SHADER_TYPE_USER_8:
     return 248;
+  case SHADER_TYPE_USER_9:
+    return 246;
+  case SHADER_TYPE_USER_10:
+    return 245;
+  case SHADER_TYPE_USER_11:
+    return 244;
+  case SHADER_TYPE_USER_12:
+    return 243;
   case SHADER_TYPE_TEXTURED:
     return 0;
   case SHADER_TYPE_CUTOUT:
