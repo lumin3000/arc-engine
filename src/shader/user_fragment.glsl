@@ -25,6 +25,7 @@ layout(binding=0) uniform Shader_Data {
 	vec4 col_override;
 	vec4 col_override_2;
 	vec4 params;
+	vec4 params_2; // per-draw Material.params passthrough; consumer-defined semantics
 };
 
 vec2 get_tiled_atlas_uv(vec2 uv_in) {

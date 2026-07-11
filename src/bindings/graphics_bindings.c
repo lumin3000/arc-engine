@@ -1147,6 +1147,38 @@ static JSValue js_graphics_set_mesh_param(JSContext *ctx, JSValueConst this_val,
 }
 
 // ============================================================================
+// graphics.set_mesh_params(meshId, p0, p1, p2, p3)
+// ============================================================================
+
+static JSValue js_graphics_set_mesh_params(JSContext *ctx,
+                                           JSValueConst this_val, int argc,
+                                           JSValueConst *argv) {
+  ensure_initialized();
+  if (argc < 5)
+    return JS_ThrowTypeError(ctx, "requires 5 args");
+
+  int32_t meshId;
+  double p[4];
+  if (JS_ToInt32(ctx, &meshId, argv[0]) < 0)
+    return JS_EXCEPTION;
+  for (int i = 0; i < 4; i++) {
+    if (JS_ToFloat64(ctx, &p[i], argv[1 + i]) < 0)
+      return JS_EXCEPTION;
+  }
+
+  if (meshId < 0 || meshId >= MAX_DYNAMIC_MESHES)
+    return JS_UNDEFINED;
+  DynamicMesh *dm = &g_dynamic_meshes[meshId];
+  if (!dm->valid)
+    return JS_UNDEFINED;
+
+  for (int i = 0; i < 4; i++) {
+    dm->material.params[i] = (float)p[i];
+  }
+  return JS_UNDEFINED;
+}
+
+// ============================================================================
 // graphics.draw_mesh_instanced(meshId, textureId, layer, transforms,
 // colors, count)
 // ============================================================================
@@ -1328,6 +1360,9 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(
       ctx, obj, "set_mesh_param",
       JS_NewCFunction(ctx, js_graphics_set_mesh_param, "set_mesh_param", 3));
+  JS_SetPropertyStr(
+      ctx, obj, "set_mesh_params",
+      JS_NewCFunction(ctx, js_graphics_set_mesh_params, "set_mesh_params", 5));
   JS_SetPropertyStr(
       ctx, obj, "load_texture",
       JS_NewCFunction(ctx, js_graphics_load_texture, "load_texture", 1));

@@ -74,6 +74,7 @@ typedef struct {
   Vec4 col_override;
   Vec4 col_override_2;
   Vec4 params;
+  Vec4 params_2; // per-draw Material.params passthrough; consumer-defined semantics
 } Shader_Data;
 
 // Sprite registry. The game calls engine_register_sprites() once at

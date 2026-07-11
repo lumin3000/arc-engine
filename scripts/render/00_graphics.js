@@ -46,6 +46,12 @@ const Illustrations = {
             graphics.set_mesh_shader_type(meshId, shaderTypeNum);
         }
 
+        if (graphics.set_mesh_params) {
+            // 共享 quad 复用: 每次提交都写 params, 否则上一材质的值会残留
+            const p = material?.params;
+            graphics.set_mesh_params(meshId, p?.[0] ?? 0, p?.[1] ?? 0, p?.[2] ?? 0, p?.[3] ?? 0);
+        }
+
         const worldX = (loc.x ?? 0);
         const worldY = (loc.y ?? 0);
         const worldZ = (loc.z ?? 0);
@@ -95,6 +101,11 @@ const Illustrations = {
             const st = globalThis.ShaderType;
             const shaderTypeNum = st?.[material.shader.name] ?? st?.Textured ?? 9;
             graphics.set_mesh_shader_type(meshId, shaderTypeNum);
+        }
+
+        if (graphics.set_mesh_params) {
+            const p = material?.params;
+            graphics.set_mesh_params(meshId, p?.[0] ?? 0, p?.[1] ?? 0, p?.[2] ?? 0, p?.[3] ?? 0);
         }
 
         graphics.draw_mesh_at(
