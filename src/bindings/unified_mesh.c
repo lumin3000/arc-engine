@@ -1410,6 +1410,33 @@ static JSValue js_draw(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_NewInt32(ctx, 1);
 }
 
+// set_color(slot_id, r, g, b, a) — 槽位材质色乘子 (col_override), 0-1 浮点。
+// 逐帧调制整槽输出色, 不触碰顶点数据。
+static JSValue js_set_color(JSContext *ctx, JSValueConst this_val, int argc,
+                            JSValueConst *argv) {
+  if (argc < 5)
+    return JS_ThrowTypeError(ctx, "set_color requires slot_id, r, g, b, a");
+
+  int32_t slot_id;
+  if (JS_ToInt32(ctx, &slot_id, argv[0]) < 0)
+    return JS_EXCEPTION;
+  if (slot_id < 0 || slot_id >= MAX_UNIFIED_MESHES)
+    return JS_ThrowRangeError(ctx, "set_color: slot_id out of range");
+
+  UnifiedMesh *um = &g_unified_meshes[slot_id];
+  if (!um->valid)
+    return JS_ThrowInternalError(ctx, "set_color: slot not allocated");
+
+  double c[4];
+  for (int i = 0; i < 4; i++) {
+    if (JS_ToFloat64(ctx, &c[i], argv[1 + i]) < 0)
+      return JS_EXCEPTION;
+  }
+  material_set_color(&um->material, (float)c[0], (float)c[1], (float)c[2],
+                     (float)c[3]);
+  return JS_UNDEFINED;
+}
+
 static JSValue js_save_atlas_png(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   if (argc < 4) {
@@ -1528,6 +1555,8 @@ int js_init_unified_mesh_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "upload",
                     JS_NewCFunction(ctx, js_upload, "upload", 6));
   JS_SetPropertyStr(ctx, obj, "draw", JS_NewCFunction(ctx, js_draw, "draw", 1));
+  JS_SetPropertyStr(ctx, obj, "set_color",
+                    JS_NewCFunction(ctx, js_set_color, "set_color", 5));
   JS_SetPropertyStr(ctx, obj, "set_render_queue",
                     JS_NewCFunction(ctx, js_set_render_queue,
                                     "set_render_queue", 2));
