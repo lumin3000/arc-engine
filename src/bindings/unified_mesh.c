@@ -1437,6 +1437,35 @@ static JSValue js_set_color(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
+// set_params(slot_id, x, y, z, w) — 槽位材质 params (Shader_Data.params_2 来源)。
+// 与 set_color 对称的逐帧参数通道, 语义由消费者 shader 定义。
+static JSValue js_set_params(JSContext *ctx, JSValueConst this_val, int argc,
+                             JSValueConst *argv) {
+  if (argc < 5)
+    return JS_ThrowTypeError(ctx, "set_params requires slot_id, x, y, z, w");
+
+  int32_t slot_id;
+  if (JS_ToInt32(ctx, &slot_id, argv[0]) < 0)
+    return JS_EXCEPTION;
+  if (slot_id < 0 || slot_id >= MAX_UNIFIED_MESHES)
+    return JS_ThrowRangeError(ctx, "set_params: slot_id out of range");
+
+  UnifiedMesh *um = &g_unified_meshes[slot_id];
+  if (!um->valid)
+    return JS_ThrowInternalError(ctx, "set_params: slot not allocated");
+
+  double p[4];
+  for (int i = 0; i < 4; i++) {
+    if (JS_ToFloat64(ctx, &p[i], argv[1 + i]) < 0)
+      return JS_EXCEPTION;
+  }
+  um->material.params[0] = (float)p[0];
+  um->material.params[1] = (float)p[1];
+  um->material.params[2] = (float)p[2];
+  um->material.params[3] = (float)p[3];
+  return JS_UNDEFINED;
+}
+
 static JSValue js_save_atlas_png(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
   if (argc < 4) {
@@ -1557,6 +1586,8 @@ int js_init_unified_mesh_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "draw", JS_NewCFunction(ctx, js_draw, "draw", 1));
   JS_SetPropertyStr(ctx, obj, "set_color",
                     JS_NewCFunction(ctx, js_set_color, "set_color", 5));
+  JS_SetPropertyStr(ctx, obj, "set_params",
+                    JS_NewCFunction(ctx, js_set_params, "set_params", 5));
   JS_SetPropertyStr(ctx, obj, "set_render_queue",
                     JS_NewCFunction(ctx, js_set_render_queue,
                                     "set_render_queue", 2));
