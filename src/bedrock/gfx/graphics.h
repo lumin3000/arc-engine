@@ -14,9 +14,10 @@ void graphics_draw_mesh(Mesh *mesh, const Matrix4 transform, Material *material,
 
 void graphics_draw_mesh_identity(Mesh *mesh, Material *material, int layer);
 
+// uv_rects: 每实例 [u0,v0,u1,v1] 采样子矩形 (NULL = 全幅 [0,0,1,1], 与旧行为一致)
 void graphics_draw_mesh_instanced(Mesh *mesh, Material *material,
                                   const Matrix4 *transforms, const Vec4 *colors,
-                                  int count, int layer);
+                                  const Vec4 *uv_rects, int count, int layer);
 
 void graphics_init(void);
 
@@ -41,6 +42,10 @@ int graphics_submit_meshes_range_count(int rq_min, int rq_max, bool clear_after,
 void graphics_submit_instanced(void);
 
 int graphics_submit_instanced_count(void);
+
+// 分带冲刷: 只提交有效 rq (material.renderQueue+layer) ∈ [rq_min, rq_max) 的
+// instanced 请求并标记消费, 队列计数不清 (帧末全量 submit 兜底剩余请求)
+int graphics_submit_instanced_range_count(int rq_min, int rq_max);
 
 int graphics_get_draw_calls(void);
 int graphics_get_triangle_count(void);

@@ -414,6 +414,12 @@ typedef struct {
   sg_image image;
   sg_view view;
   bool valid;
+  // staged 纹理 (texture_create_staged): CPU 侧全图镜像, compose_layers 写入,
+  // texture_flush_staged 整图上传。行序与 GPU 纹理一致 (= 图像空间垂直翻转,
+  // 同 stbi flip-on-load 约定)。非 staged 纹理恒 NULL。
+  uint8_t *staging;
+  int width;
+  int height;
 } GraphicsTextureCache;
 
 static GraphicsTextureCache g_graphics_textures[MAX_GRAPHICS_TEXTURES];
@@ -607,6 +613,469 @@ static JSValue js_graphics_texture_update(JSContext *ctx, JSValueConst this_val,
       .mip_levels[0] = { .ptr = base + off, .size = need },
   });
   return JS_UNDEFINED;
+}
+
+// ============================================================================
+// 分层像素合成 (通用图像设施, 调用方定义层语义):
+//   graphics.texture_create_staged(w, h) -> textureId
+//   graphics.compose_layers(texId, slotX, slotY, slotW, slotH, layers, outlineR)
+//   graphics.texture_flush_staged(texId)
+//   graphics.texture_staged_read(texId, x, y, w, h) -> Uint8Array (图像空间, 行顶朝下)
+//
+// layers 每项: { path, dx, dy, flip?, scale?, tint?[4], fx?[4] }
+//   path  源图 (磁盘 PNG, 解码结果按 path 缓存)
+//   dx/dy 槽内整数偏移 (图像空间, 左上原点)
+//   flip  水平镜像
+//   scale 绕图心等比缩放 (双线性)
+//   tint  RGBA 乘子
+//   fx    颜色变换 [mode, a, b, c], 数学与消费者 shader 侧染色逐式对齐:
+//         mode 1: a=hue 角度(deg) W3C hue-rotate 阵, b=saturate 插值, c=明度标量
+//         mode 2: a=hue, b=sat, c=明度增益 — 保明度重着色 + 暗部保护
+// 合成: 槽先清零 → 逐层 (scale → fx → tint → 量化 8bit) alpha-over →
+//       outlineR>0 时对整体 alpha 做半径 R 圆盘膨胀垫黑底 → 写入 staging。
+// ============================================================================
+
+#define MAX_COMPOSE_SRC_CACHE 512
+
+typedef struct {
+  char path[MAX_GRAPHICS_TEXTURE_PATH_LEN];
+  int w, h;
+  uint8_t *pixels; // RGBA, 图像空间 (行顶朝下, 未做 stbi 垂直翻转)
+  bool valid;
+} ComposeSrcCache;
+
+static ComposeSrcCache g_compose_src[MAX_COMPOSE_SRC_CACHE];
+
+static const ComposeSrcCache *compose_src_get(const char *path) {
+  for (int i = 0; i < MAX_COMPOSE_SRC_CACHE; i++) {
+    if (g_compose_src[i].valid && strcmp(g_compose_src[i].path, path) == 0)
+      return &g_compose_src[i];
+  }
+  int slot = -1;
+  for (int i = 0; i < MAX_COMPOSE_SRC_CACHE; i++) {
+    if (!g_compose_src[i].valid) { slot = i; break; }
+  }
+  if (slot < 0) {
+    LOG_ERROR("compose_layers: source cache full (%d)", MAX_COMPOSE_SRC_CACHE);
+    return NULL;
+  }
+  size_t fileLen;
+  unsigned char *fileContent = (unsigned char *)read_file_content(path, &fileLen);
+  if (!fileContent) {
+    LOG_ERROR("compose_layers: source not found: %s", path);
+    return NULL;
+  }
+  int w, h, comp;
+  stbi_set_flip_vertically_on_load(0); // 合成在图像空间, 不翻
+  unsigned char *pixels =
+      stbi_load_from_memory(fileContent, (int)fileLen, &w, &h, &comp, 4);
+  stbi_set_flip_vertically_on_load(1); // 恢复纹理加载约定
+  free(fileContent);
+  if (!pixels) {
+    LOG_ERROR("compose_layers: decode failed: %s", path);
+    return NULL;
+  }
+  strncpy(g_compose_src[slot].path, path, MAX_GRAPHICS_TEXTURE_PATH_LEN - 1);
+  g_compose_src[slot].w = w;
+  g_compose_src[slot].h = h;
+  g_compose_src[slot].pixels = (uint8_t *)pixels; // stbi malloc, 常驻缓存
+  g_compose_src[slot].valid = true;
+  return &g_compose_src[slot];
+}
+
+static float compose_smoothstep(float lo, float hi, float x) {
+  float t = (x - lo) / (hi - lo);
+  t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+static void compose_hsl_to_rgb(float h, float s, float l, float out[3]) {
+  float c = (1.0f - fabsf(2.0f * l - 1.0f)) * s;
+  float hp = fmodf(h, 360.0f) / 60.0f;
+  if (hp < 0.0f) hp += 6.0f;
+  float x = c * (1.0f - fabsf(fmodf(hp, 2.0f) - 1.0f));
+  float r1, g1, b1;
+  if (hp < 1.0f)      { r1 = c; g1 = x; b1 = 0; }
+  else if (hp < 2.0f) { r1 = x; g1 = c; b1 = 0; }
+  else if (hp < 3.0f) { r1 = 0; g1 = c; b1 = x; }
+  else if (hp < 4.0f) { r1 = 0; g1 = x; b1 = c; }
+  else if (hp < 5.0f) { r1 = x; g1 = 0; b1 = c; }
+  else                { r1 = c; g1 = 0; b1 = x; }
+  float m = l - 0.5f * c;
+  out[0] = r1 + m; out[1] = g1 + m; out[2] = b1 + m;
+}
+
+// 与消费者 shader 染色逐式对齐 (mode1=hue-rotate·saturate·light, mode2=保L重着色);
+// 暗部保护窗与 shader 常量同值
+#define COMPOSE_FX_DARK_LO 0.10f
+#define COMPOSE_FX_DARK_HI 0.24f
+
+static void compose_fx_apply(float rgb[3], const float fx[4]) {
+  float mode = fx[0];
+  if (mode < 0.5f) return;
+  if (mode < 1.5f) {
+    float rad = fx[1] * (float)M_PI / 180.0f;
+    float c = cosf(rad), s = sinf(rad);
+    float r = rgb[0], g = rgb[1], b = rgb[2];
+    float or_ = (0.213f + c * 0.787f - s * 0.213f) * r +
+                (0.715f - c * 0.715f - s * 0.715f) * g +
+                (0.072f - c * 0.072f + s * 0.928f) * b;
+    float og = (0.213f - c * 0.213f + s * 0.143f) * r +
+               (0.715f + c * 0.285f + s * 0.140f) * g +
+               (0.072f - c * 0.072f - s * 0.283f) * b;
+    float ob = (0.213f - c * 0.213f - s * 0.787f) * r +
+               (0.715f - c * 0.715f + s * 0.715f) * g +
+               (0.072f + c * 0.928f + s * 0.072f) * b;
+    float lum = or_ * 0.213f + og * 0.715f + ob * 0.072f;
+    float sat = fx[2];
+    or_ = lum + (or_ - lum) * sat;
+    og = lum + (og - lum) * sat;
+    ob = lum + (ob - lum) * sat;
+    float light = fx[3];
+    rgb[0] = fminf(fmaxf(or_ * light, 0.0f), 1.0f);
+    rgb[1] = fminf(fmaxf(og * light, 0.0f), 1.0f);
+    rgb[2] = fminf(fmaxf(ob * light, 0.0f), 1.0f);
+    return;
+  }
+  float mx = fmaxf(rgb[0], fmaxf(rgb[1], rgb[2]));
+  float mn = fminf(rgb[0], fminf(rgb[1], rgb[2]));
+  float l_orig = (mx + mn) * 0.5f;
+  float protect = compose_smoothstep(COMPOSE_FX_DARK_LO, COMPOSE_FX_DARK_HI, l_orig);
+  float l_dyed = fminf(fmaxf(l_orig * fx[3], 0.0f), 1.0f);
+  float dyed[3];
+  compose_hsl_to_rgb(fx[1], fx[2], l_dyed, dyed);
+  rgb[0] = rgb[0] + (dyed[0] - rgb[0]) * protect;
+  rgb[1] = rgb[1] + (dyed[1] - rgb[1]) * protect;
+  rgb[2] = rgb[2] + (dyed[2] - rgb[2]) * protect;
+}
+
+static float compose_get_num(JSContext *ctx, JSValueConst obj, const char *key,
+                             float dflt) {
+  JSValue v = JS_GetPropertyStr(ctx, obj, key);
+  double d = dflt;
+  if (!JS_IsUndefined(v) && !JS_IsNull(v))
+    JS_ToFloat64(ctx, &d, v);
+  JS_FreeValue(ctx, v);
+  return (float)d;
+}
+
+// key 为长度 n 的数组时读入 out, 返回 true; 缺省/非法返回 false
+static bool compose_get_vec(JSContext *ctx, JSValueConst obj, const char *key,
+                            float *out, int n) {
+  JSValue v = JS_GetPropertyStr(ctx, obj, key);
+  if (JS_IsUndefined(v) || JS_IsNull(v)) { JS_FreeValue(ctx, v); return false; }
+  bool ok = true;
+  for (int i = 0; i < n; i++) {
+    JSValue e = JS_GetPropertyUint32(ctx, v, i);
+    double d = 0;
+    if (JS_ToFloat64(ctx, &d, e) < 0) ok = false;
+    JS_FreeValue(ctx, e);
+    out[i] = (float)d;
+  }
+  JS_FreeValue(ctx, v);
+  return ok;
+}
+
+static JSValue js_graphics_texture_create_staged(JSContext *ctx,
+                                                 JSValueConst this_val,
+                                                 int argc, JSValueConst *argv) {
+  if (argc < 2)
+    return JS_ThrowTypeError(ctx, "texture_create_staged(w, h)");
+  int32_t w = 0, h = 0;
+  JS_ToInt32(ctx, &w, argv[0]);
+  JS_ToInt32(ctx, &h, argv[1]);
+  if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
+    return JS_ThrowRangeError(ctx, "texture_create_staged: bad dims %dx%d", w, h);
+
+  int slot = -1;
+  for (int i = 0; i < MAX_GRAPHICS_TEXTURES; i++) {
+    if (!g_graphics_textures[i].valid) { slot = i; break; }
+  }
+  if (slot < 0)
+    return JS_ThrowInternalError(ctx, "texture_create_staged: texture cache full");
+
+  uint8_t *staging = (uint8_t *)calloc((size_t)w * h, 4);
+  if (!staging)
+    return JS_ThrowInternalError(ctx, "texture_create_staged: out of memory");
+
+  sg_image img = sg_make_image(&(sg_image_desc){
+      .width = w,
+      .height = h,
+      .pixel_format = SG_PIXELFORMAT_RGBA8,
+      .usage.dynamic_update = true,
+  });
+  if (sg_query_image_state(img) != SG_RESOURCESTATE_VALID) {
+    free(staging);
+    return JS_ThrowInternalError(ctx, "texture_create_staged: sg_make_image failed");
+  }
+  // 创建期不上传 (sokol 限每 image 每帧一次 update, 首次 flush 必先于首次采样)
+  sg_view view = sg_make_view(&(sg_view_desc){ .texture.image = img });
+  snprintf(g_graphics_textures[slot].path, MAX_GRAPHICS_TEXTURE_PATH_LEN,
+           "__staged_%d_%dx%d__", slot, w, h);
+  g_graphics_textures[slot].image = img;
+  g_graphics_textures[slot].view = view;
+  g_graphics_textures[slot].valid = true;
+  g_graphics_textures[slot].staging = staging;
+  g_graphics_textures[slot].width = w;
+  g_graphics_textures[slot].height = h;
+  return JS_NewInt32(ctx, slot);
+}
+
+static GraphicsTextureCache *compose_staged_tex(JSContext *ctx, JSValueConst v,
+                                                JSValue *err) {
+  int32_t id = 0;
+  JS_ToInt32(ctx, &id, v);
+  if (id < 0 || id >= MAX_GRAPHICS_TEXTURES || !g_graphics_textures[id].valid) {
+    *err = JS_ThrowRangeError(ctx, "invalid texture %d", id);
+    return NULL;
+  }
+  if (!g_graphics_textures[id].staging) {
+    *err = JS_ThrowTypeError(ctx, "texture %d is not staged", id);
+    return NULL;
+  }
+  return &g_graphics_textures[id];
+}
+
+static JSValue js_graphics_compose_layers(JSContext *ctx, JSValueConst this_val,
+                                          int argc, JSValueConst *argv) {
+  if (argc < 6)
+    return JS_ThrowTypeError(
+        ctx, "compose_layers(texId, slotX, slotY, slotW, slotH, layers[, outlineR])");
+  JSValue err = JS_UNDEFINED;
+  GraphicsTextureCache *tex = compose_staged_tex(ctx, argv[0], &err);
+  if (!tex) return err;
+
+  int32_t sx = 0, sy = 0, sw = 0, sh = 0, outlineR = 0;
+  JS_ToInt32(ctx, &sx, argv[1]);
+  JS_ToInt32(ctx, &sy, argv[2]);
+  JS_ToInt32(ctx, &sw, argv[3]);
+  JS_ToInt32(ctx, &sh, argv[4]);
+  if (argc >= 7) JS_ToInt32(ctx, &outlineR, argv[6]);
+  if (sw <= 0 || sh <= 0 || sx < 0 || sy < 0 || sx + sw > tex->width ||
+      sy + sh > tex->height)
+    return JS_ThrowRangeError(ctx, "compose_layers: slot %d,%d %dx%d out of %dx%d",
+                              sx, sy, sw, sh, tex->width, tex->height);
+  if (outlineR < 0 || outlineR > 16)
+    return JS_ThrowRangeError(ctx, "compose_layers: outlineR %d out of [0,16]",
+                              outlineR);
+
+  JSValue lenV = JS_GetPropertyStr(ctx, argv[5], "length");
+  int32_t layerCount = 0;
+  JS_ToInt32(ctx, &layerCount, lenV);
+  JS_FreeValue(ctx, lenV);
+  if (layerCount < 0 || layerCount > 64)
+    return JS_ThrowRangeError(ctx, "compose_layers: bad layer count %d", layerCount);
+
+  const size_t slotPx = (size_t)sw * sh;
+  float *acc = (float *)calloc(slotPx, 4 * sizeof(float)); // 槽累积 (straight alpha)
+  float *lay = (float *)malloc(slotPx * 4 * sizeof(float)); // 单层工作区(槽大小上限)
+  if (!acc || !lay) {
+    free(acc); free(lay);
+    return JS_ThrowInternalError(ctx, "compose_layers: out of memory");
+  }
+
+  for (int li = 0; li < layerCount; li++) {
+    JSValue lv = JS_GetPropertyUint32(ctx, argv[5], (uint32_t)li);
+    JSValue pathV = JS_GetPropertyStr(ctx, lv, "path");
+    const char *path = JS_ToCString(ctx, pathV);
+    JS_FreeValue(ctx, pathV);
+    if (!path) { JS_FreeValue(ctx, lv); continue; }
+    const ComposeSrcCache *src = compose_src_get(path);
+    JS_FreeCString(ctx, path);
+    if (!src) { JS_FreeValue(ctx, lv); continue; } // 解码失败已 LOG_ERROR, 跳层
+
+    int dx = (int)compose_get_num(ctx, lv, "dx", 0);
+    int dy = (int)compose_get_num(ctx, lv, "dy", 0);
+    float scale = compose_get_num(ctx, lv, "scale", 1.0f);
+    JSValue flipV = JS_GetPropertyStr(ctx, lv, "flip");
+    bool flip = JS_ToBool(ctx, flipV) > 0;
+    JS_FreeValue(ctx, flipV);
+    float tint[4], fx[4];
+    bool hasTint = compose_get_vec(ctx, lv, "tint", tint, 4);
+    bool hasFx = compose_get_vec(ctx, lv, "fx", fx, 4) && fx[0] >= 0.5f;
+    JS_FreeValue(ctx, lv);
+
+    int lw = src->w, lh = src->h;
+    if (lw > sw || lh > sh) {
+      LOG_ERROR("compose_layers: layer %dx%d exceeds slot %dx%d, skipped",
+                lw, lh, sw, sh);
+      continue;
+    }
+    // 1. 取样 (scale 绕图心双线性, flip 水平镜像) → 图幅不变
+    float cx = (lw - 1) * 0.5f, cy = (lh - 1) * 0.5f;
+    for (int y = 0; y < lh; y++) {
+      for (int x = 0; x < lw; x++) {
+        int xi = flip ? (lw - 1 - x) : x;
+        float *dst = lay + ((size_t)y * lw + x) * 4;
+        if (scale != 1.0f) {
+          float sxf = (xi - cx) / scale + cx;
+          float syf = (y - cy) / scale + cy;
+          if (sxf < 0 || syf < 0 || sxf > lw - 1 || syf > lh - 1) {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0.0f;
+            continue;
+          }
+          int x0 = (int)sxf, y0 = (int)syf;
+          int x1 = x0 + 1 < lw ? x0 + 1 : x0;
+          int y1 = y0 + 1 < lh ? y0 + 1 : y0;
+          float fxw = sxf - x0, fyw = syf - y0;
+          for (int c = 0; c < 4; c++) {
+            float p00 = src->pixels[((size_t)y0 * lw + x0) * 4 + c] / 255.0f;
+            float p10 = src->pixels[((size_t)y0 * lw + x1) * 4 + c] / 255.0f;
+            float p01 = src->pixels[((size_t)y1 * lw + x0) * 4 + c] / 255.0f;
+            float p11 = src->pixels[((size_t)y1 * lw + x1) * 4 + c] / 255.0f;
+            dst[c] = (p00 * (1 - fxw) + p10 * fxw) * (1 - fyw) +
+                     (p01 * (1 - fxw) + p11 * fxw) * fyw;
+          }
+        } else {
+          const uint8_t *sp = src->pixels + ((size_t)y * lw + xi) * 4;
+          dst[0] = sp[0] / 255.0f;
+          dst[1] = sp[1] / 255.0f;
+          dst[2] = sp[2] / 255.0f;
+          dst[3] = sp[3] / 255.0f;
+        }
+      }
+    }
+    // 2. fx → tint → 量化 8bit (对齐预览工具逐层 8bit 中间态)
+    for (size_t p = 0; p < (size_t)lw * lh; p++) {
+      float *px = lay + p * 4;
+      if (px[3] <= 0.0f && !hasFx) continue;
+      if (hasFx) compose_fx_apply(px, fx);
+      if (hasTint) {
+        px[0] *= tint[0]; px[1] *= tint[1]; px[2] *= tint[2]; px[3] *= tint[3];
+      }
+      for (int c = 0; c < 4; c++) {
+        float q = floorf(fminf(fmaxf(px[c], 0.0f), 1.0f) * 255.0f + 0.5f);
+        px[c] = q / 255.0f;
+      }
+    }
+    // 3. alpha-over 落槽 (straight alpha)
+    for (int y = 0; y < lh; y++) {
+      int ty = dy + y;
+      if (ty < 0 || ty >= sh) continue;
+      for (int x = 0; x < lw; x++) {
+        int tx = dx + x;
+        if (tx < 0 || tx >= sw) continue;
+        const float *s = lay + ((size_t)y * lw + x) * 4;
+        float sa = s[3];
+        if (sa <= 0.0f) continue;
+        float *d = acc + ((size_t)ty * sw + tx) * 4;
+        float da = d[3];
+        float oa = sa + da * (1.0f - sa);
+        if (oa > 0.0f) {
+          for (int c = 0; c < 3; c++)
+            d[c] = (s[c] * sa + d[c] * da * (1.0f - sa)) / oa;
+        }
+        d[3] = oa;
+      }
+    }
+  }
+  free(lay);
+
+  // 4. 描边: 整体 alpha 半径 R 圆盘膨胀, 新增像素垫黑于剪影之下
+  if (outlineR > 0) {
+    uint8_t *mask = (uint8_t *)malloc(slotPx);
+    if (mask) {
+      for (size_t p = 0; p < slotPx; p++)
+        mask[p] = acc[p * 4 + 3] > (1.0f / 255.0f) ? 1 : 0;
+      const int r2 = outlineR * outlineR;
+      for (int y = 0; y < sh; y++) {
+        for (int x = 0; x < sw; x++) {
+          float *d = acc + ((size_t)y * sw + x) * 4;
+          if (d[3] >= 1.0f) continue;
+          bool hit = mask[(size_t)y * sw + x];
+          for (int oy = -outlineR; oy <= outlineR && !hit; oy++) {
+            int yy = y + oy;
+            if (yy < 0 || yy >= sh) continue;
+            for (int ox = -outlineR; ox <= outlineR; ox++) {
+              if (ox * ox + oy * oy > r2) continue;
+              int xx = x + ox;
+              if (xx < 0 || xx >= sw) continue;
+              if (mask[(size_t)yy * sw + xx]) { hit = true; break; }
+            }
+          }
+          if (!hit) continue;
+          // 黑底在下: composed OVER black
+          float da = d[3];
+          for (int c = 0; c < 3; c++) d[c] = d[c] * da; // + 0 * (1-da)
+          d[3] = 1.0f;
+        }
+      }
+      free(mask);
+    }
+  }
+
+  // 5. 写 staging: 槽内行序垂直翻转到 GPU 约定 (行 t = 图像行 H-1-t)
+  for (int y = 0; y < sh; y++) {
+    uint8_t *row = tex->staging +
+                   ((size_t)(tex->height - 1 - (sy + y)) * tex->width + sx) * 4;
+    const float *srow = acc + (size_t)y * sw * 4;
+    for (int x = 0; x < sw; x++) {
+      for (int c = 0; c < 4; c++) {
+        float v = srow[x * 4 + c];
+        row[x * 4 + c] =
+            (uint8_t)floorf(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f);
+      }
+    }
+  }
+  free(acc);
+  return JS_UNDEFINED;
+}
+
+static JSValue js_graphics_texture_flush_staged(JSContext *ctx,
+                                                JSValueConst this_val, int argc,
+                                                JSValueConst *argv) {
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "texture_flush_staged(texId)");
+  JSValue err = JS_UNDEFINED;
+  GraphicsTextureCache *tex = compose_staged_tex(ctx, argv[0], &err);
+  if (!tex) return err;
+  sg_update_image(tex->image, &(sg_image_data){
+      .mip_levels[0] = { .ptr = tex->staging,
+                         .size = (size_t)tex->width * tex->height * 4 },
+  });
+  return JS_UNDEFINED;
+}
+
+static void compose_ab_free(JSRuntime *rt, void *opaque, void *ptr) {
+  (void)opaque;
+  js_free_rt(rt, ptr);
+}
+
+static JSValue js_graphics_texture_staged_read(JSContext *ctx,
+                                               JSValueConst this_val, int argc,
+                                               JSValueConst *argv) {
+  if (argc < 5)
+    return JS_ThrowTypeError(ctx, "texture_staged_read(texId, x, y, w, h)");
+  JSValue err = JS_UNDEFINED;
+  GraphicsTextureCache *tex = compose_staged_tex(ctx, argv[0], &err);
+  if (!tex) return err;
+  int32_t x = 0, y = 0, w = 0, h = 0;
+  JS_ToInt32(ctx, &x, argv[1]);
+  JS_ToInt32(ctx, &y, argv[2]);
+  JS_ToInt32(ctx, &w, argv[3]);
+  JS_ToInt32(ctx, &h, argv[4]);
+  if (w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > tex->width ||
+      y + h > tex->height)
+    return JS_ThrowRangeError(ctx, "texture_staged_read: bad region");
+  uint8_t *out = (uint8_t *)js_malloc(ctx, (size_t)w * h * 4);
+  if (!out)
+    return JS_ThrowInternalError(ctx, "texture_staged_read: out of memory");
+  for (int r = 0; r < h; r++) {
+    // 图像空间读回: 结果行 r = staging 行 H-1-(y+r)
+    memcpy(out + (size_t)r * w * 4,
+           tex->staging +
+               ((size_t)(tex->height - 1 - (y + r)) * tex->width + x) * 4,
+           (size_t)w * 4);
+  }
+  JSValue ab = JS_NewArrayBuffer(ctx, out, (size_t)w * h * 4, compose_ab_free,
+                                 NULL, false);
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue u8ctor = JS_GetPropertyStr(ctx, global, "Uint8Array");
+  JSValue result = JS_CallConstructor(ctx, u8ctor, 1, &ab);
+  JS_FreeValue(ctx, u8ctor);
+  JS_FreeValue(ctx, global);
+  JS_FreeValue(ctx, ab);
+  return result;
 }
 
 // JS Binding: graphics.load_texture(path) -> textureId
@@ -1180,7 +1649,8 @@ static JSValue js_graphics_set_mesh_params(JSContext *ctx,
 
 // ============================================================================
 // graphics.draw_mesh_instanced(meshId, textureId, layer, transforms,
-// colors, count)
+// colors, count[, uvRects])
+// uvRects: Float32Array 每实例 [u0,v0,u1,v1] 采样子矩形; 省略 = 全幅 (旧行为)
 // ============================================================================
 
 static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
@@ -1260,6 +1730,30 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
     }
   }
 
+  // Optional per-instance uv rects (argv[6])
+  const Vec4 *uv_rects = NULL;
+  JSValue uv_buf = JS_UNDEFINED;
+
+  if (argc >= 7 && !JS_IsNull(argv[6]) && !JS_IsUndefined(argv[6])) {
+    size_t uv_offset, uv_len;
+    uv_buf = JS_GetTypedArrayBuffer(ctx, argv[6], &uv_offset, &uv_len, NULL);
+    if (JS_IsException(uv_buf)) {
+      JS_FreeValue(ctx, trans_buf);
+      if (!JS_IsUndefined(col_buf)) JS_FreeValue(ctx, col_buf);
+      return JS_ThrowTypeError(ctx, "uvRects must be Float32Array or null");
+    }
+    if (uv_len < (size_t)(count * 16)) {
+      JS_FreeValue(ctx, trans_buf);
+      if (!JS_IsUndefined(col_buf)) JS_FreeValue(ctx, col_buf);
+      JS_FreeValue(ctx, uv_buf);
+      return JS_ThrowRangeError(ctx, "uvRects array too small");
+    }
+    uint8_t *uv_ptr = JS_GetArrayBuffer(ctx, &uv_len, uv_buf);
+    if (uv_ptr) {
+      uv_rects = (const Vec4 *)(uv_ptr + uv_offset);
+    }
+  }
+
   // Material setup (Reuse dm->material but update texture)
   // textureId >= 10000: atlas 纹理池 (ATLAS_TEX_ID_OFFSET)
   // textureId 0-255: graphics.load_texture 纹理池
@@ -1285,7 +1779,7 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   }
 
   graphics_draw_mesh_instanced(&dm->mesh, &dm->material, transforms, colors,
-                               count, layer);
+                               uv_rects, count, layer);
 
   // Restore material (optional, but good practice)
   dm->material.texture = old_tex;
@@ -1294,6 +1788,9 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   JS_FreeValue(ctx, trans_buf);
   if (!JS_IsUndefined(col_buf)) {
     JS_FreeValue(ctx, col_buf);
+  }
+  if (!JS_IsUndefined(uv_buf)) {
+    JS_FreeValue(ctx, uv_buf);
   }
 
   return JS_UNDEFINED;
@@ -1328,6 +1825,18 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(
       ctx, obj, "texture_update",
       JS_NewCFunction(ctx, js_graphics_texture_update, "texture_update", 2));
+  JS_SetPropertyStr(ctx, obj, "texture_create_staged",
+                    JS_NewCFunction(ctx, js_graphics_texture_create_staged,
+                                    "texture_create_staged", 2));
+  JS_SetPropertyStr(ctx, obj, "compose_layers",
+                    JS_NewCFunction(ctx, js_graphics_compose_layers,
+                                    "compose_layers", 7));
+  JS_SetPropertyStr(ctx, obj, "texture_flush_staged",
+                    JS_NewCFunction(ctx, js_graphics_texture_flush_staged,
+                                    "texture_flush_staged", 1));
+  JS_SetPropertyStr(ctx, obj, "texture_staged_read",
+                    JS_NewCFunction(ctx, js_graphics_texture_staged_read,
+                                    "texture_staged_read", 5));
   JS_SetPropertyStr(
       ctx, obj, "draw_mesh_at",
       JS_NewCFunction(ctx, js_graphics_draw_mesh_at, "draw_mesh_at", 6));

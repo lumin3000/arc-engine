@@ -521,7 +521,7 @@ void draw_line_xz_flush(void) {
   Coord_Space saved = push_coord_space(get_world_space());
 
   graphics_draw_mesh_instanced(&g_xz_quad_mesh, &g_xz_quad_material,
-                               g_line_xz_transforms, g_line_xz_colors,
+                               g_line_xz_transforms, g_line_xz_colors, NULL,
                                g_line_xz_count, 0);
 
   push_coord_space(saved);

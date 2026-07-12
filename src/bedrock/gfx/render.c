@@ -445,8 +445,8 @@ void render_init(void) {
 
   render_state.bind.vertex_buffers[1] = sg_make_buffer(&(sg_buffer_desc){
       .usage.stream_update = true,
-      .size = 8192 * (sizeof(Matrix4) +
-                      sizeof(Vec4)),
+      // 每实例 Matrix4 + color + uv_rect (与 graphics.c INSTANCE_STRIDE_BYTES 同步)
+      .size = 8192 * (sizeof(Matrix4) + sizeof(Vec4) + sizeof(Vec4)),
       .label = "instance-buffer"});
 
   render_state.bind.index_buffer =
@@ -529,7 +529,8 @@ void render_init(void) {
            {.buffers =
                 {
                     [0] = {.stride = sizeof(Vertex)},
-                    [1] = {.stride = sizeof(Matrix4) + sizeof(Vec4),
+                    [1] = {.stride = sizeof(Matrix4) + sizeof(Vec4) +
+                                     sizeof(Vec4),
                            .step_func = SG_VERTEXSTEP_PER_INSTANCE}
 
                 },
@@ -561,10 +562,11 @@ void render_init(void) {
                                              .buffer_index = 1,
                                              .offset = 0},
 
+                 // 每实例 uv_rect (atlas 槽位采样): 迁 instance buffer,
+                 // 非实例 quad 管线的同名 attr 仍留 buffer 0 逐顶点
                  [ATTR_quad_inst_uv_rect0] = {.format = SG_VERTEXFORMAT_FLOAT4,
-                                              .buffer_index = 0,
-                                              .offset =
-                                                  offsetof(Vertex, uv_rect)},
+                                              .buffer_index = 1,
+                                              .offset = 80},
                  [ATTR_quad_inst_inst_m1] = {.format = SG_VERTEXFORMAT_FLOAT4,
                                              .buffer_index = 1,
                                              .offset = 16},
@@ -995,6 +997,12 @@ void core_render_frame_end(void) {
     g_dc_breakdown.mesh_rq_0_4000 =
         graphics_submit_meshes_range_count(0, 4000, false, NULL);
 
+    // instanced 分带冲刷 (rq 0-4000): 与 mesh 同带内容在 4000+ 覆盖层
+    // (雾/overlay) 之前落屏, 保持 renderQueue 遮挡语义
+    extern int graphics_submit_instanced_range_count(int rq_min, int rq_max);
+    g_dc_breakdown.instanced =
+        graphics_submit_instanced_range_count(0, 4000);
+
     {
       void (*hook)(void) = arc_engine_state()->post_mesh_render_hook;
       if (hook) hook();
@@ -1008,11 +1016,15 @@ void core_render_frame_end(void) {
     g_dc_breakdown.mesh_rq_4000_plus =
         graphics_submit_meshes_range_count(4000, 999999, true, NULL);
 
+    g_dc_breakdown.instanced +=
+        graphics_submit_instanced_range_count(4000, 999999);
+
     extern void draw_line_xz_flush(void);
     draw_line_xz_flush();
 
+    // 兜底: 两个分带点之后新入队的请求 (如 line_xz) 保持画在最上
     extern int graphics_submit_instanced_count(void);
-    g_dc_breakdown.instanced = graphics_submit_instanced_count();
+    g_dc_breakdown.instanced += graphics_submit_instanced_count();
 
     g_dc_breakdown.imgui = 0;
 

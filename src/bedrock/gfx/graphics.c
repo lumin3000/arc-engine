@@ -31,11 +31,16 @@ typedef struct {
   int queue_order;
 } MeshDrawRequest;
 
+// 每实例 24 floats: Matrix4(16) + color(4) + uv_rect(4), 与 render.c
+// instance buffer stride / vs_inst 顶点布局同步
+#define INSTANCE_STRIDE_BYTES (sizeof(Matrix4) + sizeof(Vec4) + sizeof(Vec4))
+#define MAX_INSTANCE_BATCH 8192
+
 typedef struct {
   Mesh *mesh;
   Material material;
-  const Matrix4 *transforms;
-  const Vec4 *colors;
+  int pack_offset; // 帧内打包池字节偏移 (入队即拷贝 — 调用方 buffer 可复用,
+                   // 禁止存 JS 侧裸指针: 帧末异线程提交时已是悬空/复写数据)
   Matrix4 vp_matrix;
   int count;
   int layer;
@@ -55,6 +60,10 @@ static struct {
 #define MAX_INSTANCED_QUEUE 128
   InstancedDrawRequest instanced_queue[MAX_INSTANCED_QUEUE];
   int instanced_queue_count;
+
+  // 实例数据帧内打包池 (总量与 GPU instance buffer 同为 8192 实例)
+  uint8_t inst_pack[MAX_INSTANCE_BATCH * INSTANCE_STRIDE_BYTES];
+  int inst_pack_used;
 } g_graphics = {0};
 
 void graphics_init(void) {
@@ -83,6 +92,7 @@ void graphics_frame_begin(void) {
   g_graphics.draw_calls_this_frame = 0;
   g_graphics.triangles_this_frame = 0;
   g_graphics.mesh_queue_count = 0;
+  g_graphics.inst_pack_used = 0;
 
   for (int i = 0; i < MAX_MESH_QUEUE; i++) {
     g_graphics.mesh_queue[i].valid = false;
@@ -240,10 +250,25 @@ void graphics_draw_mesh_identity(Mesh *mesh, Material *material, int layer) {
 
 void graphics_draw_mesh_instanced(Mesh *mesh, Material *material,
                                   const Matrix4 *transforms, const Vec4 *colors,
-                                  int count, int layer) {
+                                  const Vec4 *uv_rects, int count, int layer) {
   if (!mesh || !material || count <= 0)
     return;
   if (g_graphics.instanced_queue_count >= MAX_INSTANCED_QUEUE)
+    return;
+
+  // 打包池余量截断 (总量 = GPU instance buffer 容量)
+  int room = (MAX_INSTANCE_BATCH * (int)INSTANCE_STRIDE_BYTES -
+              g_graphics.inst_pack_used) / (int)INSTANCE_STRIDE_BYTES;
+  if (count > room) {
+    static int s_pack_overflow_log = 0;
+    if (s_pack_overflow_log < 5) {
+      s_pack_overflow_log++;
+      fprintf(stderr, "[graphics] instance pack overflow: want %d room %d\n",
+              count, room);
+    }
+    count = room;
+  }
+  if (count <= 0)
     return;
 
   extern Draw_Frame draw_frame;
@@ -251,16 +276,39 @@ void graphics_draw_mesh_instanced(Mesh *mesh, Material *material,
   matrix4_inverse(draw_frame.coord_space.camera, view);
   matrix4_mul(draw_frame.coord_space.proj, view, vp);
 
+  // 入队即打包拷贝 — 调用方 buffer (含 JS TypedArray) 帧末已不可信
+  int pack_offset = g_graphics.inst_pack_used;
+  float *dst = (float *)(g_graphics.inst_pack + pack_offset);
+  for (int k = 0; k < count; k++) {
+    memcpy(dst, &transforms[k], sizeof(Matrix4));
+    dst += 16;
+    if (colors) {
+      memcpy(dst, &colors[k], sizeof(Vec4));
+    } else {
+      dst[0] = 1.0f; dst[1] = 1.0f; dst[2] = 1.0f; dst[3] = 1.0f;
+    }
+    dst += 4;
+    if (uv_rects) {
+      memcpy(dst, &uv_rects[k], sizeof(Vec4));
+    } else {
+      dst[0] = 0.0f; dst[1] = 0.0f; dst[2] = 1.0f; dst[3] = 1.0f;
+    }
+    dst += 4;
+  }
+  g_graphics.inst_pack_used += count * (int)INSTANCE_STRIDE_BYTES;
+
   int idx = g_graphics.instanced_queue_count++;
   InstancedDrawRequest *req = &g_graphics.instanced_queue[idx];
   req->mesh = mesh;
   memcpy(&req->material, material, sizeof(Material));
-  req->transforms = transforms;
-  req->colors = colors;
+  req->pack_offset = pack_offset;
   memcpy(req->vp_matrix, vp, sizeof(Matrix4));
   req->count = count;
   req->layer = layer;
   req->valid = true;
+
+  // 分带语义与 mesh 路一致: layer 折进 renderQueue (带外值门禁 FATAL)
+  material_set_render_queue(&req->material, req->material.renderQueue + layer);
 }
 
 static int compare_mesh_request_by_renderqueue(const void *a, const void *b) {
@@ -567,112 +615,109 @@ void graphics_submit_instanced(void) {
   graphics_submit_instanced_count();
 }
 
+static void submit_one_instanced(InstancedDrawRequest *req) {
+  extern Render_State render_state;
+  extern Draw_Frame draw_frame;
+
+  int count = req->count;
+  size_t data_size = count * INSTANCE_STRIDE_BYTES;
+  int append_offset = sg_append_buffer(
+      render_state.bind.vertex_buffers[1],
+      &(sg_range){.ptr = g_graphics.inst_pack + req->pack_offset,
+                  .size = data_size});
+
+  sg_pipeline pip_to_use = render_state.inst_pip;
+  if (req->material.blend_mode == BLEND_MODE_ADDITIVE) {
+    if (sg_query_pipeline_state(render_state.inst_pip_additive) ==
+        SG_RESOURCESTATE_VALID) {
+      pip_to_use = render_state.inst_pip_additive;
+    }
+  } else if (req->material.blend_mode == BLEND_MODE_ALPHA ||
+             req->material.blend_mode == BLEND_MODE_PREMULTIPLIED) {
+    if (sg_query_pipeline_state(render_state.inst_pip_alpha) ==
+        SG_RESOURCESTATE_VALID) {
+      pip_to_use = render_state.inst_pip_alpha;
+    }
+  }
+  sg_apply_pipeline(pip_to_use);
+
+  sg_bindings bind = {
+      .vertex_buffers[0] = req->mesh->vbuf,
+      .vertex_buffers[1] = render_state.bind.vertex_buffers[1],
+      .vertex_buffer_offsets[1] = append_offset,
+      .index_buffer = req->mesh->ibuf};
+
+  if (req->material.texture_view.id != SG_INVALID_ID) {
+    bind.views[VIEW_tex0] = req->material.texture_view;
+  } else {
+    bind.views[VIEW_tex0] = render_state.bind.views[VIEW_tex0];
+  }
+  bind.views[VIEW_font_tex] = render_state.bind.views[VIEW_font_tex];
+  bind.views[VIEW_flow_map] = render_state.bind.views[VIEW_flow_map];
+  bind.views[VIEW_ripple_tex] = render_state.bind.views[VIEW_ripple_tex];
+  bind.views[VIEW_noise_tex] = render_state.bind.views[VIEW_noise_tex];
+  bind.samplers[SMP_default_sampler] =
+      render_state.bind.samplers[SMP_default_sampler];
+
+  sg_apply_bindings(&bind);
+
+  VS_MVP_t vs_mvp = {0};
+  memcpy(vs_mvp.mvp, req->vp_matrix, sizeof(Matrix4));
+  vs_mvp.use_mvp = 1.0f;
+  vs_mvp.sway_head = render_get_sway_head();
+  sg_apply_uniforms(UB_VS_MVP,
+                    &(sg_range){.ptr = &vs_mvp, .size = sizeof(VS_MVP_t)});
+
+  Shader_Data inst_sd = draw_frame.shader_data;
+  inst_sd.batch_props[0] = (float)material_get_tex_index(&req->material);
+
+  inst_sd.col_override[0] = 1.0f;
+  inst_sd.col_override[1] = 1.0f;
+  inst_sd.col_override[2] = 1.0f;
+  inst_sd.col_override[3] = 1.0f;
+  inst_sd.col_override_2[0] = 1.0f;
+  inst_sd.col_override_2[1] = 1.0f;
+  inst_sd.col_override_2[2] = 1.0f;
+  inst_sd.col_override_2[3] = 1.0f;
+  sg_apply_uniforms(UB_Shader_Data,
+                    &(sg_range){.ptr = &inst_sd, .size = sizeof(Shader_Data)});
+
+  sg_draw(0, req->mesh->tri_count, count);
+
+  g_graphics.draw_calls_this_frame++;
+  g_graphics.triangles_this_frame += (req->mesh->tri_count / 3) * count;
+}
+
 int graphics_submit_instanced_count(void) {
   if (g_graphics.instanced_queue_count == 0)
     return 0;
   int dc_count = 0;
 
-  extern Render_State render_state;
-  extern Draw_Frame draw_frame;
-
-#define MAX_INSTANCE_BATCH 8192
-  static uint8_t
-      instance_data[MAX_INSTANCE_BATCH * (sizeof(Matrix4) + sizeof(Vec4))];
-
   for (int i = 0; i < g_graphics.instanced_queue_count; i++) {
     InstancedDrawRequest *req = &g_graphics.instanced_queue[i];
     if (!req->valid || req->count <= 0)
       continue;
-
-    int count = req->count;
-    if (count > MAX_INSTANCE_BATCH)
-      count = MAX_INSTANCE_BATCH;
-
-    float *dst = (float *)instance_data;
-    for (int k = 0; k < count; k++) {
-      memcpy(dst, &req->transforms[k], sizeof(Matrix4));
-      dst += 16;
-
-      if (req->colors) {
-        memcpy(dst, &req->colors[k], sizeof(Vec4));
-      } else {
-        dst[0] = 1.0f;
-        dst[1] = 1.0f;
-        dst[2] = 1.0f;
-        dst[3] = 1.0f;
-      }
-      dst += 4;
-    }
-
-    size_t data_size = count * (sizeof(Matrix4) + sizeof(Vec4));
-    int append_offset = sg_append_buffer(
-        render_state.bind.vertex_buffers[1],
-        &(sg_range){.ptr = instance_data, .size = data_size});
-
-    sg_pipeline pip_to_use = render_state.inst_pip;
-    if (req->material.blend_mode == BLEND_MODE_ADDITIVE) {
-      if (sg_query_pipeline_state(render_state.inst_pip_additive) ==
-          SG_RESOURCESTATE_VALID) {
-        pip_to_use = render_state.inst_pip_additive;
-      }
-    } else if (req->material.blend_mode == BLEND_MODE_ALPHA ||
-               req->material.blend_mode == BLEND_MODE_PREMULTIPLIED) {
-      if (sg_query_pipeline_state(render_state.inst_pip_alpha) ==
-          SG_RESOURCESTATE_VALID) {
-        pip_to_use = render_state.inst_pip_alpha;
-      }
-    }
-    sg_apply_pipeline(pip_to_use);
-
-    sg_bindings bind = {
-        .vertex_buffers[0] = req->mesh->vbuf,
-        .vertex_buffers[1] = render_state.bind.vertex_buffers[1],
-        .vertex_buffer_offsets[1] = append_offset,
-        .index_buffer = req->mesh->ibuf};
-
-    if (req->material.texture_view.id != SG_INVALID_ID) {
-      bind.views[VIEW_tex0] = req->material.texture_view;
-    } else {
-      bind.views[VIEW_tex0] = render_state.bind.views[VIEW_tex0];
-    }
-    bind.views[VIEW_font_tex] = render_state.bind.views[VIEW_font_tex];
-    bind.views[VIEW_flow_map] = render_state.bind.views[VIEW_flow_map];
-    bind.views[VIEW_ripple_tex] = render_state.bind.views[VIEW_ripple_tex];
-    bind.views[VIEW_noise_tex] = render_state.bind.views[VIEW_noise_tex];
-    bind.samplers[SMP_default_sampler] =
-        render_state.bind.samplers[SMP_default_sampler];
-
-    sg_apply_bindings(&bind);
-
-    VS_MVP_t vs_mvp = {0};
-    memcpy(vs_mvp.mvp, req->vp_matrix, sizeof(Matrix4));
-    vs_mvp.use_mvp = 1.0f;
-    vs_mvp.sway_head = render_get_sway_head();
-    sg_apply_uniforms(UB_VS_MVP,
-                      &(sg_range){.ptr = &vs_mvp, .size = sizeof(VS_MVP_t)});
-
-    Shader_Data inst_sd = draw_frame.shader_data;
-    inst_sd.batch_props[0] = (float)material_get_tex_index(&req->material);
-
-    inst_sd.col_override[0] = 1.0f;
-    inst_sd.col_override[1] = 1.0f;
-    inst_sd.col_override[2] = 1.0f;
-    inst_sd.col_override[3] = 1.0f;
-    inst_sd.col_override_2[0] = 1.0f;
-    inst_sd.col_override_2[1] = 1.0f;
-    inst_sd.col_override_2[2] = 1.0f;
-    inst_sd.col_override_2[3] = 1.0f;
-    sg_apply_uniforms(UB_Shader_Data,
-                      &(sg_range){.ptr = &inst_sd, .size = sizeof(Shader_Data)});
-
-    sg_draw(0, req->mesh->tri_count, count);
-
-    g_graphics.draw_calls_this_frame++;
-    g_graphics.triangles_this_frame += (req->mesh->tri_count / 3) * count;
+    submit_one_instanced(req);
     dc_count++;
   }
 
   g_graphics.instanced_queue_count = 0;
+  return dc_count;
+}
+
+int graphics_submit_instanced_range_count(int rq_min, int rq_max) {
+  int dc_count = 0;
+  for (int i = 0; i < g_graphics.instanced_queue_count; i++) {
+    InstancedDrawRequest *req = &g_graphics.instanced_queue[i];
+    if (!req->valid || req->count <= 0)
+      continue;
+    int rq = req->material.renderQueue;
+    if (rq < rq_min || rq >= rq_max)
+      continue;
+    submit_one_instanced(req);
+    req->valid = false; // 已消费, 帧末兜底 submit 跳过
+    dc_count++;
+  }
   return dc_count;
 }
 
