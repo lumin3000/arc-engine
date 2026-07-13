@@ -57,7 +57,9 @@ static struct {
   int draw_calls_this_frame;
   int triangles_this_frame;
 
-#define MAX_INSTANCED_QUEUE 128
+// 1024: 排序实例流按纹理 run 切分后请求数随交错换页数走 (非固定页数),
+// 128 时 300+ run 被静默丢弃 (排序尾段整批不画)
+#define MAX_INSTANCED_QUEUE 1024
   InstancedDrawRequest instanced_queue[MAX_INSTANCED_QUEUE];
   int instanced_queue_count;
 
@@ -253,8 +255,16 @@ void graphics_draw_mesh_instanced(Mesh *mesh, Material *material,
                                   const Vec4 *uv_rects, int count, int layer) {
   if (!mesh || !material || count <= 0)
     return;
-  if (g_graphics.instanced_queue_count >= MAX_INSTANCED_QUEUE)
+  if (g_graphics.instanced_queue_count >= MAX_INSTANCED_QUEUE) {
+    // 队列满禁止静默丢弃 (整批实例不画 = 排序流尾段消失), 限频报错可见
+    static int s_queue_overflow_log = 0;
+    if (s_queue_overflow_log < 5) {
+      s_queue_overflow_log++;
+      fprintf(stderr, "[graphics] instanced queue overflow: %d requests dropped batch of %d\n",
+              g_graphics.instanced_queue_count, count);
+    }
     return;
+  }
 
   // 打包池余量截断 (总量 = GPU instance buffer 容量)
   int room = (MAX_INSTANCE_BATCH * (int)INSTANCE_STRIDE_BYTES -
