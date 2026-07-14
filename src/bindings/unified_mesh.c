@@ -155,7 +155,7 @@ int unified_mesh_alloc_slot(void) {
       material_set_shader(&um->material, g_shader);
       material_set_shader_type(&um->material, SHADER_TYPE_TEXTURED);
 
-      LOG_INFO("[unified_mesh] C API: Allocated slot %d\n", i);
+      LOG_VERBOSE("[unified_mesh] C API: Allocated slot %d\n", i);
       return i;
     }
   }
@@ -1112,7 +1112,7 @@ static JSValue js_alloc(JSContext *ctx, JSValueConst this_val, int argc,
       material_set_shader(&um->material, g_shader);
       material_set_shader_type(&um->material, SHADER_TYPE_TEXTURED);
 
-      LOG_INFO("[unified_mesh] Allocated slot %d (maxVerts=%d)\n", i, max_verts);
+      LOG_VERBOSE("[unified_mesh] Allocated slot %d (maxVerts=%d)\n", i, max_verts);
       return JS_NewInt32(ctx, i);
     }
   }
