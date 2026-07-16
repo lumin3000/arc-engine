@@ -176,4 +176,8 @@ struct sapp_event;
 
 void event_callback(const struct sapp_event* event);
 
+// 注入锁: 置位后 event_callback 丢弃 OS 鼠标/键盘/滚轮事件,
+// 仅 inject_* API 写输入态 (自动化测试的确定性保证)
+void input_set_injection_lock(bool locked);
+
 #endif

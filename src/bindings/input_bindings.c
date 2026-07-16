@@ -423,6 +423,18 @@ static JSValue js_input_inject_clear(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// input.set_injection_lock(bool) — 屏蔽 OS 输入事件, 仅 inject_* 生效
+// (自动化测试确定性: 物理光标悬停窗口时 MOUSE_MOVE 会覆盖注入的鼠标位)
+static JSValue js_input_set_injection_lock(JSContext *ctx, JSValueConst this_val,
+                                           int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "set_injection_lock requires bool");
+  }
+  input_set_injection_lock(JS_ToBool(ctx, argv[0]));
+  return JS_UNDEFINED;
+}
+
 // ============================================================================
 // 模块初始化
 // ============================================================================
@@ -564,6 +576,8 @@ int js_init_input_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_input_inject_key_up, "inject_key_up", 1));
   JS_SetPropertyStr(ctx, obj, "inject_clear",
                     JS_NewCFunction(ctx, js_input_inject_clear, "inject_clear", 0));
+  JS_SetPropertyStr(ctx, obj, "set_injection_lock",
+                    JS_NewCFunction(ctx, js_input_set_injection_lock, "set_injection_lock", 1));
 
   JS_SetPropertyStr(ctx, global, "input", obj);
   JS_FreeValue(ctx, global);

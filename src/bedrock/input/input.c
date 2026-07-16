@@ -79,7 +79,35 @@ static Key_Code map_sokol_mouse_button(sapp_mousebutton button) {
     }
 }
 
+// 注入锁: 置位后丢弃 OS 鼠标/键盘/滚轮事件, 仅 inject_* API 写入输入态。
+// 自动化测试用 — 否则物理光标悬停窗口时 MOUSE_MOVE 事件与每帧注入赛跑,
+// 输入序列非确定 (mouse pos 被覆盖, 拖拽起点漂移)。
+static bool _injection_lock = false;
+
+void input_set_injection_lock(bool locked) {
+    _injection_lock = locked;
+}
+
+static bool _is_user_input_event(sapp_event_type t) {
+    switch (t) {
+        case SAPP_EVENTTYPE_MOUSE_MOVE:
+        case SAPP_EVENTTYPE_MOUSE_SCROLL:
+        case SAPP_EVENTTYPE_MOUSE_DOWN:
+        case SAPP_EVENTTYPE_MOUSE_UP:
+        case SAPP_EVENTTYPE_KEY_DOWN:
+        case SAPP_EVENTTYPE_KEY_UP:
+        case SAPP_EVENTTYPE_CHAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void event_callback(const sapp_event* event) {
+
+    if (_injection_lock && _is_user_input_event(event->type)) {
+        return;  // imgui feed 一并跳过, 防真实光标制造 UI hover
+    }
 
     if (event->type == SAPP_EVENTTYPE_CLIPBOARD_PASTED) {
         fprintf(stderr, "[input] CLIPBOARD_PASTED received, content='%.50s'\n", sapp_get_clipboard_string());

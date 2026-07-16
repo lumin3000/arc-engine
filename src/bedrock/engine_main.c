@@ -184,8 +184,9 @@ static void engine_on_frame(void) {
                       ctx.gs->cam_rot[2]);
 
   if (!g_cfg.disable_default_camera_controls) {
-    if (key_down(KEY_Q)) ctx.gs->desired_zoom_level *= ZOOM_IN_MULTIPLIER;
-    if (key_down(KEY_E)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;
+    // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)
+    if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= ZOOM_IN_MULTIPLIER;
+    if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;
 
     float scroll = input_state->scroll_y;
     if (scroll != 0.0f) {
