@@ -31,6 +31,14 @@ typedef enum {
   SHADER_TYPE_USER_11,
   SHADER_TYPE_USER_12,
 
+  // FX 程序化画刷带 (tex_index 230-235, 游戏层 fx_brush.glsl fxb_dispatch)
+  SHADER_TYPE_FX_GLOW,
+  SHADER_TYPE_FX_PUFF,
+  SHADER_TYPE_FX_RING,
+  SHADER_TYPE_FX_SPARK,
+  SHADER_TYPE_FX_SHARD,
+  SHADER_TYPE_FX_FIRE,
+
   SHADER_TYPE_COUNT
 } ShaderType;
 

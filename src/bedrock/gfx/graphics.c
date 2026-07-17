@@ -680,6 +680,9 @@ static void submit_one_instanced(InstancedDrawRequest *req) {
 
   Shader_Data inst_sd = draw_frame.shader_data;
   inst_sd.batch_props[0] = (float)material_get_tex_index(&req->material);
+  // 与 mesh 路 (上方 memcpy(sd.params_2, mat->params)) 对齐:
+  // instanced 同样以 material.params 喂 params_2 (fx 画刷 def 级参数经此下达)
+  memcpy(inst_sd.params_2, req->material.params, sizeof(Vec4));
 
   inst_sd.col_override[0] = 1.0f;
   inst_sd.col_override[1] = 1.0f;

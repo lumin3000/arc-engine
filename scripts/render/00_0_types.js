@@ -35,6 +35,13 @@ const ShaderType = {
     User10: 15,
     User11: 16,
     User12: 17,
+    // FX 程序化画刷带 (material.h SHADER_TYPE_FX_*, tex_index 230-235)
+    FxGlow: 18,
+    FxPuff: 19,
+    FxRing: 20,
+    FxSpark: 21,
+    FxShard: 22,
+    FxFire: 23,
 };
 
 globalThis.BlendMode = BlendMode;

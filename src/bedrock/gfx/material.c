@@ -67,6 +67,18 @@ int shader_type_to_tex_index(ShaderType shader_type) {
     return 244;
   case SHADER_TYPE_USER_12:
     return 243;
+  case SHADER_TYPE_FX_GLOW:
+    return 230;
+  case SHADER_TYPE_FX_PUFF:
+    return 231;
+  case SHADER_TYPE_FX_RING:
+    return 232;
+  case SHADER_TYPE_FX_SPARK:
+    return 233;
+  case SHADER_TYPE_FX_SHARD:
+    return 234;
+  case SHADER_TYPE_FX_FIRE:
+    return 235;
   case SHADER_TYPE_TEXTURED:
     return 0;
   case SHADER_TYPE_CUTOUT:
