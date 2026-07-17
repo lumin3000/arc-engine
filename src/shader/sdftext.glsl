@@ -8,8 +8,10 @@ layout(binding=0) uniform vs_params {
 in vec2 position;
 in vec4 glyph_rect;
 in vec4 glyph_offset;
+in vec4 glyph_color;
 
 out vec2 uv;
+out vec4 v_color;
 
 void main() {
     float base_u = glyph_rect.x;
@@ -31,6 +33,7 @@ void main() {
 
     vec2 tex_uv = corner * vec2(tex_w, tex_h);
     uv = (vec2(base_u, base_v) + tex_uv) * texsize;
+    v_color = glyph_color;
 }
 
 @end
@@ -42,17 +45,17 @@ layout(binding=0) uniform sampler smp;
 layout(binding=1) uniform fs_params {
     float edge_mask;
     float dist_multiplier;
-    vec4 color;
 };
 
 in vec2 uv;
+in vec4 v_color;
 out vec4 frag_color;
 
 void main() {
     float dis = texture(sampler2D(tex, smp), uv).r;
     float smoothing = length(fwidth(uv)) * 128.0 * dist_multiplier;
     float alpha = smoothstep(edge_mask - smoothing, edge_mask + smoothing, dis);
-    frag_color = vec4(color.rgb, color.a * alpha);
+    frag_color = vec4(v_color.rgb, v_color.a * alpha);
 }
 @end
 

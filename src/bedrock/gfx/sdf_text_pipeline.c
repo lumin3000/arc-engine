@@ -17,6 +17,7 @@ typedef struct {
     float glyph_w, glyph_h;
     float offset_x, offset_y;
     float tex_w, tex_h;
+    float r, g, b, a;
 } SDF_Text_Vertex;
 
 typedef struct {
@@ -28,8 +29,6 @@ typedef struct {
 
     SDF_Text_Vertex instances[MAX_TEXT_INSTANCES];
     int instance_count;
-
-    float current_color[4];
 
     int initialized;
     int first_flush;
@@ -53,6 +52,7 @@ void sdf_text_pipeline_init(void) {
                 [ATTR_sdftext_position] = {.format = SG_VERTEXFORMAT_FLOAT2},
                 [ATTR_sdftext_glyph_rect] = {.format = SG_VERTEXFORMAT_FLOAT4},
                 [ATTR_sdftext_glyph_offset] = {.format = SG_VERTEXFORMAT_FLOAT4},
+                [ATTR_sdftext_glyph_color] = {.format = SG_VERTEXFORMAT_FLOAT4},
             }
         },
         .colors[0].blend = {
@@ -101,10 +101,6 @@ void sdf_text_pipeline_init(void) {
 
     g_sdf_text.initialized = 1;
     g_sdf_text.instance_count = 0;
-    g_sdf_text.current_color[0] = 1.0f;
-    g_sdf_text.current_color[1] = 1.0f;
-    g_sdf_text.current_color[2] = 1.0f;
-    g_sdf_text.current_color[3] = 1.0f;
 
     fprintf(stderr, "[sdf_text] Pipeline initialized\n");
 }
@@ -148,10 +144,10 @@ void sdf_text_add_glyph_ex(float x, float y,
     inst->tex_w = (float)tex_w;
     inst->tex_h = (float)tex_h;
 
-    g_sdf_text.current_color[0] = ((color >> 16) & 0xFF) / 255.0f;
-    g_sdf_text.current_color[1] = ((color >> 8) & 0xFF) / 255.0f;
-    g_sdf_text.current_color[2] = (color & 0xFF) / 255.0f;
-    g_sdf_text.current_color[3] = ((color >> 24) & 0xFF) / 255.0f;
+    inst->r = ((color >> 16) & 0xFF) / 255.0f;
+    inst->g = ((color >> 8) & 0xFF) / 255.0f;
+    inst->b = (color & 0xFF) / 255.0f;
+    inst->a = ((color >> 24) & 0xFF) / 255.0f;
 }
 
 void sdf_text_add_glyph(float x, float y,
@@ -216,12 +212,6 @@ int sdf_text_flush_count(int screen_width, int screen_height, struct font_manage
     fs_params_t fs_params = {
         .edge_mask = font_manager_sdf_mask(font_mgr),
         .dist_multiplier = 1.0f,
-        .color = {
-            g_sdf_text.current_color[0],
-            g_sdf_text.current_color[1],
-            g_sdf_text.current_color[2],
-            g_sdf_text.current_color[3]
-        }
     };
     sg_apply_uniforms(UB_fs_params, &SG_RANGE(fs_params));
 
