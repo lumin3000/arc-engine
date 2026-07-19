@@ -116,7 +116,10 @@ class TickBucket {
             }
 
             try {
-                tickable.tick();
+                // 入口=doTick 调度器 (对齐 RW TickList→Thing.DoTick), 无则回落
+                // 裸 tick (非 Thing 系 tickable 兼容)
+                if (tickable.doTick) tickable.doTick();
+                else tickable.tick();
             } catch (e) {
 
                 const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
