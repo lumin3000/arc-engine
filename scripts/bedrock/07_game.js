@@ -74,6 +74,21 @@ var EngineSession = (function() {
             }
         },
 
+        // infmap P3: 图退役 (重建壳事务换图 / 多图休眠 L6)。tick 注销 + 会话摘除;
+        // currentMap 若指向该图一并清空, 由调用方随后 setCurrentMap 新图。
+        removeMap: function(map) {
+            var idx = _maps.indexOf(map);
+            if (idx > -1) {
+                _maps.splice(idx, 1);
+            }
+            if (_tickManager && typeof _tickManager.deregisterMap === 'function') {
+                _tickManager.deregisterMap(map);
+            }
+            if (_currentMap === map) {
+                _currentMap = null;
+            }
+        },
+
         update: function() {
             if (!_initialized) return;
 
