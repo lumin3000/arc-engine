@@ -1,4 +1,5 @@
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -254,6 +255,103 @@ static JSValue js_loader_write_string(JSContext *ctx, JSValueConst this_val,
   return JS_NewInt64(ctx, (int64_t)written);
 }
 
+// loader.read_bytes(path) -> ArrayBuffer | undefined (文件不存在)
+static JSValue js_loader_read_bytes(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv) {
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "loader.read_bytes requires (path)");
+  }
+
+  const char *path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    JS_FreeCString(ctx, path);
+    return JS_UNDEFINED;
+  }
+
+  fseek(f, 0, SEEK_END);
+  long file_size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (file_size < 0) {
+    fclose(f);
+    JS_FreeCString(ctx, path);
+    return JS_ThrowInternalError(ctx, "read_bytes: ftell failed");
+  }
+
+  uint8_t *buf = js_malloc(ctx, file_size > 0 ? (size_t)file_size : 1);
+  if (!buf) {
+    fclose(f);
+    JS_FreeCString(ctx, path);
+    return JS_ThrowOutOfMemory(ctx);
+  }
+
+  size_t read_size = fread(buf, 1, (size_t)file_size, f);
+  fclose(f);
+  JS_FreeCString(ctx, path);
+
+  if (read_size != (size_t)file_size) {
+    js_free(ctx, buf);
+    return JS_ThrowInternalError(ctx, "read_bytes: read failed");
+  }
+
+  JSValue ab = JS_NewArrayBufferCopy(ctx, buf, read_size);
+  js_free(ctx, buf);
+  return ab;
+}
+
+// loader.write_bytes(path, ArrayBuffer|TypedArray) -> written bytes
+static JSValue js_loader_write_bytes(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  if (argc < 2) {
+    return JS_ThrowTypeError(ctx, "loader.write_bytes requires (path, buffer)");
+  }
+
+  size_t len = 0;
+  uint8_t *data = NULL;
+  if (JS_IsArrayBuffer(argv[1])) {
+    data = JS_GetArrayBuffer(ctx, &len, argv[1]);
+    if (!data) return JS_EXCEPTION;
+  } else if (JS_GetTypedArrayType(argv[1]) >= 0) {
+    // TypedArray 路径 (尊重 view 的 offset/length)
+    size_t byte_offset = 0, byte_length = 0, bytes_per_element = 0;
+    JSValue ab = JS_GetTypedArrayBuffer(ctx, argv[1], &byte_offset, &byte_length,
+                                        &bytes_per_element);
+    if (JS_IsException(ab)) return ab;
+    data = JS_GetArrayBuffer(ctx, &len, ab);
+    // 底层 ArrayBuffer 由 argv[1] 持引用, 本调用期间存活
+    JS_FreeValue(ctx, ab);
+    if (!data) {
+      return JS_ThrowTypeError(ctx, "loader.write_bytes: detached buffer");
+    }
+    data += byte_offset;
+    len = byte_length;
+  } else {
+    return JS_ThrowTypeError(
+        ctx, "loader.write_bytes: buffer must be ArrayBuffer or TypedArray");
+  }
+
+  const char *path = JS_ToCString(ctx, argv[0]);
+  if (!path) return JS_EXCEPTION;
+
+  FILE *f = fopen(path, "wb");
+  if (!f) {
+    JS_FreeCString(ctx, path);
+    return JS_ThrowInternalError(ctx, "Cannot open file for writing: %s", path);
+  }
+
+  size_t written = fwrite(data, 1, len, f);
+  fclose(f);
+  JS_FreeCString(ctx, path);
+
+  if (written != len) {
+    return JS_ThrowInternalError(ctx, "write_bytes: write incomplete");
+  }
+
+  return JS_NewInt64(ctx, (int64_t)written);
+}
+
 int js_init_loader_module(JSContext *ctx) {
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue loader = JS_NewObject(ctx);
@@ -274,6 +372,10 @@ int js_init_loader_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_loader_isdir, "isdir", 1));
   JS_SetPropertyStr(ctx, loader, "write_string",
                     JS_NewCFunction(ctx, js_loader_write_string, "write_string", 2));
+  JS_SetPropertyStr(ctx, loader, "read_bytes",
+                    JS_NewCFunction(ctx, js_loader_read_bytes, "read_bytes", 1));
+  JS_SetPropertyStr(ctx, loader, "write_bytes",
+                    JS_NewCFunction(ctx, js_loader_write_bytes, "write_bytes", 2));
 
   JS_SetPropertyStr(ctx, global, "loader", loader);
   JS_FreeValue(ctx, global);
