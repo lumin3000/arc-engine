@@ -340,7 +340,14 @@ void mesh_upload_to_gpu_with_material(Mesh *mesh, const struct Material *mat) {
     idata[i] = (uint32_t)mesh->triangles[i];
   }
 
-  if (!mesh->gpu_valid || mesh->vbuf.id == SG_INVALID_ID) {
+  // 网格重建后可能比首次上传更大 (如地形 section 换 def 后混合边增多);
+  // sg_update_buffer 超过创建尺寸会 VALIDATE_UPDATEBUF_SIZE panic,
+  // 超容量时必须销毁重建, 并向上取 2 的幂留增长余量
+  bool needs_recreate = !mesh->gpu_valid || mesh->vbuf.id == SG_INVALID_ID ||
+                        (int)vbuf_size > mesh->gpu_vbuf_bytes ||
+                        (int)ibuf_size > mesh->gpu_ibuf_bytes;
+
+  if (needs_recreate) {
 
     if (mesh->vbuf.id != SG_INVALID_ID) {
       sg_destroy_buffer(mesh->vbuf);
@@ -349,16 +356,26 @@ void mesh_upload_to_gpu_with_material(Mesh *mesh, const struct Material *mat) {
       sg_destroy_buffer(mesh->ibuf);
     }
 
+    size_t vbuf_alloc = 256 * sizeof(Vertex);
+    while (vbuf_alloc < vbuf_size)
+      vbuf_alloc *= 2;
+    size_t ibuf_alloc = 512 * sizeof(uint32_t);
+    while (ibuf_alloc < ibuf_size)
+      ibuf_alloc *= 2;
+
     mesh->vbuf = sg_make_buffer(&(sg_buffer_desc){
         .usage.dynamic_update = true,
-        .size = vbuf_size,
+        .size = vbuf_alloc,
     });
 
     mesh->ibuf = sg_make_buffer(&(sg_buffer_desc){
         .usage.index_buffer = true,
         .usage.dynamic_update = true,
-        .size = ibuf_size,
+        .size = ibuf_alloc,
     });
+
+    mesh->gpu_vbuf_bytes = (int)vbuf_alloc;
+    mesh->gpu_ibuf_bytes = (int)ibuf_alloc;
 
     mesh->gpu_valid =
         (mesh->vbuf.id != SG_INVALID_ID && mesh->ibuf.id != SG_INVALID_ID);

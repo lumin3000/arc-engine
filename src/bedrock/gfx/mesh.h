@@ -26,6 +26,8 @@ typedef struct {
 
   sg_buffer vbuf;
   sg_buffer ibuf;
+  int gpu_vbuf_bytes;  // sg buffer 实际分配字节数; 重建后网格可能长大,
+  int gpu_ibuf_bytes;  // 超过分配即须销毁重建 (sg_update_buffer 超尺寸=panic)
   bool gpu_valid;
   bool dirty;
 } Mesh;
