@@ -202,7 +202,7 @@ void unified_mesh_free_slot(int slot_id) {
   }
   cb->active = false;
 
-  LOG_INFO("[unified_mesh] C API: Freed slot %d\n", slot_id);
+  LOG_VERBOSE("[unified_mesh] C API: Freed slot %d\n", slot_id);
 }
 
 bool unified_mesh_begin_collect(int slot_id) {
@@ -1141,7 +1141,7 @@ static JSValue js_free_slot(JSContext *ctx, JSValueConst this_val, int argc,
       sg_destroy_buffer(um->ibuf);
     }
     um->valid = false;
-    LOG_INFO("[unified_mesh] Freed slot %d\n", id);
+    LOG_VERBOSE("[unified_mesh] Freed slot %d\n", id);
   }
 
   return JS_UNDEFINED;
