@@ -54,7 +54,13 @@ class TickBucket {
     }
 
     removeWhere(predicate) {
+        for (const _ of this.removeWhereAsync(predicate)) { /* drain */ }
+    }
 
+    // 分帧版: 大批清除 (整图退役) 在阻塞过场内逐段让帧, 同步 removeWhere =
+    // 原地 drain 同路径。桶间让帧, 单桶内不让 (桶均摊小)。
+    *removeWhereAsync(predicate) {
+        const BUCKET_BATCH = 64;
         for (let i = 0; i < this._buckets.length; i++) {
             const list = this._buckets[i];
 
@@ -63,6 +69,7 @@ class TickBucket {
                     list.splice(j, 1);
                 }
             }
+            if ((i + 1) % BUCKET_BATCH === 0) yield;
         }
 
         for (let j = this._toRegister.length - 1; j >= 0; j--) {
@@ -78,14 +85,25 @@ class TickBucket {
         }
     }
 
+    // 挂起队列只为 tick 迭代期防列表突变而设; 非 tick 期 (阻塞过场批量
+    // spawn/deSpawn) 直接进出桶 — 否则恢复后首个 tick 一口气 flush 数十万
+    // 挂起项 (768² 实测 380ms 单帧)。语义等价: 桶成员在下一 tick 前就位。
     register(tickable) {
-
-        this._toRegister.push(tickable);
+        if (this._ticking) {
+            this._toRegister.push(tickable);
+            return;
+        }
+        this._bucketOf(tickable).push(tickable);
     }
 
     deregister(tickable) {
-
-        this._toDeregister.push(tickable);
+        if (this._ticking) {
+            this._toDeregister.push(tickable);
+            return;
+        }
+        const bucket = this._bucketOf(tickable);
+        const idx = bucket.indexOf(tickable);
+        if (idx > -1) bucket.splice(idx, 1);
     }
 
     tick(ticksSimulation) {
@@ -108,24 +126,29 @@ class TickBucket {
 
         const currentBucket = this._buckets[ticksSimulation % this._tickInterval];
 
-        for (let m = 0; m < currentBucket.length; m++) {
-            const tickable = currentBucket[m];
+        this._ticking = true; // 迭代期突变走挂起队列 (回调内 spawn/deSpawn)
+        try {
+            for (let m = 0; m < currentBucket.length; m++) {
+                const tickable = currentBucket[m];
 
-            if (tickable.destroyed) {
-                continue;
+                if (tickable.destroyed) {
+                    continue;
+                }
+
+                try {
+                    // 入口=doTick 调度器 (对齐 RW TickList→Thing.DoTick), 无则回落
+                    // 裸 tick (非 Thing 系 tickable 兼容)
+                    if (tickable.doTick) tickable.doTick();
+                    else tickable.tick();
+                } catch (e) {
+
+                    const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
+                    const label = tickable.toStringSafe?.() ?? tickable.toString?.() ?? "Tickable";
+                    jtask.log.error(`Exception ticking ${label}${pos}: ${e}\n${e.stack || ''}`);
+                }
             }
-
-            try {
-                // 入口=doTick 调度器 (对齐 RW TickList→Thing.DoTick), 无则回落
-                // 裸 tick (非 Thing 系 tickable 兼容)
-                if (tickable.doTick) tickable.doTick();
-                else tickable.tick();
-            } catch (e) {
-
-                const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
-                const label = tickable.toStringSafe?.() ?? tickable.toString?.() ?? "Tickable";
-                jtask.log.error(`Exception ticking ${label}${pos}: ${e}\n${e.stack || ''}`);
-            }
+        } finally {
+            this._ticking = false;
         }
     }
 

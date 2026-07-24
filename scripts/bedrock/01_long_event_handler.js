@@ -56,8 +56,17 @@ const BlockingTaskQueue = {
 
         if (this._currentEvent && this._currentEvent.doAsync && this._currentIterator) {
             try {
-
+                // 慢步探针: 每帧恰一步, 单步耗时即该帧阻塞成本 — 超阈值打
+                // 步耗时+任务名+上一步/本步 status, 长帧归因直接可读
+                const _stepT0 = Number(RealTime.realtimeSinceStartupUs());
                 const res = this._currentIterator.next();
+                const _stepMs = (Number(RealTime.realtimeSinceStartupUs()) - _stepT0) / 1000;
+                if (_stepMs > 150) {
+                    jtask.log("[BlockingTaskQueue] slow step " + _stepMs.toFixed(0)
+                        + "ms in '" + this._currentEvent.textKey
+                        + "' prevStatus='" + (this._loadingText || "-")
+                        + "' nextStatus='" + (res.value && res.value.status ? res.value.status : "-") + "'");
+                }
 
                 if (res.value && typeof res.value === 'object') {
                     if (res.value.status) this._loadingText = res.value.status;

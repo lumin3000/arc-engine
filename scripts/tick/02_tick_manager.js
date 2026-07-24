@@ -253,10 +253,15 @@ class TickScheduler {
     }
 
     removeAllFromMap(map) {
+        for (const _ of this.removeAllFromMapAsync(map)) { /* drain */ }
+    }
+
+    // 分帧版 (阻塞过场内逐段让帧; 同步版=drain 同路径)
+    *removeAllFromMapAsync(map) {
         const predicate = (tickable) => tickable.map === map;
-        this._tickBucketEvery.removeWhere(predicate);
-        this._tickBucketSparse.removeWhere(predicate);
-        this._tickBucketSlow.removeWhere(predicate);
+        yield* this._tickBucketEvery.removeWhereAsync(predicate);
+        yield* this._tickBucketSparse.removeWhereAsync(predicate);
+        yield* this._tickBucketSlow.removeWhereAsync(predicate);
     }
 
     debugSetTicksSimulation(newTicks) {
