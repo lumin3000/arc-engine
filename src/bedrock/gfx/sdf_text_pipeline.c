@@ -4,7 +4,10 @@
 #include "render.h"
 
 #include "../../../external/sokol/c/sokol_gfx.h"
-#include "sdftext_shader.h"
+/* 用 <bedrock/gfx/...> 走 -I include path,拿到 build 时生成的 sdftext_shader.h
+ * (含当前 PLATFORM 的所有 backend),而不是 src/ 树里历史签入的旧文件
+ * (只有 metal_macos:hlsl5,缺 wgsl). */
+#include "bedrock/gfx/sdftext_shader.h"
 
 #include <string.h>
 #include <stdio.h>
