@@ -59,8 +59,11 @@ void sdf_text_pipeline_init(void) {
             .enabled = true,
             .src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA,
             .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            /* alpha 通道必须保留背景已有 alpha: ZERO 会让字形笔画外(src alpha≈0)
+             * 的 quad 区域把 framebuffer alpha 覆写为 0, 在不透明背景上凿出方形
+             * 透明洞(窄字形如冒号整格变洞, 表现为白色 tofu 方块) */
             .src_factor_alpha = SG_BLENDFACTOR_ONE,
-            .dst_factor_alpha = SG_BLENDFACTOR_ZERO
+            .dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA
         },
         .shader = shd,
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
