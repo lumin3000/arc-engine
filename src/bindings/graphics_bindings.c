@@ -622,7 +622,7 @@ static JSValue js_graphics_texture_update(JSContext *ctx, JSValueConst this_val,
 //   graphics.texture_flush_staged(texId)
 //   graphics.texture_staged_read(texId, x, y, w, h) -> Uint8Array (图像空间, 行顶朝下)
 //
-// layers 每项: { path, dx, dy, flip?, scale?, tint?[4], fx?[4] }
+// layers 每项: { path, dx, dy, flip?, scale?, tint?[4], fx?[4], op?: "erase" }
 //   path  源图 (磁盘 PNG, 解码结果按 path 缓存)
 //   dx/dy 槽内整数偏移 (图像空间, 左上原点)
 //   flip  水平镜像
@@ -893,6 +893,21 @@ static JSValue js_graphics_compose_layers(JSContext *ctx, JSValueConst this_val,
     float tint[4], fx[4];
     bool hasTint = compose_get_vec(ctx, lv, "tint", tint, 4);
     bool hasFx = compose_get_vec(ctx, lv, "fx", fx, 4) && fx[0] >= 0.5f;
+    // op "erase" (plan_actor_mask_layer §2.3): 擦除层——槽内已合成像素的 alpha 乘以本层 alpha
+    // (straight alpha 只动 A 不动 RGB), 层图幅外不动; 不做 fx/tint。兜帽帽口 mask 用。
+    bool erase = false;
+    {
+      JSValue opV = JS_GetPropertyStr(ctx, lv, "op");
+      if (!JS_IsUndefined(opV) && !JS_IsNull(opV)) {
+        const char *opS = JS_ToCString(ctx, opV);
+        if (opS) {
+          if (strcmp(opS, "erase") == 0) erase = true;
+          else LOG_ERROR("compose_layers: unknown op '%s' (layer %d), treated as normal", opS, li);
+          JS_FreeCString(ctx, opS);
+        }
+      }
+      JS_FreeValue(ctx, opV);
+    }
     JS_FreeValue(ctx, lv);
 
     int lw = src->w, lh = src->h;
@@ -934,6 +949,22 @@ static JSValue js_graphics_compose_layers(JSContext *ctx, JSValueConst this_val,
           dst[3] = sp[3] / 255.0f;
         }
       }
+    }
+    // 1b. 擦除层: 只量化 alpha 后乘进槽, 跳过 fx/tint/alpha-over
+    if (erase) {
+      for (int y = 0; y < lh; y++) {
+        int ty = dy + y;
+        if (ty < 0 || ty >= sh) continue;
+        for (int x = 0; x < lw; x++) {
+          int tx = dx + x;
+          if (tx < 0 || tx >= sw) continue;
+          float la = lay[((size_t)y * lw + x) * 4 + 3];
+          la = floorf(fminf(fmaxf(la, 0.0f), 1.0f) * 255.0f + 0.5f) / 255.0f;
+          float *d = acc + ((size_t)ty * sw + tx) * 4;
+          d[3] = floorf(d[3] * la * 255.0f + 0.5f) / 255.0f;
+        }
+      }
+      continue;
     }
     // 2. fx → tint → 量化 8bit (对齐预览工具逐层 8bit 中间态)
     for (size_t p = 0; p < (size_t)lw * lh; p++) {
