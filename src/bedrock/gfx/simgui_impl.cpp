@@ -105,6 +105,10 @@ int simgui_get_draw_call_count(void) {
     return s_last_draw_calls;
 }
 
+uint64_t simgui_texture_id_wrapper(sg_view view) {
+    return (uint64_t)simgui_imtextureid(view);
+}
+
 float simgui_get_font_em_scale(void) {
     return s_font_em_scale;
 }

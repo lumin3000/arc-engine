@@ -93,8 +93,6 @@ out vec4 col_out;
 
 @include shader_utils.glsl
 
-@include fx_brush.glsl
-
 @include user_fragment.glsl
 
 @end

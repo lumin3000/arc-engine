@@ -9,6 +9,8 @@
 #include "../log.h"
 #include "quickjs.h"
 #include <stdbool.h>
+#include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,6 +20,7 @@
 
 // sokol headers
 #include "../../external/sokol/c/sokol_app.h"
+#include "../../external/sokol/c/sokol_gfx.h"
 
 // simgui wrapper (implemented in simgui_impl.cpp)
 extern void simgui_setup_wrapper(void);
@@ -27,6 +30,8 @@ extern void simgui_shutdown_wrapper(void);
 extern bool simgui_handle_event_wrapper(const sapp_event *event);
 extern int simgui_get_draw_call_count(void);
 extern float simgui_get_font_em_scale(void);
+extern uint64_t simgui_texture_id_wrapper(sg_view view);
+extern bool atlas_texture_get(int texture_id, sg_image *image, sg_view *view);
 
 // ============================================================================
 // Global state
@@ -490,6 +495,33 @@ static JSValue js_imgui_set_textbox_state(JSContext *ctx, JSValueConst this_val,
 // ============================================================================
 // Drawing
 // ============================================================================
+
+// Atlas texture coordinates are explicit; no file loading or ownership transfer.
+// imgui.draw_image(textureId, x, y, w, h, u0, v0, u1, v1)
+static JSValue js_imgui_draw_image(JSContext *ctx, JSValueConst this_val, int argc,
+                                  JSValueConst *argv) {
+  if (argc < 9) return JS_ThrowInternalError(ctx, "draw_image requires textureId, rect and UV coordinates");
+  int texture_id;
+  double v[8];
+  if (JS_ToInt32(ctx, &texture_id, argv[0]) < 0) return JS_EXCEPTION;
+  for (int i = 0; i < 8; i++) {
+    if (JS_ToFloat64(ctx, &v[i], argv[i + 1]) < 0) return JS_EXCEPTION;
+    if (!isfinite(v[i])) return JS_ThrowInternalError(ctx, "draw_image coordinates must be finite");
+  }
+  if (v[2] <= 0 || v[3] <= 0) return JS_ThrowInternalError(ctx, "draw_image dimensions must be positive");
+  sg_image image;
+  sg_view view;
+  if (!atlas_texture_get(texture_id, &image, &view))
+    return JS_ThrowInternalError(ctx, "draw_image requires a loaded atlas texture: %d", texture_id);
+  ImDrawList *dl = igGetWindowDrawList();
+  if (!dl) return JS_ThrowInternalError(ctx, "draw_image requires an active window");
+  ImTextureRef_c texture = {0};
+  texture._TexID = (ImTextureID)simgui_texture_id_wrapper(view);
+  ImVec2_c p0 = {(float)v[0], (float)v[1]}, p1 = {(float)(v[0]+v[2]), (float)(v[1]+v[3])};
+  ImVec2_c uv0 = {(float)v[4], (float)v[5]}, uv1 = {(float)v[6], (float)v[7]};
+  ImDrawList_AddImage(dl, texture, p0, p1, uv0, uv1, 0xffffffff);
+  return JS_UNDEFINED;
+}
 
 // imgui.draw_rect(x, y, w, h, r, g, b, a, [rounding]) — 绝对坐标绘制填充矩形
 static JSValue js_imgui_draw_rect(JSContext *ctx, JSValueConst this_val, int argc,
@@ -1313,6 +1345,7 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "pop_style_color", js_imgui_pop_style_color, 1);
 
   // Drawing
+  REG(imgui, "draw_image", js_imgui_draw_image, 9);
   REG(imgui, "draw_rect", js_imgui_draw_rect, 9);
   REG(imgui, "draw_rect_stroke", js_imgui_draw_rect_stroke, 10);
   REG(imgui, "draw_control_text", js_imgui_draw_control_text, 7);

@@ -155,14 +155,21 @@ if (typeof BlockingTaskQueue !== 'undefined') {
 // ============================================================================
 globalThis.RenderFrameCallbacks = {
   _list: [],
+  _after: [],
   register: function(fn, name) {
     if (typeof fn !== 'function') {
       throw new Error("[RenderFrameCallbacks] callback must be a function");
     }
     this._list.push({ fn: fn, name: name || "anonymous" });
   },
-  runAll: function(dt) {
-    for (const cb of this._list) {
+  registerAfter: function(fn, name) {
+    if (typeof fn !== 'function') throw new Error("[RenderFrameCallbacks] callback must be a function");
+    this._after.push({fn, name: name || "anonymous"});
+  },
+  runAll: function(dt) { this._run(this._list, dt); },
+  runAfter: function(dt) { this._run(this._after, dt); },
+  _run: function(callbacks, dt) {
+    for (const cb of callbacks) {
       try {
         cb.fn(dt);
       } catch (e) {

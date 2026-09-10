@@ -32,10 +32,11 @@ let frame_count = 0;
 let last_frame_time = 0;
 
 function render_frame() {
+  let dt = 0;
   try {
     const now = Number(message.now()) / 1000;
     if (last_frame_time === 0) last_frame_time = now;
-    const dt = now - last_frame_time;
+    dt = now - last_frame_time;
     last_frame_time = now;
 
     frame_count++;
@@ -51,6 +52,9 @@ function render_frame() {
 
   } catch (e) {
     jtask.log.error("[render_frame] CRITICAL ERROR: " + e.message + "\n" + e.stack);
+  } finally {
+    // Staged resources finish once, after all draw submissions, even when stages block.
+    RenderFrameCallbacks.runAfter(dt);
   }
 }
 
