@@ -54,7 +54,7 @@ const RealTime = {
     }
 };
 
-const TickClock = {
+const _TickClockLiteral = {  // 消费者可扩展（索引签名开放），引擎成员保持精确类型
 
     _tickDataProvider: null,
 
@@ -109,7 +109,7 @@ const TickClock = {
     getTickIntervalOffset(index, count, period) {
         return Math.ceil((period / count) * index) % period;
     }
-};
+}; const TickClock = _TickClockLiteral as typeof _TickClockLiteral & { [key: string]: any };
 
 const GameTimer = {
 

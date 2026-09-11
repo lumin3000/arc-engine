@@ -1,5 +1,5 @@
 
-var EngineRefs = (function() {
+const _engineRefsFactory = function() {  // 消费者可在其上挂自己的引用（索引签名开放），引擎成员保持精确类型
     'use strict';
 
     return {
@@ -96,7 +96,7 @@ var EngineRefs = (function() {
         get dataReady() { return this._dataReady; },
         set dataReady(value) { this._dataReady = value; }
     };
-})();
+}; var EngineRefs = _engineRefsFactory() as ReturnType<typeof _engineRefsFactory> & { [key: string]: any };
 
 globalThis.EngineRefs = EngineRefs;
 

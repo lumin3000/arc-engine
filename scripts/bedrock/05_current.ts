@@ -1,5 +1,5 @@
 
-var EngineState = (function() {
+const _engineStateFactory = function() {  // 消费者可在其上挂自己的状态字段（索引签名开放），引擎成员保持精确类型
     'use strict';
 
     var _root = null;
@@ -30,7 +30,7 @@ var EngineState = (function() {
         get hasSession() { return _session !== null; },
         get hasRoot() { return _root !== null; }
     };
-})();
+}; var EngineState = _engineStateFactory() as ReturnType<typeof _engineStateFactory> & { [key: string]: any };
 
 globalThis.EngineState = EngineState;
 

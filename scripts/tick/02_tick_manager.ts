@@ -1,6 +1,6 @@
 
 class TickScheduler {
-
+    declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: any[];
     constructor() {
 
         this._ticksSimInt = 0;

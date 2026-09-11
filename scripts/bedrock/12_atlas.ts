@@ -40,7 +40,7 @@ globalThis.Atlas = {
             if (!f) return null;
             var parent = _atlasData.frames[entry.parent];
             var pivots = parent && parent.pivots;
-            var linearIdx = f._linearIdx !== undefined ? f._linearIdx : frameIndex;
+            var linearIdx: number = f._linearIdx !== undefined ? f._linearIdx : frameIndex;
             var pv = pivots ? pivots[linearIdx] : null;
             raw = { u0: f.u0, v0: f.v0, u1: f.u1, v1: f.v1,
                     w: entry.cell_w, h: entry.cell_h,

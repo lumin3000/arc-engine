@@ -1,4 +1,4 @@
-
+declare var SignalManager: any; declare var UniqueIDsManager: any;  // 消费者可选提供，引擎只探测
 var EngineSession = (function() {
     'use strict';
 

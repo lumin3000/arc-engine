@@ -21,7 +21,7 @@ const BlockingTaskQueue = {
     blockedFrameHooks: [],     // 消费者钩子 (阻塞帧标志等), 与 customProgressUI 无关
     get currentName() { return this._currentEvent ? this._currentEvent.textKey : null; },
 
-    enqueueBlockingTask(action, textKey, doAsynchronously, exceptionHandler, callback) {
+    enqueueBlockingTask(action, textKey, doAsynchronously, exceptionHandler?, callback?) {
         this._eventQueue.push({
             action: action,
             textKey: textKey || "Loading...",
@@ -168,7 +168,7 @@ const BlockingTaskQueue = {
 
         draw.rect(0, 0, 480, 270, {
             col: [0.15, 0.15, 0.15, 1.0],
-            z_layer: draw.ZLAYER_GUI_TOP + 100
+            z_layer: draw.ZLAYER_UI
         });
 
         const fullText = (this._loadingText || "Loading") + this._dots;
@@ -176,7 +176,7 @@ const BlockingTaskQueue = {
             pivot: draw.PIVOT_CENTER,
             size: 24,
             col: [0.9, 0.9, 0.9, 1.0],
-            z_layer: draw.ZLAYER_GUI_TOP + 101,
+            z_layer: draw.ZLAYER_UI,
             outline: 2.0,
             outline_col: [0.0, 0.0, 0.0, 1.0]
         });
@@ -187,12 +187,12 @@ const BlockingTaskQueue = {
 
             draw.rect(barX, barY, barW, barH, {
                 col: [0.3, 0.3, 0.3, 1.0],
-                z_layer: draw.ZLAYER_GUI_TOP + 101
+                z_layer: draw.ZLAYER_UI
             });
 
             draw.rect(barX, barY, barW * this._loadingProgress, barH, {
                 col: [0.2, 0.7, 0.3, 1.0],
-                z_layer: draw.ZLAYER_GUI_TOP + 102
+                z_layer: draw.ZLAYER_UI
             });
         }
         this._runBlockedFrameHooks();

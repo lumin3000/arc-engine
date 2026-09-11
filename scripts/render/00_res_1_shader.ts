@@ -1,5 +1,5 @@
 
-class Shader {
+class Shader { declare name: string; declare vs: any; declare fs: any; declare id: number; declare valid: boolean;
     constructor(name, vs, fs) {
         this.name = name;
         this.vs = vs;

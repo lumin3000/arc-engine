@@ -1,5 +1,5 @@
 
-class Mesh {
+class Mesh { declare _cMeshId: any; declare name: string; declare vertices: any[]; declare uvs: any[]; declare colors: any[]; declare triangles: any[]; declare isUploaded: boolean; declare type: string; declare size: any; declare flipped: boolean;
     constructor() {
         this._cMeshId = null;
         this.name = "Unnamed Mesh";

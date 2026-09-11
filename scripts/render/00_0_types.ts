@@ -15,7 +15,7 @@ const RenderQueue = {
     Overlay: 4000
 };
 
-const ShaderType = {
+const _ShaderTypeLiteral = {  // 消费者可追加自家 shader 槽位（索引签名开放）
     None: 0,
     User1: 1,
     User2: 2,
@@ -42,7 +42,7 @@ const ShaderType = {
     FxSpark: 21,
     FxShard: 22,
     FxFire: 23,
-};
+}; const ShaderType = _ShaderTypeLiteral as typeof _ShaderTypeLiteral & { [key: string]: number };
 
 globalThis.BlendMode = BlendMode;
 globalThis.RenderQueue = RenderQueue;

@@ -1,5 +1,5 @@
 
-class Matrix4x4 {
+class Matrix4x4 { declare m: Float32Array;
     constructor() {
 
         this.m = new Float32Array(16);

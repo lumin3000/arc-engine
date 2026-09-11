@@ -1,5 +1,5 @@
 
-class Material {
+class Material { declare shader: any; declare color: { r: number; g: number; b: number; a: number }; declare texturePath: string | null; declare textureId: number; declare blendMode: any; declare renderQueue: any; declare uvOffset: { x: number; y: number }; declare uvScale: { x: number; y: number }; declare id: any; declare path: string; declare atlasIndex: number;
     constructor(shader, color) {
         this.shader = shader;
         this.color = color || { r: 1, g: 1, b: 1, a: 1 };
@@ -104,7 +104,7 @@ const MaterialPool = {
         return this.TEXTURE_PATHS[0] + "/" + firstFullFileName;
     },
 
-    matFrom(path, shaderDef, color, silent = false) {
+    matFrom(path, shaderDef?, color?, silent = false) {
         if (!path) return null;
 
         const shaderName = shaderDef?.name || 'Standard';
@@ -154,7 +154,7 @@ const MaterialPool = {
     }
 };
 
-class MaterialAtlas {
+class MaterialAtlas { declare _rootMat: Material; declare _subMats: Material[];
     constructor(rootMat) {
         this._rootMat = rootMat;
         this._subMats = new Array(16);
@@ -207,7 +207,7 @@ const MaterialAtlasPool = {
     }
 };
 
-const MatBases = {
+const _MatBasesLiteral = {  // 消费者可扩展（索引签名开放），引擎成员保持精确类型
     _loaded: {},
 
     get SunShadow() { return this._get('SunShadow', 'SunShadow'); },
@@ -223,7 +223,7 @@ const MatBases = {
         }
         return this._loaded[name];
     }
-};
+}; const MatBases = _MatBasesLiteral as typeof _MatBasesLiteral & { [key: string]: any };
 
 globalThis.Material = Material;
 globalThis.MaterialPool = MaterialPool;

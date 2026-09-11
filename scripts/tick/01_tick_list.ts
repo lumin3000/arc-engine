@@ -13,7 +13,7 @@ globalThis.TickRate = TickRate;
 globalThis.SimSpeed = SimSpeed;
 
 class TickBucket {
-
+    declare _tickType: number; declare _buckets: any[][]; declare _toRegister: any[]; declare _toDeregister: any[]; declare _ticking: boolean;
     constructor(tickType) {
 
         this._tickType = tickType;
