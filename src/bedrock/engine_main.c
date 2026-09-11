@@ -65,7 +65,15 @@ int    app_get_argc(void) { return g_engine_state.saved_argc; }
 // ---------------------------------------------------------------------------
 // sapp lifecycle.
 
+#if defined(__APPLE__) && !defined(__EMSCRIPTEN__)
+void engine_macos_window_to_main_display(int w, int h);  // screenshot.m
+#endif
+
 static void engine_on_init(void) {
+#if defined(__APPLE__) && !defined(__EMSCRIPTEN__)
+  // 测试确定性：窗口挪回主显示器（见 screenshot.m 注释），须早于下方 sapp_width() 采样
+  if (getenv("ARC_WINDOW_MAIN_DISPLAY")) engine_macos_window_to_main_display(window_w, window_h);
+#endif
   input_state = &_actual_input_state;
 
   sound_init();

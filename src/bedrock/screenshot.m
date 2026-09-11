@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <unistd.h>
@@ -101,4 +102,22 @@ int screenshot_capture(void) {
         fprintf(stderr, "[screenshot] Failed to write PNG file\n");
         return -1;
     }
+}
+
+// ---------------------------------------------------------------------------
+// 测试专用：把窗口挪到主显示器并恢复请求尺寸。
+// sokol_app 用 [NSWindow center] 在"当前 key window 所在屏"开窗；开发者焦点在竖屏副显示器时
+// 1280 宽窗口被夹成 540，金图 size mismatch。ARC_WINDOW_MAIN_DISPLAY=1（Makefile 测试目标）时
+// 由 engine_on_init 开头调用，早于 window_w = sapp_width() 采样。
+void engine_macos_window_to_main_display(int w, int h) {
+    NSWindow *win = (__bridge NSWindow *)sapp_macos_get_window();
+    if (!win) return;
+    NSScreen *primary = [NSScreen screens].firstObject;  // 带菜单栏的主显示器
+    if (!primary) return;
+    [win setContentSize:NSMakeSize(w, h)];
+    NSRect vf = primary.visibleFrame;
+    NSRect wf = win.frame;
+    NSPoint origin = NSMakePoint(NSMidX(vf) - wf.size.width / 2.0, NSMidY(vf) - wf.size.height / 2.0);
+    [win setFrameOrigin:origin];
+    [win setContentSize:NSMakeSize(w, h)];  // 跨屏后再夹一次尺寸
 }
