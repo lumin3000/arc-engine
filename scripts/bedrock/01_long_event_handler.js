@@ -12,6 +12,15 @@ const BlockingTaskQueue = {
     _dotsTimer: 0,
     _dots: "",
 
+    // 阻塞段取证 (2026-09-11 黑闪案): 每段 begin/end 各一行日志, 帧号/阻塞帧数/毫秒/任务名;
+    // history 留最近 16 段供消费者在屏上回显; blockedFrameHooks 在每个阻塞帧的进度 UI 之后调用
+    _segStartFrame: -1,
+    _segStartMs: 0,
+    blockedFrames: 0,          // 当前段已被截断的帧数 (drawProgress 每阻塞帧 +1)
+    history: [],               // {name, blockedFrames, ms, endFrame, endMs, outcome}
+    blockedFrameHooks: [],     // 消费者钩子 (阻塞帧标志等), 与 customProgressUI 无关
+    get currentName() { return this._currentEvent ? this._currentEvent.textKey : null; },
+
     enqueueBlockingTask(action, textKey, doAsynchronously, exceptionHandler, callback) {
         this._eventQueue.push({
             action: action,
@@ -27,6 +36,11 @@ const BlockingTaskQueue = {
         if (!this._currentEvent && this._eventQueue.length > 0) {
             this._currentEvent = this._eventQueue.shift();
             this._loadingText = this._currentEvent.textKey;
+            this._segStartFrame = RealTime.frameCount;
+            this._segStartMs = Date.now();
+            this.blockedFrames = 0;
+            jtask.log("[BlockingTaskQueue] begin '" + this._currentEvent.textKey
+                + "' frame=" + this._segStartFrame + " queued=" + this._eventQueue.length);
 
             if (this._currentEvent.doAsync) {
                 try {
@@ -90,7 +104,19 @@ const BlockingTaskQueue = {
         }
     },
 
+    _recordSegmentEnd(outcome) {
+        if (!this._currentEvent) return;
+        const now = Date.now();
+        const rec = { name: this._currentEvent.textKey, blockedFrames: this.blockedFrames,
+            ms: now - this._segStartMs, endFrame: RealTime.frameCount, endMs: now, outcome };
+        this.history.push(rec);
+        if (this.history.length > 16) this.history.shift();
+        jtask.log("[BlockingTaskQueue] end '" + rec.name + "' blockedFrames=" + rec.blockedFrames
+            + " ms=" + rec.ms + " frame=" + rec.endFrame + " outcome=" + outcome);
+    },
+
     _completeCurrentEvent() {
+        this._recordSegmentEnd("done");
         jtask.log("[BlockingTaskQueue] Completing event: " + (this._currentEvent ? this._currentEvent.textKey : "null"));
         if (this._currentEvent && this._currentEvent.callback) {
             try {
@@ -107,6 +133,7 @@ const BlockingTaskQueue = {
     },
 
     _handleException(e) {
+        this._recordSegmentEnd("error");
         jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${e.message}\n${e.stack}`);
         if (this._currentEvent && this._currentEvent.exceptionHandler) {
             this._currentEvent.exceptionHandler(e);
@@ -132,8 +159,10 @@ const BlockingTaskQueue = {
     drawProgress() {
         if (!this.isBlocking) return;
 
+        this.blockedFrames++;
         if (typeof this.customProgressUI === 'function') {
             this.customProgressUI();
+            this._runBlockedFrameHooks();
             return;
         }
 
@@ -165,6 +194,13 @@ const BlockingTaskQueue = {
                 col: [0.2, 0.7, 0.3, 1.0],
                 z_layer: draw.ZLAYER_GUI_TOP + 102
             });
+        }
+        this._runBlockedFrameHooks();
+    },
+
+    _runBlockedFrameHooks() {
+        for (const h of this.blockedFrameHooks) {
+            try { h(); } catch (e) { jtask.log("[BlockingTaskQueue] blockedFrameHook error: " + e.message); }
         }
     }
 };
