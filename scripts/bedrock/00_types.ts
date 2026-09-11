@@ -1,6 +1,6 @@
 
 class IntVec3 {
-
+    declare x: number; declare y: number; declare z: number; declare static _adjacentCellsAround: IntVec3[];
     constructor(x = 0, y = 0, z = 0) {
         this.x = x | 0;
         this.y = y | 0;
@@ -304,7 +304,7 @@ class IntVec3 {
 }
 
 class CellRect {
-
+    declare minX: number; declare minZ: number; declare maxX: number; declare maxZ: number;
     constructor(minX = 0, minZ = 0, width = 0, height = 0) {
         this.minX = minX | 0;
         this.minZ = minZ | 0;
@@ -564,7 +564,7 @@ class CellRect {
     }
 }
 
-class Vector2 {
+class Vector2 { declare x: number; declare y: number;
     constructor(x = 0, y = 0) {
         this.x = x;
         this.y = y;
@@ -586,7 +586,7 @@ class Vector2 {
     toString() { return `(${this.x}, ${this.y})`; }
 }
 
-class Color {
+class Color { declare r: number; declare g: number; declare b: number; declare a: number;
     constructor(r = 0, g = 0, b = 0, a = 1) {
         this.r = r;
         this.g = g;
@@ -621,7 +621,7 @@ class Color {
     toString() { return `RGBA(${this.r}, ${this.g}, ${this.b}, ${this.a})`; }
 }
 
-class Rect {
+class Rect { declare x: number; declare y: number; declare width: number; declare height: number;
     constructor(x = 0, y = 0, width = 0, height = 0) {
         this.x = x;
         this.y = y;

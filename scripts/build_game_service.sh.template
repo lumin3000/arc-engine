@@ -47,13 +47,21 @@ bundle_dir() {
     local label="$1"
     local dir="${2%/}"  # strip trailing slash if present
     [ ! -d "$dir" ] && return 0
-    local files=$(find "$dir" -name "*.js" 2>/dev/null | sort)
+    # .js 直接拼；.ts 取类型擦除产物 $TS_OUT_DIR/<相对 TS_SRC_ROOT 同路径>.js（消费者先跑自己的擦除步骤，产物须与源逐行对应）。
+    # 排序按去扩展名后的路径，保证 00_types.ts 与从前 00_types.js 位置一致。
+    local files=$(find "$dir" \( -name "*.js" -o -name "*.ts" \) 2>/dev/null | sed -E 's/\.(js|ts)$/.&/' | sort | sed -E 's/\.\.(js|ts)$/.\1/')
     for f in $files; do
         [ ! -f "$f" ] && continue
         local rel_path="${f#$dir/}"
+        local src="$f"
+        if [[ "$f" == *.ts ]]; then
+            : "${TS_OUT_DIR:?bundling .ts needs TS_OUT_DIR}"; : "${TS_SRC_ROOT:?bundling .ts needs TS_SRC_ROOT}"
+            src="$TS_OUT_DIR/${f#$TS_SRC_ROOT/}"; src="${src%.ts}.js"
+            if [ ! -f "$src" ]; then echo "FATAL: stripped output missing for $f (expected $src)" >&2; exit 1; fi
+        fi
         echo "// === [$label] $rel_path ===" >> "$OUTPUT_FILE"
         echo "(function() {" >> "$OUTPUT_FILE"
-        cat "$f" >> "$OUTPUT_FILE"
+        cat "$src" >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
         echo "})();" >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
