@@ -88,11 +88,13 @@ S.frame = function (msg) {
   rtt_total_us += rtt_us;
 
   if (globalThis.__BP_VERBOSE__ && rtt_frame_count % 60 === 0) {
-    let mem = "N/A";
-    if (jtask.memory_usage) {
-      const m = jtask.memory_usage();
-      mem = (m.memory_used_size / 1024 / 1024).toFixed(2) + "MB";
-    }
+    // 堆占用走 game.memory_usage()（consumer 侧 game_bindings.c:368 实现 / :641 注册,
+    // 返回 {memory_used_size, malloc_size}）。jtask 没有 memory_usage —— 它只有
+    // mem_count（对象计数）, 原先的 jtask.memory_usage 是幽灵 API, 守卫恒假,
+    // 这行 Mem 永远印 "N/A"。render_service ctx 里 game.memory_usage 实测可达
+    // (2026-09-12 R7 探针: typeof=function, 返回 50231392/55129872)。
+    const m = game.memory_usage();
+    const mem = (m.memory_used_size / 1024 / 1024).toFixed(2) + "MB";
     jtask.log.info("[RTT] Frame " + rtt_frame_count + " | RTT: " + rtt_us + "us | Avg: " + (rtt_total_us / rtt_frame_count).toFixed(1) + "us | Mem: " + mem);
   }
 
