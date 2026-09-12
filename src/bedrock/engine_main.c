@@ -394,6 +394,16 @@ int arc_engine_run(Arc_Engine *eng) {
 
 #if defined(_WIN32)
   ShowWindow(GetConsoleWindow(), SW_HIDE);
+  // 测试确定性（与 macOS 的 engine_macos_window_to_main_display 同一开关）：
+  // sokol 在 high_dpi=false 时把进程设成 DPI_UNAWARE，高缩放显示器（um560
+  // Parsec 3840×2160 @300%）下逻辑屏只有 1280×720，带标题栏的 1280×720 窗口
+  // 放不下被系统夹成 1280×701，金图 size mismatch。这里抢先把进程设成
+  // per-monitor 感知；sokol 随后的 SetProcessDpiAwareness 失败即保持
+  // window_scale=1，窗口/帧缓冲按物理像素精确 1280×720。仅测试开关下生效，
+  // 正常 make arc 仍由系统按缩放放大。
+  if (getenv("ARC_WINDOW_MAIN_DISPLAY")) {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  }
 #endif
 
   sapp_run(&(sapp_desc){

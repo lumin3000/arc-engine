@@ -1,5 +1,6 @@
 
 #include "../bedrock/platform.h"
+#include "../bedrock/platform_path.h"
 #include "../../external/sokol/c/sokol_gfx.h"
 #include "../log.h"
 #include "../types.h"
@@ -1558,8 +1559,9 @@ void unified_mesh_dump_atlas(void) {
       continue;
     }
 
-    char path[256];
-    snprintf(path, sizeof(path), "/tmp/atlas_%d.png", i);
+    char path_posix[64], path[512];
+    snprintf(path_posix, sizeof(path_posix), "/tmp/atlas_%d.png", i);
+    platform_path_resolve(path_posix, path, sizeof(path));
 
     int stride = at->width * 4;
     int result = stbi_write_png(path, at->width, at->height, 4, at->pixels, stride);
