@@ -22,6 +22,7 @@
 #include "../../external/sokol/c/sokol_glue.h"
 #include "../../external/sokol/c/sokol_log.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +39,12 @@
 // Globals exposed to engine bindings via engine_state.h. engine_main.c is
 // the sole owner; bindings and other TUs read through the accessors
 // declared there.
+
+static atomic_bool camera_controls_blocked = false;
+
+void engine_set_camera_controls_blocked(bool blocked) {
+  atomic_store(&camera_controls_blocked, blocked);
+}
 
 int window_w = DEFAULT_WINDOW_WIDTH;
 int window_h = DEFAULT_WINDOW_HEIGHT;
@@ -163,7 +170,7 @@ static void engine_on_frame(void) {
     sapp_toggle_fullscreen();
   }
 
-  if (!g_cfg.disable_default_camera_controls) {
+  if (!g_cfg.disable_default_camera_controls && !atomic_load(&camera_controls_blocked)) {
     // World Units (1 unit = 1 cell): 3.0 cells/sec is the engine
     // fallback. Games with large cell maps override via
     // Engine_Config.camera_pan_speed.
@@ -191,7 +198,7 @@ static void engine_on_frame(void) {
   camera_set_rotation(camera_get_main(), ctx.gs->cam_rot[0], ctx.gs->cam_rot[1],
                       ctx.gs->cam_rot[2]);
 
-  if (!g_cfg.disable_default_camera_controls) {
+  if (!g_cfg.disable_default_camera_controls && !atomic_load(&camera_controls_blocked)) {
     // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)
     if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= ZOOM_IN_MULTIPLIER;
     if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;

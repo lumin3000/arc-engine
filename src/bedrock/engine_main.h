@@ -135,6 +135,9 @@ Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv);
 int         arc_engine_run(Arc_Engine *eng);           // does not return
 JSContext  *arc_engine_js_context(Arc_Engine *eng);    // NULL before js_runtime_init
 
+// Block built-in camera input while an application owns a modal view.
+void engine_set_camera_controls_blocked(bool blocked);
+
 // Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
 // lives in engine_state.h. Not intended as game-facing API.
 
