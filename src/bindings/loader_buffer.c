@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #endif
 #include "quickjs.h"
+#include "../bedrock/platform_path.h"
 
 static char *g_buffer = NULL;
 static size_t g_size = 0;
@@ -28,8 +29,10 @@ static JSValue js_loader_read(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
-  FILE *f = fopen(path, "rb");
+  FILE *f = fopen(fpath, "rb");
   if (!f) {
     JS_FreeCString(ctx, path);
     return JS_UNDEFINED;
@@ -113,8 +116,10 @@ static JSValue js_loader_read_string(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
-  FILE *f = fopen(path, "rb");
+  FILE *f = fopen(fpath, "rb");
   if (!f) {
     JS_FreeCString(ctx, path);
     return JS_UNDEFINED;
@@ -156,13 +161,15 @@ static JSValue js_loader_readdir(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
   JSValue arr = JS_NewArray(ctx);
   uint32_t idx = 0;
 
 #if defined(_WIN32)
   char search_path[MAX_PATH];
-  snprintf(search_path, sizeof(search_path), "%s\\*", path);
+  snprintf(search_path, sizeof(search_path), "%s\\*", fpath);
   WIN32_FIND_DATAA fd;
   HANDLE hFind = FindFirstFileA(search_path, &fd);
   if (hFind == INVALID_HANDLE_VALUE) {
@@ -179,7 +186,7 @@ static JSValue js_loader_readdir(JSContext *ctx, JSValueConst this_val,
   } while (FindNextFileA(hFind, &fd));
   FindClose(hFind);
 #else
-  DIR *dir = opendir(path);
+  DIR *dir = opendir(fpath);
   if (!dir) {
     JS_FreeCString(ctx, path);
     return JS_UNDEFINED;
@@ -208,9 +215,11 @@ static JSValue js_loader_isdir(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
   struct stat st;
-  int result = stat(path, &st);
+  int result = stat(fpath, &st);
   JS_FreeCString(ctx, path);
 
   if (result != 0) {
@@ -227,6 +236,8 @@ static JSValue js_loader_write_string(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
   size_t content_len;
   const char *content = JS_ToCStringLen(ctx, &content_len, argv[1]);
@@ -235,7 +246,7 @@ static JSValue js_loader_write_string(JSContext *ctx, JSValueConst this_val,
     return JS_EXCEPTION;
   }
 
-  FILE *f = fopen(path, "wb");
+  FILE *f = fopen(fpath, "wb");
   if (!f) {
     JS_FreeCString(ctx, path);
     JS_FreeCString(ctx, content);
@@ -264,8 +275,10 @@ static JSValue js_loader_read_bytes(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
-  FILE *f = fopen(path, "rb");
+  FILE *f = fopen(fpath, "rb");
   if (!f) {
     JS_FreeCString(ctx, path);
     return JS_UNDEFINED;
@@ -334,8 +347,10 @@ static JSValue js_loader_write_bytes(JSContext *ctx, JSValueConst this_val,
 
   const char *path = JS_ToCString(ctx, argv[0]);
   if (!path) return JS_EXCEPTION;
+  char path_buf[1024];
+  const char *fpath = platform_path_resolve(path, path_buf, sizeof(path_buf));
 
-  FILE *f = fopen(path, "wb");
+  FILE *f = fopen(fpath, "wb");
   if (!f) {
     JS_FreeCString(ctx, path);
     return JS_ThrowInternalError(ctx, "Cannot open file for writing: %s", path);
