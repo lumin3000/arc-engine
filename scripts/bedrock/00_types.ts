@@ -452,16 +452,43 @@ class CellRect {
         return result;
     }
 
-    expandedBy(dist) {
+    // 对齐: Verse/CellRect.cs:1276-1304 - ExpandedBy 三个重载
+    //   :1276 ExpandedBy(int dist)        —— 四向等量
+    //   :1286 ExpandedBy(int x, int z)    —— 逐轴
+    //   :1296 ExpandedBy(IntVec3 offset)  —— 逐轴，取 offset.x / offset.z
+    // JS 没有重载，故按实参形状分派。第三种形态是**必须的**：消费者的
+    // RoomLayoutGenerator 直译自 RW 的 :207-208 `IntVec3 xExpansion = new IntVec3(expansion,0,0)`，
+    // 五种走廊形状全部把 IntVec3 传进来（RoomLayoutGenerator.cs:255/:266/:275…）。
+    // 此前只认标量，传对象时 `minX - {…}` 得 NaN → 走廊矩形坐标全 NaN，
+    // 下游 _divideRectsByCorridor 打出 "rect and corridor are not overlapping" 警告，
+    // 房间划分全错（探针 N 实测：修前 corridor=(NaN,NaN,59[object Object],…)）。
+    expandedBy(dist, z = undefined) {
         const result = new CellRect();
-        result.minX = this.minX - dist;
-        result.minZ = this.minZ - dist;
-        result.maxX = this.maxX + dist;
-        result.maxZ = this.maxZ + dist;
+        let dx, dz;
+        if (dist !== null && typeof dist === "object") {
+            // 对齐 :1296-1303 - IntVec3 形态，逐轴取 x/z
+            dx = dist.x; dz = dist.z;
+        } else if (z !== undefined) {
+            // 对齐 :1286-1294 - (x, z) 两参形态
+            dx = dist; dz = z;
+        } else {
+            // 对齐 :1276-1284 - 标量形态，四向等量
+            dx = dist; dz = dist;
+        }
+        result.minX = this.minX - dx;
+        result.minZ = this.minZ - dz;
+        result.maxX = this.maxX + dx;
+        result.maxZ = this.maxZ + dz;
         return result;
     }
 
-    contractedBy(dist) {
+    // 对齐: Verse/CellRect.cs:1354-1357 - ContractedBy(x, z) => ExpandedBy(new IntVec3(-x, 0, -z))
+    // 随 expandedBy 一起支持三种形态：`-dist` 对对象形态会得 NaN，故逐轴取负。
+    contractedBy(dist, z = undefined) {
+        if (dist !== null && typeof dist === "object") {
+            return this.expandedBy({ x: -dist.x, y: 0, z: -dist.z });
+        }
+        if (z !== undefined) return this.expandedBy(-dist, -z);
         return this.expandedBy(-dist);
     }
 
@@ -520,6 +547,32 @@ class CellRect {
         for (const cell of this.cells()) {
             callback(cell);
         }
+    }
+
+    // 对齐: Verse/GenGeo.cs:231-258 - public static int GetAdjacencyScore(this CellRect rect, CellRect other)
+    // RW 侧是 GenGeo 里挂在 CellRect 上的扩展方法；JS 没有扩展方法，而消费者两个调用点
+    // （RimWorld/LayoutRoom.cs:128 与 RoomLayoutGenerator.cs:526 的直译）都当实例方法调，
+    // 故落在 CellRect 上。语义：两矩形重叠记 0；否则按四条边逐一判「正好贴边且在另一轴上
+    // 有交叠」，返回交叠长度（重合格数 - 1，与 RW 的 Min - Max 逐式相同）。
+    getAdjacencyScore(other) {
+        if (this.overlaps(other)) return 0;
+        // 对齐 GenGeo.cs:237-241 - 本矩形上边紧贴对方下边
+        if (this.maxZ === other.minZ - 1 && this.minX < other.maxX && this.maxX > other.minX) {
+            return Math.min(this.maxX, other.maxX) - Math.max(this.minX, other.minX);
+        }
+        // 对齐 GenGeo.cs:242-246 - 本矩形下边紧贴对方上边
+        if (this.minZ === other.maxZ + 1 && this.minX < other.maxX && this.maxX > other.minX) {
+            return Math.min(this.maxX, other.maxX) - Math.max(this.minX, other.minX);
+        }
+        // 对齐 GenGeo.cs:247-251 - 本矩形左边紧贴对方右边
+        if (this.minX === other.maxX + 1 && this.minZ < other.maxZ && this.maxZ > other.minZ) {
+            return Math.min(this.maxZ, other.maxZ) - Math.max(this.minZ, other.minZ);
+        }
+        // 对齐 GenGeo.cs:252-256 - 本矩形右边紧贴对方左边
+        if (this.maxX === other.minX - 1 && this.minZ < other.maxZ && this.maxZ > other.minZ) {
+            return Math.min(this.maxZ, other.maxZ) - Math.max(this.minZ, other.minZ);
+        }
+        return 0;
     }
 
     // RW 的 CellRect 是 struct，`CellRect item = rect;` 即值拷贝
