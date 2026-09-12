@@ -590,6 +590,39 @@ static JSValue js_imgui_draw_rect_stroke(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// imgui.draw_line(x0, y0, x1, y1, r, g, b, a, [thickness]) — 线段
+// (arc-main 海图航行 plan 役1: 海图罗盘线/斜向装饰, 此前只有 rect 原语画不了斜线)
+static JSValue js_imgui_draw_line(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  if (argc < 8)
+    return JS_UNDEFINED;
+  double x0, y0, x1, y1;
+  int r, g, b, a;
+  JS_ToFloat64(ctx, &x0, argv[0]);
+  JS_ToFloat64(ctx, &y0, argv[1]);
+  JS_ToFloat64(ctx, &x1, argv[2]);
+  JS_ToFloat64(ctx, &y1, argv[3]);
+  JS_ToInt32(ctx, &r, argv[4]);
+  JS_ToInt32(ctx, &g, argv[5]);
+  JS_ToInt32(ctx, &b, argv[6]);
+  JS_ToInt32(ctx, &a, argv[7]);
+  double thickness = 1.0;
+  if (argc > 8)
+    JS_ToFloat64(ctx, &thickness, argv[8]);
+
+  ImDrawList *dl = igGetWindowDrawList();
+  if (!dl)
+    dl = igGetForegroundDrawList_ViewportPtr(NULL);
+  if (!dl)
+    return JS_UNDEFINED;
+
+  ImVec2_c p0 = {(float)x0, (float)y0};
+  ImVec2_c p1 = {(float)x1, (float)y1};
+  ImU32 col = ((ImU32)a << 24) | ((ImU32)b << 16) | ((ImU32)g << 8) | (ImU32)r;
+  ImDrawList_AddLine(dl, p0, p1, col, (float)thickness);
+  return JS_UNDEFINED;
+}
+
 // imgui.draw_control_text(text, x, y, w, h, color, flags)
 // color: [r,g,b,a] 数组(0-255)生效; 旧调用传 int colorId 时维持白色(兼容)。
 // flags: 0x01 水平居中 / 0x02 右对齐; 非左对齐时同时在 rect 内垂直居中。
@@ -1348,6 +1381,7 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "draw_image", js_imgui_draw_image, 9);
   REG(imgui, "draw_rect", js_imgui_draw_rect, 9);
   REG(imgui, "draw_rect_stroke", js_imgui_draw_rect_stroke, 10);
+  REG(imgui, "draw_line", js_imgui_draw_line, 9);
   REG(imgui, "draw_control_text", js_imgui_draw_control_text, 7);
   REG(imgui, "draw_text", js_imgui_draw_control_text, 7);
 

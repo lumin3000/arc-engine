@@ -98,4 +98,41 @@ typedef struct {
 void noise_fill_grid(const NoiseNode *nodes, int node_count, int root_idx,
                      int width, int height, float *out);
 
+// ============================================================================
+// 双精度逐点求值路径 (arc-main 海图航行 plan 役0 留账「Terrain 13 s」, 2026-09-13)
+//
+// 与上面的 float 网格路径不同, 本路径的目标是与 JS 实现 **逐位相同** (bit-exact):
+//   - 随机向量表用与 00_perlin.ts 完全相同的 double 字面量 (g_randoms_d)
+//   - 所有中间量 double, 运算顺序逐句对齐 JS, 文件级 FP_CONTRACT OFF 禁 FMA 合并
+//   - 位运算按 JS ToInt32 语义 (模 2^32 截断) 实现
+// 世界生成 (08_world_generator Terrain 相位) 把 7 棵噪声树各对全部 tile 的球面
+// 坐标一次求值; 判卷 = make test-worldgen-parity 哈希与纯 JS 路径相同。
+// ============================================================================
+
+typedef enum {
+    NOISED_PERLIN = 0,      // params: [0]freq [1]lac [2]pers [3]oct [4]seed [5]quality [6]normalized [7]invert
+    NOISED_RIDGED,          // params: [0]freq [1]lac [2]oct [3]seed [4]quality, [8..8+30) weights (JS 算好传入)
+    NOISED_SCALE_BIAS,      // params: [0]scale [1]bias; children[0]
+    NOISED_MULTIPLY,        // children[0]*children[1]
+    NOISED_CONST,           // params[0]
+    NOISED_POWER,           // pow(children[0], children[1])
+    NOISED_BLEND,           // lerp(children[0], children[1], (children[2]+1)/2)
+    NOISED_ABS,             // fabs(children[0])
+    NOISED_ONE_MINUS,       // 1 - children[0]
+    NOISED_FILTER,          // params: [0]from [1]to; children[0] in [from,to] ? 1 : 0
+} NoiseDType;
+
+#define NOISED_MAX_PARAMS 40
+#define NOISED_MAX_NODES  64
+
+typedef struct {
+    int    type;
+    double params[NOISED_MAX_PARAMS];
+    int    children[NOISE_MAX_CHILDREN];
+} NoiseNodeD;
+
+// 对 n 个三维点 (xyz[3*i..3*i+2]) 求根节点值写入 out[i]
+void noise_eval_points_d(const NoiseNodeD *nodes, int node_count, int root_idx,
+                         const double *xyz, int n, double *out);
+
 #endif // NOISE_H
