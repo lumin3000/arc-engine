@@ -522,6 +522,13 @@ class CellRect {
         }
     }
 
+    // RW 的 CellRect 是 struct，`CellRect item = rect;` 即值拷贝
+    // （Verse/CellRect.cs 全篇；用例 RimWorld/RoomLayoutGenerator.cs:437-438）。
+    // JS 里对象是引用，直译成 `rect.clone()` 的地方全仓没有这个方法 → 一调就抛。
+    clone() {
+        return CellRect.fromLimits(this.minX, this.minZ, this.maxX, this.maxZ);
+    }
+
     equals(other) {
         if (!other) return false;
         return this.minX === other.minX && this.maxX === other.maxX &&
@@ -539,6 +546,28 @@ class CellRect {
             return CellRect.Empty;
         }
         return CellRect.fromLimits(parts[0], parts[1], parts[2], parts[3]);
+    }
+
+    // 对齐: Verse/CellRect.cs:643-661 - public IntVec3 GetCellOnEdge(Rot4 rot, IntVec3 point)
+    // 把 point 投影到 rot 指定的那条边上：南北边锁 z、东西边锁 x，另一轴取 point 的。
+    getCellOnEdge(rot, point) {
+        if (rot === Rot4.North) return new IntVec3(point.x, point.y ?? 0, this.maxZ);
+        if (rot === Rot4.East) return new IntVec3(this.maxX, point.y ?? 0, point.z);
+        if (rot === Rot4.South) return new IntVec3(point.x, point.y ?? 0, this.minZ);
+        if (rot === Rot4.West) return new IntVec3(this.minX, point.y ?? 0, point.z);
+        return IntVec3.Invalid;
+    }
+
+    // 对齐: Verse/CellRect.cs:664-681 - public IntVec3 GetCenterCellOnEdge(Rot4 rot, int offset)
+    // 以 centerCell 为基准沿边平移 offset 格。offset 省略即 RW 的 GetCenterCellOnEdge(rot)
+    // 一参重载（CellRect.cs:638-641 = GetCellOnEdge(rot, CenterCell)，等价于 offset=0）。
+    getCenterCellOnEdge(rot, offset = 0) {
+        const c = this.centerCell;
+        if (rot === Rot4.North) return new IntVec3(c.x + offset, c.y, this.maxZ);
+        if (rot === Rot4.East) return new IntVec3(this.maxX, c.y, c.z + offset);
+        if (rot === Rot4.South) return new IntVec3(c.x + offset, c.y, this.minZ);
+        if (rot === Rot4.West) return new IntVec3(this.minX, c.y, c.z + offset);
+        return IntVec3.Invalid;
     }
 
     *getCellsOnEdge(rot) {
