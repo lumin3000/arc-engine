@@ -85,24 +85,49 @@ void simgui_new_frame_wrapper(int width, int height, double delta_time) {
 }
 
 static int s_last_draw_calls = 0;
+static int s_last_effective_draws = 0;    // ElemCount>0 的命令 = simgui 实际发出的 sg_draw
+static int s_last_texture_switches = 0;   // 有效命令序列中纹理变化次数
 
 void simgui_render_wrapper(void) {
     if (!s_simgui_initialized) return;
     simgui_render();
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data) {
-        int dc = 0;
+        int dc = 0, ed = 0, ts = 0;
+        ImTextureID last_tex = 0;
+        bool have_tex = false;
         for (int i = 0; i < draw_data->CmdListsCount; i++) {
-            dc += draw_data->CmdLists[i]->CmdBuffer.Size;
+            const ImDrawList* dl = draw_data->CmdLists[i];
+            dc += dl->CmdBuffer.Size;
+            for (int c = 0; c < dl->CmdBuffer.Size; c++) {
+                const ImDrawCmd* cmd = &dl->CmdBuffer[c];
+                if (cmd->UserCallback || cmd->ElemCount == 0) continue;
+                ed++;
+                ImTextureID tex = cmd->GetTexID();
+                if (!have_tex) { last_tex = tex; have_tex = true; }
+                else if (tex != last_tex) { ts++; last_tex = tex; }
+            }
         }
         s_last_draw_calls = dc;
+        s_last_effective_draws = ed;
+        s_last_texture_switches = ts;
     } else {
         s_last_draw_calls = 0;
+        s_last_effective_draws = 0;
+        s_last_texture_switches = 0;
     }
 }
 
 int simgui_get_draw_call_count(void) {
     return s_last_draw_calls;
+}
+
+int simgui_get_effective_draw_count(void) {
+    return s_last_effective_draws;
+}
+
+int simgui_get_texture_switch_count(void) {
+    return s_last_texture_switches;
 }
 
 uint64_t simgui_texture_id_wrapper(sg_view view) {

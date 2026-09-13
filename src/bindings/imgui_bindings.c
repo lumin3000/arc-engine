@@ -29,6 +29,8 @@ extern void simgui_render_wrapper(void);
 extern void simgui_shutdown_wrapper(void);
 extern bool simgui_handle_event_wrapper(const sapp_event *event);
 extern int simgui_get_draw_call_count(void);
+extern int simgui_get_effective_draw_count(void);
+extern int simgui_get_texture_switch_count(void);
 extern float simgui_get_font_em_scale(void);
 extern uint64_t simgui_texture_id_wrapper(sg_view view);
 extern bool atlas_texture_get(int texture_id, sg_image *image, sg_view *view);
@@ -870,6 +872,21 @@ static JSValue js_imgui_get_draw_call_count(JSContext *ctx,
   return JS_NewInt32(ctx, simgui_get_draw_call_count());
 }
 
+// imgui.get_effective_draw_count() — 上一帧 ElemCount>0 的命令数
+// (= simgui 实际提交的 sg_draw 次数; 命令总数含空命令, 两者口径不同)
+static JSValue js_imgui_get_effective_draw_count(JSContext *ctx,
+                                                 JSValueConst this_val, int argc,
+                                                 JSValueConst *argv) {
+  return JS_NewInt32(ctx, simgui_get_effective_draw_count());
+}
+
+// imgui.get_texture_switch_count() — 上一帧有效命令序列中的纹理切换次数
+static JSValue js_imgui_get_texture_switch_count(JSContext *ctx,
+                                                 JSValueConst this_val, int argc,
+                                                 JSValueConst *argv) {
+  return JS_NewInt32(ctx, simgui_get_texture_switch_count());
+}
+
 static JSValue js_imgui_want_capture_mouse(JSContext *ctx,
                                            JSValueConst this_val, int argc,
                                            JSValueConst *argv) {
@@ -1472,6 +1489,8 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "pop_font", js_imgui_pop_font, 0);
   REG(imgui, "calc_text_size", js_imgui_calc_text_size, 2);
   REG(imgui, "get_draw_call_count", js_imgui_get_draw_call_count, 0);
+  REG(imgui, "get_effective_draw_count", js_imgui_get_effective_draw_count, 0);
+  REG(imgui, "get_texture_switch_count", js_imgui_get_texture_switch_count, 0);
 
   // Input query
   REG(imgui, "want_capture_mouse", js_imgui_want_capture_mouse, 0);
