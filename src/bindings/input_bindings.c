@@ -344,6 +344,27 @@ static JSValue js_input_inject_scroll(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// input.inject_text(str) — 模拟文本字符输入 (同 SAPP_EVENTTYPE_CHAR: 写引擎 text_input 并喂 ImGui)
+static JSValue js_input_inject_text(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "inject_text requires a string");
+  }
+  if (!input_state) return JS_UNDEFINED;
+  const char *text = JS_ToCString(ctx, argv[0]);
+  if (!text) return JS_EXCEPTION;
+  for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+    if (*p < 127 && input_state->text_input_len < TEXT_INPUT_BUFFER_SIZE - 1) {
+      input_state->text_input[input_state->text_input_len++] = (char)*p;
+      input_state->text_input[input_state->text_input_len] = '\0';
+    }
+  }
+  input_feed_ui_text(text);
+  JS_FreeCString(ctx, text);
+  return JS_UNDEFINED;
+}
+
 // input.inject_mouse_down(btn) — 模拟鼠标按钮按下
 // btn: 0=左, 1=中, 2=右
 static JSValue js_input_inject_mouse_down(JSContext *ctx, JSValueConst this_val,
@@ -412,6 +433,7 @@ static JSValue js_input_inject_key_down(JSContext *ctx, JSValueConst this_val,
     return JS_ThrowTypeError(ctx, "inject_key_down: keyCode out of range");
   }
   input_state->keys[code] |= INPUT_FLAG_DOWN | INPUT_FLAG_PRESSED;
+  input_feed_ui_key(code, true);   // 键码即 sapp_keycode, 同 OS 事件喂 ImGui
   return JS_UNDEFINED;
 }
 
@@ -429,6 +451,7 @@ static JSValue js_input_inject_key_up(JSContext *ctx, JSValueConst this_val,
   }
   input_state->keys[code] &= ~(INPUT_FLAG_DOWN | INPUT_FLAG_PRESSED);
   input_state->keys[code] |= INPUT_FLAG_RELEASED;
+  input_feed_ui_key(code, false);
   return JS_UNDEFINED;
 }
 
@@ -598,6 +621,8 @@ int js_init_input_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_input_inject_mouse_up, "inject_mouse_up", 1));
   JS_SetPropertyStr(ctx, obj, "inject_key_down",
                     JS_NewCFunction(ctx, js_input_inject_key_down, "inject_key_down", 1));
+  JS_SetPropertyStr(ctx, obj, "inject_text",
+                    JS_NewCFunction(ctx, js_input_inject_text, "inject_text", 1));
   JS_SetPropertyStr(ctx, obj, "inject_key_up",
                     JS_NewCFunction(ctx, js_input_inject_key_up, "inject_key_up", 1));
   JS_SetPropertyStr(ctx, obj, "inject_clear",

@@ -107,6 +107,17 @@ void input_feed_ui_mouse_button(int mouse_button, bool down) {
     simgui_inject_mouse_button_wrapper(mouse_button, down);
 }
 
+// 注入按键/字符同步喂 ImGui (与 OS KEY/CHAR 事件先喂 simgui 同一通道), 文本焦点与快捷键让位才可被注入取证
+void input_feed_ui_key(int key_code, bool down) {
+    extern void simgui_inject_key_wrapper(int, bool);
+    simgui_inject_key_wrapper(key_code, down);
+}
+
+void input_feed_ui_text(const char* utf8) {
+    extern void simgui_inject_text_wrapper(const char*);
+    simgui_inject_text_wrapper(utf8);
+}
+
 void input_queue_scroll(float dx, float dy) {
     _queued_scroll_x += dx;
     _queued_scroll_y += dy;

@@ -204,4 +204,16 @@ void simgui_inject_mouse_button_wrapper(int mouse_button, bool down) {
     simgui_add_mouse_button_event(mouse_button, down);
 }
 
+// 注入按键/字符同走 ImGui 输入通道 (同 simgui_handle_event 的 KEY_DOWN/KEY_UP/CHAR 分支):
+// 键码为 sapp_keycode, 经 simgui_map_keycode 映射; 字符按 UTF-8 送入
+void simgui_inject_key_wrapper(int sapp_key_code, bool down) {
+    if (!s_simgui_initialized) return;
+    simgui_add_key_event(simgui_map_keycode((sapp_keycode)sapp_key_code), down);
+}
+
+void simgui_inject_text_wrapper(const char* utf8) {
+    if (!s_simgui_initialized) return;
+    simgui_add_input_characters_utf8(utf8);
+}
+
 }
