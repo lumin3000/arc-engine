@@ -31,6 +31,8 @@ extern bool simgui_handle_event_wrapper(const sapp_event *event);
 extern int simgui_get_draw_call_count(void);
 extern int simgui_get_effective_draw_count(void);
 extern int simgui_get_texture_switch_count(void);
+extern int simgui_get_list_stats(int index, const char** owner, int* cmds, int* effective,
+                                 int* tex_switches, int* out_total);
 extern float simgui_get_font_em_scale(void);
 extern uint64_t simgui_texture_id_wrapper(sg_view view);
 extern bool atlas_texture_get(int texture_id, sg_image *image, sg_view *view);
@@ -884,6 +886,28 @@ static JSValue js_imgui_get_effective_draw_count(JSContext *ctx,
   return JS_NewInt32(ctx, simgui_get_effective_draw_count());
 }
 
+// imgui.get_draw_list_stats() — 上一帧按 draw list (= ImGui 窗口) 拆分:
+// [{owner, cmds, effective, texSwitches}], 另带 .total (真实 list 数, 数组上限 32)。
+// 用途: 把 UI 本体与调试叠层/其他窗口的命令数分开统计, 不混称整帧总数。
+static JSValue js_imgui_get_draw_list_stats(JSContext *ctx, JSValueConst this_val,
+                                            int argc, JSValueConst *argv) {
+  JSValue arr = JS_NewArray(ctx);
+  int total = 0;
+  for (int i = 0;; i++) {
+    const char *owner = NULL;
+    int cmds = 0, eff = 0, ts = 0;
+    if (!simgui_get_list_stats(i, &owner, &cmds, &eff, &ts, &total)) break;
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "owner", JS_NewString(ctx, owner ? owner : ""));
+    JS_SetPropertyStr(ctx, o, "cmds", JS_NewInt32(ctx, cmds));
+    JS_SetPropertyStr(ctx, o, "effective", JS_NewInt32(ctx, eff));
+    JS_SetPropertyStr(ctx, o, "texSwitches", JS_NewInt32(ctx, ts));
+    JS_SetPropertyUint32(ctx, arr, (uint32_t)i, o);
+  }
+  JS_SetPropertyStr(ctx, arr, "total", JS_NewInt32(ctx, total));
+  return arr;
+}
+
 // imgui.get_texture_switch_count() — 上一帧有效命令序列中的纹理切换次数
 static JSValue js_imgui_get_texture_switch_count(JSContext *ctx,
                                                  JSValueConst this_val, int argc,
@@ -1495,6 +1519,7 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "get_draw_call_count", js_imgui_get_draw_call_count, 0);
   REG(imgui, "get_effective_draw_count", js_imgui_get_effective_draw_count, 0);
   REG(imgui, "get_texture_switch_count", js_imgui_get_texture_switch_count, 0);
+  REG(imgui, "get_draw_list_stats", js_imgui_get_draw_list_stats, 0);
 
   // Input query
   REG(imgui, "want_capture_mouse", js_imgui_want_capture_mouse, 0);
