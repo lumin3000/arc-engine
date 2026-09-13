@@ -359,8 +359,46 @@ static FMOD_SOUND* cue_sample_acquire(const char* path) {
     return snd;
 }
 
-// 主线程每帧调用（sound_update 内）：先消费命令，再轮询回收活声位。
+// 主线程每帧调用（sound_update 内）：先回收已播完声位，再消费命令。
+// 顺序不可倒——若先分配后回收，本帧实际已结束的声位会被容量判断误当
+// 仍占用，8 声位满时丢掉本该能播的新请求（Codex 首版审查发现 1）。
 static void cue_main_thread_tick(void) {
+    // 活声位轮询回收。EOS 判定与音乐同源（IsPlaying OK+false 或
+    // INVALID_HANDLE=句柄自然失效）。样本常驻缓存，声位回收不 Release sound。
+    for (int i = cue.voice_count - 1; i >= 0; i--) {
+        FMOD_BOOL playing = 0;
+        FMOD_RESULT r = FMOD_Channel_IsPlaying(cue.voices[i], &playing);
+        if (r == FMOD_OK && playing) continue;
+        if (r == FMOD_OK || r == FMOD_ERR_INVALID_HANDLE) {
+            cue.voices[i] = cue.voices[--cue.voice_count];
+            cue_lock_acquire();
+            cue.status.ended_total++;
+            cue.status.active_voices = cue.voice_count;
+            cue_lock_release();
+            LOG_INFO("[sound] cue ended (voices %d)\n", cue.voice_count);
+            continue;
+        }
+        // 非自然 EOS 的 IsPlaying 错误：句柄状态不明。退役跟踪前必须先
+        // Stop，避免留下无人拥有的活声道（Codex 首版审查发现 2）。原始
+        // IsPlaying 错误先记录，不被 Stop 结果吞掉。
+        cue_set_failed((int)r, "Cue_IsPlaying");
+        FMOD_RESULT rs = FMOD_Channel_Stop(cue.voices[i]);
+        if (rs == FMOD_OK || rs == FMOD_ERR_INVALID_HANDLE || rs == FMOD_ERR_CHANNEL_STOLEN) {
+            // 已停 / 句柄已失效 / 已被抢占——确认无活声道，安全退役
+            cue.voices[i] = cue.voices[--cue.voice_count];
+            cue_lock_acquire();
+            cue.status.active_voices = cue.voice_count;
+            cue_lock_release();
+            LOG_ERROR("[sound] cue voice retired after IsPlaying error (Stop=%s)\n",
+                      FMOD_ErrorString(rs));
+        } else {
+            // Stop 也异常失败：声道可能仍在播，保留跟踪下帧重试，
+            // 不失去拥有者；失败明确记录（覆盖 last_error 为 Stop 错误，
+            // IsPlaying 错误已在上面计数+日志留痕）
+            cue_set_failed((int)rs, "Cue_StopAfterIsPlayingError");
+        }
+    }
+
     // 整批取走命令（锁内只拷数据）
     Sound_Cue_Cmd batch[SOUND_CUE_QUEUE_CAP];
     int batch_count;
@@ -408,29 +446,6 @@ static void cue_main_thread_tick(void) {
         cue.status.active_voices = cue.voice_count;
         cue_lock_release();
         LOG_INFO("[sound] cue started: %s (voices %d)\n", batch[i].path, cue.voice_count);
-    }
-
-    // 活声位轮询回收。EOS 判定与音乐同源（IsPlaying OK+false 或
-    // INVALID_HANDLE=句柄自然失效）；其他错误按失败记录后同样回收声位，
-    // 不吞 code/context。样本常驻缓存，声位回收不 Release sound。
-    for (int i = cue.voice_count - 1; i >= 0; i--) {
-        FMOD_BOOL playing = 0;
-        FMOD_RESULT r = FMOD_Channel_IsPlaying(cue.voices[i], &playing);
-        if (r == FMOD_OK && playing) continue;
-        bool natural_eos = (r == FMOD_OK || r == FMOD_ERR_INVALID_HANDLE);
-        cue.voices[i] = cue.voices[--cue.voice_count];
-        if (natural_eos) {
-            cue_lock_acquire();
-            cue.status.ended_total++;
-            cue.status.active_voices = cue.voice_count;
-            cue_lock_release();
-            LOG_INFO("[sound] cue ended (voices %d)\n", cue.voice_count);
-        } else {
-            cue_set_failed((int)r, "Cue_IsPlaying");
-            cue_lock_acquire();
-            cue.status.active_voices = cue.voice_count;
-            cue_lock_release();
-        }
     }
 }
 
