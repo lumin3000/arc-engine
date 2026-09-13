@@ -60,25 +60,26 @@ static void music_lock_release(void) {
     atomic_flag_clear_explicit(&music_lock, memory_order_release);
 }
 
-void sound_music_request_play(const char* path, float volume) {
+bool sound_music_request_play(const char* path, float volume) {
+    // 请求级参数错误：拒绝本次请求即可，不触碰 status/pending——
+    // 现曲若在播必须继续播，全局状态不能被一次坏调用污染。
     if (!path || !path[0] || strlen(path) >= SOUND_MUSIC_PATH_MAX) {
         LOG_ERROR("[sound] music play rejected: path empty or >= %d chars\n",
                   SOUND_MUSIC_PATH_MAX);
-        music_lock_acquire();
-        music.status.state = SOUND_MUSIC_FAILED;
-        music.status.error_code = FMOD_ERR_INVALID_PARAM;
-        snprintf(music.status.error_context, SOUND_MUSIC_ERRCTX_MAX, "path_validate");
-        music_lock_release();
-        return;
+        return false;
     }
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
+    if (!(volume >= 0.0f && volume <= 1.0f)) {  // NaN/Inf/越界一并拒绝
+        LOG_ERROR("[sound] music play rejected: volume %f not in [0,1]\n",
+                  (double)volume);
+        return false;
+    }
     music_lock_acquire();
     music.pending_cmd = 1;
     // 长度已校验 < SOUND_MUSIC_PATH_MAX，strncpy 必然 NUL 结尾
     strncpy(music.pending_path, path, SOUND_MUSIC_PATH_MAX);
     music.pending_volume = volume;
     music_lock_release();
+    return true;
 }
 
 void sound_music_request_stop(void) {
@@ -160,14 +161,28 @@ static void music_main_thread_tick(void) {
             music_set_failed(r, "Sound_GetLength");
             return;
         }
+        // 先 paused 起播，音量设置成功后才解除暂停，避免初始一瞬满音量
         FMOD_CHANNEL* ch = NULL;
-        r = FMOD_System_PlaySound(state.core_system, snd, NULL, 0, &ch);
+        r = FMOD_System_PlaySound(state.core_system, snd, NULL, 1, &ch);
         if (r != FMOD_OK) {
             FMOD_Sound_Release(snd);
             music_set_failed(r, "System_PlaySound");
             return;
         }
-        fmod_error_check(FMOD_Channel_SetVolume(ch, volume), "Channel_SetVolume (music)");
+        r = FMOD_Channel_SetVolume(ch, volume);
+        if (r != FMOD_OK) {
+            FMOD_Channel_Stop(ch);
+            FMOD_Sound_Release(snd);
+            music_set_failed(r, "Channel_SetVolume");
+            return;
+        }
+        r = FMOD_Channel_SetPaused(ch, 0);
+        if (r != FMOD_OK) {
+            FMOD_Channel_Stop(ch);
+            FMOD_Sound_Release(snd);
+            music_set_failed(r, "Channel_SetPaused");
+            return;
+        }
         music.music_sound = snd;
         music.music_channel = ch;
         music_lock_acquire();
@@ -181,25 +196,44 @@ static void music_main_thread_tick(void) {
         LOG_INFO("[sound] music playing: %s (%u ms)\n", path, length_ms);
     }
 
-    // 刷新在播状态
+    // 刷新在播状态。错误分类：
+    //   IsPlaying OK + false            → 正常 EOS
+    //   IsPlaying ERR_INVALID_HANDLE    → 也判 EOS。依据：FMOD Core 的 Channel
+    //     是复用型轻句柄，声音自然播完后句柄即失效，后续 Channel API 返回
+    //     FMOD_ERR_INVALID_HANDLE（FMOD 2.02 docs, Core API Channel /
+    //     "Channel handles ... become invalid when the sound finishes"）。
+    //     本处 channel 只被本模块持有、上一帧还在播，失效的唯一正常来源
+    //     就是曲尾。
+    //   IsPlaying ERR_CHANNEL_STOLEN    → 不是曲尾：声道被虚拟化/抢占，属
+    //     异常（音乐是唯一 Core 声道，512 上限下不应发生），按 API 错误记
+    //     failed 保留 code/context。
+    //   其他错误                        → failed，保留 code/context。
+    // 所有离开 PLAYING 的分支都释放资源。
     if (music.music_channel) {
         FMOD_BOOL playing = 0;
         FMOD_RESULT r = FMOD_Channel_IsPlaying(music.music_channel, &playing);
         if (r == FMOD_OK && playing) {
             unsigned int pos = 0;
-            if (FMOD_Channel_GetPosition(music.music_channel, &pos, FMOD_TIMEUNIT_MS) == FMOD_OK) {
+            FMOD_RESULT rp = FMOD_Channel_GetPosition(music.music_channel, &pos, FMOD_TIMEUNIT_MS);
+            if (rp == FMOD_OK) {
                 music_lock_acquire();
                 music.status.position_ms = pos;
                 music_lock_release();
+            } else {
+                // 位置查询在在播声道上失败不是可继续状态，按错误收束（不吞）
+                music_release_current();
+                music_set_failed(rp, "Channel_GetPosition");
             }
-        } else {
-            // 自然结束（EOS 后声道失效返回 INVALID_HANDLE 也走这里）
+        } else if (r == FMOD_OK || r == FMOD_ERR_INVALID_HANDLE) {
             music_release_current();
             music_lock_acquire();
             music.status.state = SOUND_MUSIC_ENDED;
             music.status.position_ms = 0;
             music_lock_release();
-            LOG_INFO("[sound] music ended (EOS)\n");
+            LOG_INFO("[sound] music ended (EOS, IsPlaying=%s)\n", FMOD_ErrorString(r));
+        } else {
+            music_release_current();
+            music_set_failed(r, "Channel_IsPlaying");
         }
     }
 }
@@ -213,9 +247,21 @@ static void delete_emitter(Sound_Emitter* emitter) {
     emitter->last_update_tick = 0;
 }
 
+// 初始化链失败即 fatal（项目 Fail-Fast 规则：基础设施损坏 exit(1)）。
+// 本播放器与所有后续声音都依赖这四步；不允许假 initialized=true 继续。
+static void fmod_init_require(FMOD_RESULT result, const char* context) {
+    if (result != FMOD_OK) {
+        LOG_ERROR("[sound] FATAL: %s failed: %s (%d) — sound system unusable\n",
+                  context, FMOD_ErrorString(result), (int)result);
+        exit(1);
+    }
+}
+
 void sound_init(void) {
     FMOD_RESULT result;
 
+    // release 版 libfmod 不带 debug 日志，返回 UNSUPPORTED 是已知可解释现象，
+    // 保持非致命检查（logging 版 libfmodL 才支持）。
     result = FMOD_Debug_Initialize(
         FMOD_DEBUG_LEVEL_WARNING,
         FMOD_DEBUG_MODE_TTY,
@@ -225,7 +271,7 @@ void sound_init(void) {
     fmod_error_check(result, "Debug_Initialize");
 
     result = FMOD_Studio_System_Create(&state.system, FMOD_VERSION);
-    fmod_error_check(result, "Studio_System_Create");
+    fmod_init_require(result, "Studio_System_Create");
 
     result = FMOD_Studio_System_Initialize(
         state.system,
@@ -234,7 +280,7 @@ void sound_init(void) {
         FMOD_INIT_NORMAL,
         NULL
     );
-    fmod_error_check(result, "Studio_System_Initialize");
+    fmod_init_require(result, "Studio_System_Initialize");
 
     result = FMOD_Studio_System_LoadBankFile(
         state.system,
@@ -253,10 +299,20 @@ void sound_init(void) {
     fmod_error_check(result, "LoadBankFile (Master.strings.bank)");
 
     result = FMOD_Studio_System_GetCoreSystem(state.system, &state.core_system);
-    fmod_error_check(result, "GetCoreSystem");
+    fmod_init_require(result, "GetCoreSystem");
 
     result = FMOD_System_GetMasterChannelGroup(state.core_system, &state.master_ch_group);
-    fmod_error_check(result, "GetMasterChannelGroup");
+    fmod_init_require(result, "GetMasterChannelGroup");
+
+    // 记录携带二进制的实际运行版本（0xaaaabbcc）；头文件宏只是编译期假设
+    unsigned int fmod_runtime_version = 0;
+    result = FMOD_System_GetVersion(state.core_system, &fmod_runtime_version);
+    fmod_error_check(result, "System_GetVersion");
+    if (result == FMOD_OK) {
+        LOG_INFO("[sound] FMOD runtime version %x.%02x.%02x (header 0x%08x)\n",
+                 fmod_runtime_version >> 16, (fmod_runtime_version >> 8) & 0xff,
+                 fmod_runtime_version & 0xff, FMOD_VERSION);
+    }
 
     state.emitter_capacity = 16;
     state.emitters = (Sound_Emitter*)calloc(state.emitter_capacity, sizeof(Sound_Emitter));

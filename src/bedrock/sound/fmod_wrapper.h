@@ -126,7 +126,9 @@ FMOD_RESULT FMOD5_System_CreateSound(FMOD_SYSTEM* system, const char* name_or_da
 FMOD_RESULT FMOD5_System_PlaySound(FMOD_SYSTEM* system, FMOD_SOUND* sound, FMOD_CHANNELGROUP* channelgroup, FMOD_BOOL paused, FMOD_CHANNEL** channel);
 FMOD_RESULT FMOD5_Sound_Release(FMOD_SOUND* sound);
 FMOD_RESULT FMOD5_Sound_GetLength(FMOD_SOUND* sound, unsigned int* length, FMOD_TIMEUNIT lengthtype);
+FMOD_RESULT FMOD5_System_GetVersion(FMOD_SYSTEM* system, unsigned int* version);
 FMOD_RESULT FMOD5_Channel_Stop(FMOD_CHANNEL* channel);
+FMOD_RESULT FMOD5_Channel_SetPaused(FMOD_CHANNEL* channel, FMOD_BOOL paused);
 FMOD_RESULT FMOD5_Channel_SetVolume(FMOD_CHANNEL* channel, float volume);
 FMOD_RESULT FMOD5_Channel_IsPlaying(FMOD_CHANNEL* channel, FMOD_BOOL* isplaying);
 FMOD_RESULT FMOD5_Channel_GetPosition(FMOD_CHANNEL* channel, unsigned int* position, FMOD_TIMEUNIT postype);
@@ -157,7 +159,9 @@ FMOD_RESULT FMOD_Studio_EventInstance_SetProperty(FMOD_STUDIO_EVENTINSTANCE* eve
 #define FMOD_System_PlaySound FMOD5_System_PlaySound
 #define FMOD_Sound_Release FMOD5_Sound_Release
 #define FMOD_Sound_GetLength FMOD5_Sound_GetLength
+#define FMOD_System_GetVersion FMOD5_System_GetVersion
 #define FMOD_Channel_Stop FMOD5_Channel_Stop
+#define FMOD_Channel_SetPaused FMOD5_Channel_SetPaused
 #define FMOD_Channel_SetVolume FMOD5_Channel_SetVolume
 #define FMOD_Channel_IsPlaying FMOD5_Channel_IsPlaying
 #define FMOD_Channel_GetPosition FMOD5_Channel_GetPosition

@@ -14,6 +14,7 @@
 #include "../log.h"
 #include "bedrock/sound/sound.h"
 #include "quickjs.h"
+#include <string.h>
 
 static JSValue js_audio_music_play(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv) {
@@ -25,19 +26,33 @@ static JSValue js_audio_music_play(JSContext *ctx, JSValueConst this_val,
   if (argc >= 2 && !JS_IsUndefined(argv[1])) {
     if (JS_ToFloat64(ctx, &volume, argv[1]))
       return JS_ThrowTypeError(ctx, "music_play volume must be a number");
+    // NaN/±Inf 与越界一并在此同步拒绝（NaN 使比较为假）
     if (!(volume >= 0.0 && volume <= 1.0))
-      return JS_ThrowRangeError(ctx, "music_play volume must be in [0,1]");
+      return JS_ThrowRangeError(ctx, "music_play volume must be a finite number in [0,1]");
   }
 
-  const char *path = JS_ToCString(ctx, argv[0]);
+  size_t path_len = 0;
+  const char *path = JS_ToCStringLen(ctx, &path_len, argv[0]);
   if (!path) return JS_EXCEPTION;
-  if (!path[0]) {
+  if (path_len == 0) {
     JS_FreeCString(ctx, path);
     return JS_ThrowTypeError(ctx, "music_play path must be non-empty");
   }
-  // sound_music_request_play 内部复制路径，不跨帧借用 JS 内存
-  sound_music_request_play(path, (float)volume);
+  if (strlen(path) != path_len) {
+    JS_FreeCString(ctx, path);
+    return JS_ThrowTypeError(ctx, "music_play path must not contain NUL");
+  }
+  if (path_len >= SOUND_MUSIC_PATH_MAX) {
+    JS_FreeCString(ctx, path);
+    return JS_ThrowRangeError(ctx, "music_play path too long (max %d)",
+                              SOUND_MUSIC_PATH_MAX - 1);
+  }
+  // sound_music_request_play 内部复制路径，不跨帧借用 JS 内存；
+  // false = C 侧拒绝（防绑定与 C 校验漂移的双保险），同步抛出不改播放状态
+  bool accepted = sound_music_request_play(path, (float)volume);
   JS_FreeCString(ctx, path);
+  if (!accepted)
+    return JS_ThrowInternalError(ctx, "music_play rejected by native validation");
   return JS_UNDEFINED;
 }
 

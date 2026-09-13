@@ -41,9 +41,10 @@ typedef struct {
 } Sound_Music_Status;
 
 // 请求播放一个音频文件（绝对或工作目录相对路径）。volume ∈ [0,1]。
-// 覆盖语义：受理时先停止并释放现曲，同一时刻最多一路。路径超长立即拒绝
-// （置 FAILED / FMOD_ERR_INVALID_PARAM，不入队）。
-void sound_music_request_play(const char* path, float volume);
+// 覆盖语义：受理时先停止并释放现曲，同一时刻最多一路。
+// 返回 false = 请求级参数无效（空/超长路径、非有限或越界音量）被拒绝，
+// 此时不入队、不修改全局状态（现曲继续播）；调用方应把 false 当错误上报。
+bool sound_music_request_play(const char* path, float volume);
 
 // 请求停止当前音乐；幂等，无曲时无效果。
 void sound_music_request_stop(void);
