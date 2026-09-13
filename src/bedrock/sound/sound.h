@@ -51,6 +51,41 @@ void sound_music_request_stop(void);
 
 Sound_Music_Status sound_music_get_status(void);
 
+// ---------------------------------------------------------------------------
+// 单次 2D 短声效（cue）。与音乐同一 FMOD Core System、同一"任意线程请求/
+// 主线程 sound_update 消费"模型；命令信箱与状态完全独立于音乐，互不覆盖。
+// 短样本按路径常驻缓存复用（CREATESAMPLE 全解码），实例播完自动回收。
+// 只有一次性 2D 播放：无循环、无 3D 位置、无独立总线。
+
+#define SOUND_CUE_QUEUE_CAP 8        // 单帧待消费命令上限（超出同步拒绝）
+#define SOUND_CUE_MAX_VOICES 8       // 并发活实例上限（超出消费期丢弃）
+#define SOUND_CUE_SAMPLE_CACHE_CAP 8 // 常驻样本缓存上限（按路径去重）
+
+typedef enum {
+    SOUND_CUE_ACCEPTED = 0,          // 已入队，主线程本帧消费
+    SOUND_CUE_REJECT_INVALID = 1,    // 参数无效（空/超长路径、非有限或越界音量）
+    SOUND_CUE_REJECT_QUEUE_FULL = 2, // 命令队列满
+} Sound_Cue_Request_Result;
+
+typedef struct {
+    int active_voices;                        // 当前在播实例数
+    unsigned int accepted_total;              // 入队成功次数
+    unsigned int started_total;               // 主线程起播成功次数
+    unsigned int ended_total;                 // 自然播完回收次数
+    unsigned int rejected_queue_full_total;   // 请求期队列满拒绝次数
+    unsigned int dropped_voice_limit_total;   // 消费期并发满丢弃次数
+    unsigned int failed_total;                // FMOD/缓存失败次数
+    int last_error_code;                      // 最近失败 FMOD_RESULT（缓存满=-1）
+    char last_error_context[SOUND_MUSIC_ERRCTX_MAX]; // 最近失败调用名
+} Sound_Cue_Status;
+
+// 请求播放一次短声效（绝对或工作目录相对路径）。volume ∈ [0,1]。
+// 拒绝（INVALID/QUEUE_FULL）同步返回、不入队、不触碰任何播放中状态；
+// 文件不存在等 IO/FMOD 错误在主线程消费时暴露于 status（异步）。
+Sound_Cue_Request_Result sound_cue_request_play(const char* path, float volume);
+
+Sound_Cue_Status sound_cue_get_status(void);
+
 // 主线程退出收尾：停音乐、释放 Studio/Core。仅 engine cleanup 调用。
 void sound_shutdown(void);
 
