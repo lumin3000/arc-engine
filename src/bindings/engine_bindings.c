@@ -28,6 +28,15 @@ static JSValue js_coord_set_camera_controls_blocked(JSContext *js_ctx,
   return JS_UNDEFINED;
 }
 
+static JSValue js_coord_set_camera_wheel_blocked(JSContext *js_ctx,
+    JSValueConst this_val, int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc != 1 || !JS_IsBool(argv[0]))
+    return JS_ThrowTypeError(js_ctx, "set_camera_wheel_blocked requires bool");
+  engine_set_camera_wheel_blocked(JS_ToBool(js_ctx, argv[0]));
+  return JS_UNDEFINED;
+}
+
 static JSValue js_coord_push_world_space(JSContext *js_ctx,
                                          JSValueConst this_val, int argc,
                                          JSValueConst *argv) {
@@ -402,6 +411,8 @@ int js_init_engine_module(JSContext *js_ctx) {
 
   JS_SetPropertyStr(js_ctx, coord_obj, "set_camera_controls_blocked",
       JS_NewCFunction(js_ctx, js_coord_set_camera_controls_blocked, "set_camera_controls_blocked", 1));
+  JS_SetPropertyStr(js_ctx, coord_obj, "set_camera_wheel_blocked",
+      JS_NewCFunction(js_ctx, js_coord_set_camera_wheel_blocked, "set_camera_wheel_blocked", 1));
   JS_SetPropertyStr(js_ctx, coord_obj, "push_world_space",
                     JS_NewCFunction(js_ctx, js_coord_push_world_space,
                                     "push_world_space", 0));

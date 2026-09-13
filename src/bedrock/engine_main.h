@@ -138,6 +138,10 @@ JSContext  *arc_engine_js_context(Arc_Engine *eng);    // NULL before js_runtime
 // Block built-in camera input while an application owns a modal view.
 void engine_set_camera_controls_blocked(bool blocked);
 
+// Block only the built-in scroll-wheel zoom (keyboard pan/zoom untouched) —
+// for pointer-over-UI regions with their own wheel handling (scroll lists).
+void engine_set_camera_wheel_blocked(bool blocked);
+
 // Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
 // lives in engine_state.h. Not intended as game-facing API.
 

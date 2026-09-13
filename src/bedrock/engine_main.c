@@ -41,9 +41,14 @@
 // declared there.
 
 static atomic_bool camera_controls_blocked = false;
+static atomic_bool camera_wheel_blocked = false;
 
 void engine_set_camera_controls_blocked(bool blocked) {
   atomic_store(&camera_controls_blocked, blocked);
+}
+
+void engine_set_camera_wheel_blocked(bool blocked) {
+  atomic_store(&camera_wheel_blocked, blocked);
 }
 
 int window_w = DEFAULT_WINDOW_WIDTH;
@@ -204,7 +209,7 @@ static void engine_on_frame(void) {
     if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;
 
     float scroll = input_state->scroll_y;
-    if (scroll != 0.0f) {
+    if (scroll != 0.0f && !atomic_load(&camera_wheel_blocked)) {
       float zoom_delta = scroll * SCROLL_ZOOM_RATE * ZOOM_SPEED / 35.0f;
       ctx.gs->desired_zoom_level *= (1.0f + zoom_delta);
     }
