@@ -390,6 +390,21 @@ Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv) {
 
   if (g_cfg.window_w > 0) window_w = g_cfg.window_w;
   if (g_cfg.window_h > 0) window_h = g_cfg.window_h;
+  // ARC_WINDOW_SIZE=WxH: 启动时覆盖消费者给的窗口尺寸 (多分辨率验收/截图用)。
+  // 格式非法即拒绝启动 (fail-fast), 不静默回落默认尺寸。
+  const char *size_env = getenv("ARC_WINDOW_SIZE");
+  if (size_env && size_env[0]) {
+    int ew = 0, eh = 0;
+    char tail = 0;
+    if (sscanf(size_env, "%dx%d%c", &ew, &eh, &tail) != 2 || ew < 320 || eh < 240
+        || ew > 8192 || eh > 8192) {
+      fprintf(stderr, "[arc_engine_create] ARC_WINDOW_SIZE must be WxH (320..8192), got '%s'\n",
+              size_env);
+      return NULL;
+    }
+    window_w = ew;
+    window_h = eh;
+  }
   if (g_cfg.default_run_mode) g_run_mode = g_cfg.default_run_mode;
   if (g_cfg.master_volume > 0.0f) g_master_volume = g_cfg.master_volume;
 
