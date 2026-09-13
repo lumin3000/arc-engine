@@ -219,8 +219,17 @@ static void music_main_thread_tick(void) {
                 music_lock_acquire();
                 music.status.position_ms = pos;
                 music_lock_release();
+            } else if (rp == FMOD_ERR_INVALID_HANDLE) {
+                // IsPlaying 成功与 GetPosition 之间声音恰好自然播完的竞态：
+                // 句柄失效语义与上面 EOS 判定同源，按正常曲尾收束，不记 failed
+                music_release_current();
+                music_lock_acquire();
+                music.status.state = SOUND_MUSIC_ENDED;
+                music.status.position_ms = 0;
+                music_lock_release();
+                LOG_INFO("[sound] music ended (EOS, GetPosition=INVALID_HANDLE race)\n");
             } else {
-                // 位置查询在在播声道上失败不是可继续状态，按错误收束（不吞）
+                // 其他位置查询失败不是可继续状态，按错误收束（不吞）
                 music_release_current();
                 music_set_failed(rp, "Channel_GetPosition");
             }
