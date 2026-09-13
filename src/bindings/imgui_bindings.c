@@ -34,6 +34,7 @@ extern int simgui_get_texture_switch_count(void);
 extern float simgui_get_font_em_scale(void);
 extern uint64_t simgui_texture_id_wrapper(sg_view view);
 extern bool atlas_texture_get(int texture_id, sg_image *image, sg_view *view);
+extern bool graphics_texture_lookup(int texture_id, sg_image *image, sg_view *view);
 
 // ============================================================================
 // Global state
@@ -513,8 +514,11 @@ static JSValue js_imgui_draw_image(JSContext *ctx, JSValueConst this_val, int ar
   if (v[2] <= 0 || v[3] <= 0) return JS_ThrowInternalError(ctx, "draw_image dimensions must be positive");
   sg_image image;
   sg_view view;
-  if (!atlas_texture_get(texture_id, &image, &view))
-    return JS_ThrowInternalError(ctx, "draw_image requires a loaded atlas texture: %d", texture_id);
+  // 纹理来源两级: atlas 池 (unified_mesh, id≥offset) → graphics 池
+  // (load_texture / staged 合成页) — 与 draw_mesh 的纹理解析次序一致
+  if (!atlas_texture_get(texture_id, &image, &view)
+      && !graphics_texture_lookup(texture_id, &image, &view))
+    return JS_ThrowInternalError(ctx, "draw_image: texture %d not found in atlas or graphics pool", texture_id);
   ImDrawList *dl = igGetWindowDrawList();
   if (!dl) return JS_ThrowInternalError(ctx, "draw_image requires an active window");
   ImTextureRef_c texture = {0};

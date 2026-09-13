@@ -424,6 +424,21 @@ typedef struct {
 
 static GraphicsTextureCache g_graphics_textures[MAX_GRAPHICS_TEXTURES];
 
+// 供同层其他绑定查询 graphics 纹理池 (load_texture / texture_create_staged 页):
+// imgui draw_image 的第二纹理来源 — atlas 池 (unified_mesh) 查不到时回退到这里。
+// 声明方式与 atlas_texture_get 的跨文件 extern 惯例一致。
+bool graphics_texture_lookup(int texture_id, sg_image *out_image,
+                             sg_view *out_view) {
+  if (texture_id < 0 || texture_id >= MAX_GRAPHICS_TEXTURES)
+    return false;
+  GraphicsTextureCache *gt = &g_graphics_textures[texture_id];
+  if (!gt->valid)
+    return false;
+  *out_image = gt->image;
+  *out_view = gt->view;
+  return true;
+}
+
 // stb_image externs (if not included via header)
 extern void stbi_set_flip_vertically_on_load(int flag);
 extern unsigned char *stbi_load_from_memory(const unsigned char *buffer,
