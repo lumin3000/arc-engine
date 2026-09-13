@@ -322,6 +322,21 @@ static JSValue js_input_inject_mouse_pos(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
+// input.inject_scroll(dx, dy) — 本帧滚轮增量 (与真实滚轮同一 scroll_x/y 字段, 帧末随输入复位)
+static JSValue js_input_inject_scroll(JSContext *ctx, JSValueConst this_val,
+                                      int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 2) {
+    return JS_ThrowTypeError(ctx, "inject_scroll requires 2 arguments (dx, dy)");
+  }
+  if (!input_state) return JS_UNDEFINED;
+  double dx, dy;
+  if (JS_ToFloat64(ctx, &dx, argv[0]) < 0 || JS_ToFloat64(ctx, &dy, argv[1]) < 0) return JS_EXCEPTION;
+  input_state->scroll_x += (float)dx;
+  input_state->scroll_y += (float)dy;
+  return JS_UNDEFINED;
+}
+
 // input.inject_mouse_down(btn) — 模拟鼠标按钮按下
 // btn: 0=左, 1=中, 2=右
 static JSValue js_input_inject_mouse_down(JSContext *ctx, JSValueConst this_val,
@@ -566,6 +581,8 @@ int js_init_input_module(JSContext *ctx) {
   // Test Mock API
   JS_SetPropertyStr(ctx, obj, "inject_mouse_pos",
                     JS_NewCFunction(ctx, js_input_inject_mouse_pos, "inject_mouse_pos", 2));
+  JS_SetPropertyStr(ctx, obj, "inject_scroll",
+                    JS_NewCFunction(ctx, js_input_inject_scroll, "inject_scroll", 2));
   JS_SetPropertyStr(ctx, obj, "inject_mouse_down",
                     JS_NewCFunction(ctx, js_input_inject_mouse_down, "inject_mouse_down", 1));
   JS_SetPropertyStr(ctx, obj, "inject_mouse_up",
