@@ -322,7 +322,8 @@ static JSValue js_input_inject_mouse_pos(JSContext *ctx, JSValueConst this_val,
   return JS_UNDEFINED;
 }
 
-// input.inject_scroll(dx, dy) — 本帧滚轮增量 (与真实滚轮同一 scroll_x/y 字段, 帧末随输入复位)
+// input.inject_scroll(dx, dy) — 滚轮增量, 排队到下一帧开头并入 scroll_x/y
+// (与 OS 滚轮事件同一时序: 引擎相机缩放与脚本在下一帧都能看到; 帧末随输入复位)
 static JSValue js_input_inject_scroll(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv) {
   (void)this_val;
@@ -332,8 +333,7 @@ static JSValue js_input_inject_scroll(JSContext *ctx, JSValueConst this_val,
   if (!input_state) return JS_UNDEFINED;
   double dx, dy;
   if (JS_ToFloat64(ctx, &dx, argv[0]) < 0 || JS_ToFloat64(ctx, &dy, argv[1]) < 0) return JS_EXCEPTION;
-  input_state->scroll_x += (float)dx;
-  input_state->scroll_y += (float)dy;
+  input_queue_scroll((float)dx, (float)dy);
   return JS_UNDEFINED;
 }
 

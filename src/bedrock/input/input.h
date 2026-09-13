@@ -180,4 +180,8 @@ void event_callback(const struct sapp_event* event);
 // 仅 inject_* API 写输入态 (自动化测试的确定性保证)
 void input_set_injection_lock(bool locked);
 
+// 注入滚轮: 排队到下一帧开头并入输入态 (与 OS 滚轮事件同一时序, 相机与脚本均可见)
+void input_queue_scroll(float dx, float dy);
+void input_apply_queued_scroll(Input* input);
+
 #endif

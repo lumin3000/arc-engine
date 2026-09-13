@@ -171,6 +171,7 @@ static void engine_on_frame(void) {
   ctx.gs->game_time_elapsed = now;
 
   input_state = &_actual_input_state;
+  input_apply_queued_scroll(input_state);   // 注入滚轮与 OS 滚轮同时序 (早于下方相机缩放读取)
   if (key_pressed(KEY_ENTER) && key_down(KEY_LEFT_ALT)) {
     sapp_toggle_fullscreen();
   }

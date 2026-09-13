@@ -88,6 +88,25 @@ void input_set_injection_lock(bool locked) {
     _injection_lock = locked;
 }
 
+// 注入滚轮排队: OS 滚轮事件在帧间到达, 帧开头已在输入态里, 引擎相机缩放在执行 JS 之前读取;
+// 若注入直接写输入态 (JS 渲染回调中), 同帧相机已读过、帧末又被清零, 注入永远到不了相机。
+// 故注入累积到队列, 由帧开头 input_apply_queued_scroll 并入 — 与真实滚轮同一时序
+// (相机与 JS 在下一帧看到同一增量)。
+static float _queued_scroll_x = 0.0f;
+static float _queued_scroll_y = 0.0f;
+
+void input_queue_scroll(float dx, float dy) {
+    _queued_scroll_x += dx;
+    _queued_scroll_y += dy;
+}
+
+void input_apply_queued_scroll(Input* input) {
+    input->scroll_x += _queued_scroll_x;
+    input->scroll_y += _queued_scroll_y;
+    _queued_scroll_x = 0.0f;
+    _queued_scroll_y = 0.0f;
+}
+
 static bool _is_user_input_event(sapp_event_type t) {
     switch (t) {
         case SAPP_EVENTTYPE_MOUSE_MOVE:
