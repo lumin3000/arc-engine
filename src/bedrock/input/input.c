@@ -95,6 +95,18 @@ void input_set_injection_lock(bool locked) {
 static float _queued_scroll_x = 0.0f;
 static float _queued_scroll_y = 0.0f;
 
+// 注入指针同步喂 ImGui (与 event_callback 中 OS 事件先喂 simgui 同一通道): 注入锁跳过的是真实
+// 光标事件, 注入事件本身必须让 ImGui 知道指针位置/按钮, UI 悬停与点击穿透防护才与真实输入一致
+void input_feed_ui_mouse_pos(float x, float y) {
+    extern void simgui_inject_mouse_pos_wrapper(float, float);
+    simgui_inject_mouse_pos_wrapper(x, y);
+}
+
+void input_feed_ui_mouse_button(int mouse_button, bool down) {
+    extern void simgui_inject_mouse_button_wrapper(int, bool);
+    simgui_inject_mouse_button_wrapper(mouse_button, down);
+}
+
 void input_queue_scroll(float dx, float dy) {
     _queued_scroll_x += dx;
     _queued_scroll_y += dy;

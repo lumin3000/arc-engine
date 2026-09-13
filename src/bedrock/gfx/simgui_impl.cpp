@@ -191,4 +191,17 @@ bool simgui_handle_event_wrapper(const sapp_event *event) {
     return simgui_handle_event(event);
 }
 
+// 注入指针 (自动化测试) 走与 OS 事件相同的 ImGui 输入通道: 坐标换算同 simgui_handle_event
+// (sokol_imgui.h MOUSE_MOVE/DOWN/UP 分支按 cur_dpi_scale 缩放), 否则 WantCaptureMouse 恒假
+void simgui_inject_mouse_pos_wrapper(float x, float y) {
+    if (!s_simgui_initialized) return;
+    const float dpi_scale = _simgui.cur_dpi_scale;
+    simgui_add_mouse_pos_event(x / dpi_scale, y / dpi_scale);
+}
+
+void simgui_inject_mouse_button_wrapper(int mouse_button, bool down) {
+    if (!s_simgui_initialized) return;
+    simgui_add_mouse_button_event(mouse_button, down);
+}
+
 }

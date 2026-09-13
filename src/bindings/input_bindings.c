@@ -305,7 +305,13 @@ static JSValue js_input_get_text_input(JSContext *ctx, JSValueConst this_val,
 // Test Mock API - 注入假鼠标事件 (用于自动化测试)
 // ============================================================================
 
-// input.inject_mouse_pos(x, y) — 直接设置鼠标屏幕坐标
+// 注入按钮序 (0=左 1=中 2=右) → sokol/ImGui 按钮序 (SAPP_MOUSEBUTTON_LEFT=0 RIGHT=1 MIDDLE=2,
+// simgui_handle_event 以 (int)ev->mouse_button 喂 ImGui)
+static int inject_button_to_ui(int button) {
+  return button == 1 ? 2 : (button == 2 ? 1 : 0);
+}
+
+// input.inject_mouse_pos(x, y) — 直接设置鼠标屏幕坐标 (同步喂 ImGui 指针位置)
 static JSValue js_input_inject_mouse_pos(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv) {
   (void)this_val;
@@ -317,6 +323,7 @@ static JSValue js_input_inject_mouse_pos(JSContext *ctx, JSValueConst this_val,
   double x, y;
   JS_ToFloat64(ctx, &x, argv[0]);
   JS_ToFloat64(ctx, &y, argv[1]);
+  input_feed_ui_mouse_pos((float)x, (float)y);
   input_state->mouse_x = (float)x;
   input_state->mouse_y = (float)y;
   return JS_UNDEFINED;
@@ -359,6 +366,7 @@ static JSValue js_input_inject_mouse_down(JSContext *ctx, JSValueConst this_val,
   }
 
   input_state->keys[code] |= INPUT_FLAG_DOWN | INPUT_FLAG_PRESSED;
+  input_feed_ui_mouse_button(inject_button_to_ui(button), true);
   return JS_UNDEFINED;
 }
 
@@ -384,6 +392,7 @@ static JSValue js_input_inject_mouse_up(JSContext *ctx, JSValueConst this_val,
 
   input_state->keys[code] &= ~(INPUT_FLAG_DOWN | INPUT_FLAG_PRESSED);
   input_state->keys[code] |= INPUT_FLAG_RELEASED;
+  input_feed_ui_mouse_button(inject_button_to_ui(button), false);
   return JS_UNDEFINED;
 }
 
