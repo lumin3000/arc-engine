@@ -825,6 +825,44 @@ static JSValue js_imgui_calc_text_size(JSContext *ctx, JSValueConst this_val,
   return obj;
 }
 
+// imgui.push_clip_rect(x, y, w, h, [intersect=true]) — 后续绘制原语按矩形裁切。
+// intersect=true 与当前裁切求交（嵌套滚动区语义）; false 直接替换。
+// 必须与 pop_clip_rect 成对, 且在同一窗口 (begin_window/end_window) 内。
+static JSValue js_imgui_push_clip_rect(JSContext *ctx, JSValueConst this_val,
+                                       int argc, JSValueConst *argv) {
+  if (argc < 4)
+    return JS_ThrowInternalError(ctx, "push_clip_rect requires x, y, w, h");
+  double v[4];
+  for (int i = 0; i < 4; i++) {
+    if (JS_ToFloat64(ctx, &v[i], argv[i]) < 0)
+      return JS_EXCEPTION;
+    if (!isfinite(v[i]))
+      return JS_ThrowInternalError(ctx, "push_clip_rect coordinates must be finite");
+  }
+  if (v[2] < 0 || v[3] < 0)
+    return JS_ThrowInternalError(ctx, "push_clip_rect dimensions must be >= 0");
+  int intersect = 1;
+  if (argc > 4)
+    intersect = JS_ToBool(ctx, argv[4]);
+  ImDrawList *dl = igGetWindowDrawList();
+  if (!dl)
+    return JS_ThrowInternalError(ctx, "push_clip_rect requires an active window");
+  ImVec2_c p_min = {(float)v[0], (float)v[1]};
+  ImVec2_c p_max = {(float)(v[0] + v[2]), (float)(v[1] + v[3])};
+  ImDrawList_PushClipRect(dl, p_min, p_max, intersect ? true : false);
+  return JS_UNDEFINED;
+}
+
+// imgui.pop_clip_rect() — 弹出 push_clip_rect 压入的裁切矩形
+static JSValue js_imgui_pop_clip_rect(JSContext *ctx, JSValueConst this_val,
+                                      int argc, JSValueConst *argv) {
+  ImDrawList *dl = igGetWindowDrawList();
+  if (!dl)
+    return JS_ThrowInternalError(ctx, "pop_clip_rect requires an active window");
+  ImDrawList_PopClipRect(dl);
+  return JS_UNDEFINED;
+}
+
 // imgui.get_draw_call_count() — 上一帧 ImGui draw command 总数（合批预算量测）
 static JSValue js_imgui_get_draw_call_count(JSContext *ctx,
                                             JSValueConst this_val, int argc,
@@ -1384,6 +1422,8 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "draw_line", js_imgui_draw_line, 9);
   REG(imgui, "draw_control_text", js_imgui_draw_control_text, 7);
   REG(imgui, "draw_text", js_imgui_draw_control_text, 7);
+  REG(imgui, "push_clip_rect", js_imgui_push_clip_rect, 5);
+  REG(imgui, "pop_clip_rect", js_imgui_pop_clip_rect, 0);
 
   // Style
   REG(imgui, "set_style_color", js_imgui_set_style_color, 5);
