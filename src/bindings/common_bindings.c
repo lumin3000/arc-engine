@@ -1,5 +1,6 @@
 
 #include "common_bindings.h"
+#include "audio_bindings.h"
 #include "batch.h"
 #include "diag_bindings.h"
 #include "draw_bindings.h"
@@ -21,6 +22,7 @@ void arc_register_main_js_bindings(JSContext *ctx) {
   js_init_diag_module(ctx);
   js_init_imgui_module(ctx);
   js_init_batch_module(ctx);
+  js_init_audio_module(ctx);
   // coord / game / config APIs — required in worker ctx (game-side
   // scripts call coord.screen_to_world). js_init_message_module is
   // weak-linked and invoked per-worker by jtask, so the registrar

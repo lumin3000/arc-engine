@@ -244,6 +244,7 @@ static void engine_on_frame(void) {
 static void engine_on_cleanup(void) {
   if (g_cfg.on_cleanup) g_cfg.on_cleanup();
   stdin_reader_shutdown();
+  sound_shutdown();
   sg_shutdown();
 }
 

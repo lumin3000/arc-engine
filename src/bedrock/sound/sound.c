@@ -1,6 +1,8 @@
 
 #include "sound.h"
 #include "fmod_wrapper.h"
+#include "../../log.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +31,176 @@ static struct {
 static void fmod_error_check(FMOD_RESULT result, const char* context) {
     if (result != FMOD_OK) {
         fprintf(stderr, "FMOD Error in %s: %s\n", context, FMOD_ErrorString(result));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 单文件音乐流（见 sound.h 线程契约）。
+// music_lock 只保护 cmd/status 两个纯数据块；锁内不做 FMOD 调用、不做 IO。
+// FMOD 资源 (music_sound/music_channel) 只被主线程触碰。
+
+static atomic_flag music_lock = ATOMIC_FLAG_INIT;
+
+static struct {
+    // 命令信箱（任意线程写，主线程消费；后写覆盖先写——单曲语义）
+    int pending_cmd;  // 0=none 1=play 2=stop
+    char pending_path[SOUND_MUSIC_PATH_MAX];
+    float pending_volume;
+    // 状态快照（主线程写，任意线程读）
+    Sound_Music_Status status;
+    // 主线程私有：FMOD 资源
+    FMOD_SOUND* music_sound;
+    FMOD_CHANNEL* music_channel;
+} music = {0};
+
+static void music_lock_acquire(void) {
+    while (atomic_flag_test_and_set_explicit(&music_lock, memory_order_acquire)) {}
+}
+static void music_lock_release(void) {
+    atomic_flag_clear_explicit(&music_lock, memory_order_release);
+}
+
+void sound_music_request_play(const char* path, float volume) {
+    if (!path || !path[0] || strlen(path) >= SOUND_MUSIC_PATH_MAX) {
+        LOG_ERROR("[sound] music play rejected: path empty or >= %d chars\n",
+                  SOUND_MUSIC_PATH_MAX);
+        music_lock_acquire();
+        music.status.state = SOUND_MUSIC_FAILED;
+        music.status.error_code = FMOD_ERR_INVALID_PARAM;
+        snprintf(music.status.error_context, SOUND_MUSIC_ERRCTX_MAX, "path_validate");
+        music_lock_release();
+        return;
+    }
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+    music_lock_acquire();
+    music.pending_cmd = 1;
+    // 长度已校验 < SOUND_MUSIC_PATH_MAX，strncpy 必然 NUL 结尾
+    strncpy(music.pending_path, path, SOUND_MUSIC_PATH_MAX);
+    music.pending_volume = volume;
+    music_lock_release();
+}
+
+void sound_music_request_stop(void) {
+    music_lock_acquire();
+    music.pending_cmd = 2;
+    music.pending_path[0] = '\0';
+    music_lock_release();
+}
+
+Sound_Music_Status sound_music_get_status(void) {
+    music_lock_acquire();
+    Sound_Music_Status s = music.status;
+    music_lock_release();
+    return s;
+}
+
+// 主线程专用：停声道、释放 sound。不改 status（调用者决定终态）。
+static void music_release_current(void) {
+    if (music.music_channel) {
+        FMOD_RESULT r = FMOD_Channel_Stop(music.music_channel);
+        // 声道自然播完后句柄失效，INVALID_HANDLE/CHANNEL_STOLEN 是预期
+        if (r != FMOD_OK && r != FMOD_ERR_INVALID_HANDLE && r != FMOD_ERR_CHANNEL_STOLEN) {
+            fmod_error_check(r, "Channel_Stop (music)");
+        }
+        music.music_channel = NULL;
+    }
+    if (music.music_sound) {
+        fmod_error_check(FMOD_Sound_Release(music.music_sound), "Sound_Release (music)");
+        music.music_sound = NULL;
+    }
+}
+
+static void music_set_failed(FMOD_RESULT code, const char* context) {
+    LOG_ERROR("[sound] music failed at %s: %s (%d)\n", context,
+              FMOD_ErrorString(code), (int)code);
+    music_lock_acquire();
+    music.status.state = SOUND_MUSIC_FAILED;
+    music.status.error_code = (int)code;
+    snprintf(music.status.error_context, SOUND_MUSIC_ERRCTX_MAX, "%s", context);
+    music.status.position_ms = 0;
+    music_lock_release();
+}
+
+// 主线程每帧调用（sound_update 内）：先消费命令，再刷新播放状态。
+static void music_main_thread_tick(void) {
+    // 取走命令（锁内只拷数据）
+    music_lock_acquire();
+    int cmd = music.pending_cmd;
+    char path[SOUND_MUSIC_PATH_MAX];
+    float volume = music.pending_volume;
+    if (cmd == 1) memcpy(path, music.pending_path, SOUND_MUSIC_PATH_MAX);
+    music.pending_cmd = 0;
+    music_lock_release();
+
+    if (cmd == 2) {
+        int had = (music.music_sound != NULL);
+        music_release_current();
+        if (had) {
+            music_lock_acquire();
+            music.status.state = SOUND_MUSIC_STOPPED;
+            music.status.position_ms = 0;
+            music_lock_release();
+            LOG_INFO("[sound] music stopped\n");
+        }
+    } else if (cmd == 1) {
+        music_release_current();  // 单曲：新播替换现曲，不叠播
+        FMOD_SOUND* snd = NULL;
+        FMOD_MODE mode = FMOD_MODE_CREATESTREAM | FMOD_MODE_LOOP_OFF |
+                         FMOD_MODE_2D | FMOD_MODE_ACCURATETIME;
+        FMOD_RESULT r = FMOD_System_CreateSound(state.core_system, path, mode, NULL, &snd);
+        if (r != FMOD_OK) {
+            music_set_failed(r, "System_CreateSound");
+            return;
+        }
+        unsigned int length_ms = 0;
+        r = FMOD_Sound_GetLength(snd, &length_ms, FMOD_TIMEUNIT_MS);
+        if (r != FMOD_OK) {
+            FMOD_Sound_Release(snd);
+            music_set_failed(r, "Sound_GetLength");
+            return;
+        }
+        FMOD_CHANNEL* ch = NULL;
+        r = FMOD_System_PlaySound(state.core_system, snd, NULL, 0, &ch);
+        if (r != FMOD_OK) {
+            FMOD_Sound_Release(snd);
+            music_set_failed(r, "System_PlaySound");
+            return;
+        }
+        fmod_error_check(FMOD_Channel_SetVolume(ch, volume), "Channel_SetVolume (music)");
+        music.music_sound = snd;
+        music.music_channel = ch;
+        music_lock_acquire();
+        music.status.state = SOUND_MUSIC_PLAYING;
+        music.status.position_ms = 0;
+        music.status.length_ms = length_ms;
+        music.status.error_code = 0;
+        music.status.error_context[0] = '\0';
+        music.status.play_serial++;
+        music_lock_release();
+        LOG_INFO("[sound] music playing: %s (%u ms)\n", path, length_ms);
+    }
+
+    // 刷新在播状态
+    if (music.music_channel) {
+        FMOD_BOOL playing = 0;
+        FMOD_RESULT r = FMOD_Channel_IsPlaying(music.music_channel, &playing);
+        if (r == FMOD_OK && playing) {
+            unsigned int pos = 0;
+            if (FMOD_Channel_GetPosition(music.music_channel, &pos, FMOD_TIMEUNIT_MS) == FMOD_OK) {
+                music_lock_acquire();
+                music.status.position_ms = pos;
+                music_lock_release();
+            }
+        } else {
+            // 自然结束（EOS 后声道失效返回 INVALID_HANDLE 也走这里）
+            music_release_current();
+            music_lock_acquire();
+            music.status.state = SOUND_MUSIC_ENDED;
+            music.status.position_ms = 0;
+            music_lock_release();
+            LOG_INFO("[sound] music ended (EOS)\n");
+        }
     }
 }
 
@@ -120,6 +292,26 @@ void sound_update(Vec2 listener_pos, float master_volume) {
 
     result = FMOD_Studio_System_SetListenerAttributes(state.system, 0, &attributes, NULL);
     fmod_error_check(result, "SetListenerAttributes");
+
+    // 音乐命令消费+状态刷新（主线程唯一拥有者）。放在 Studio_System_Update
+    // 之后：Studio update 内部驱动同一 Core System，不再另调 Core update。
+    music_main_thread_tick();
+}
+
+void sound_shutdown(void) {
+    if (!state.initialized) return;
+    music_release_current();
+    music_lock_acquire();
+    music.status.state = SOUND_MUSIC_IDLE;
+    music.pending_cmd = 0;
+    music_lock_release();
+    FMOD_RESULT result = FMOD_Studio_System_Release(state.system);
+    fmod_error_check(result, "Studio_System_Release");
+    state.system = NULL;
+    state.core_system = NULL;
+    state.master_ch_group = NULL;
+    state.initialized = false;
+    LOG_INFO("[sound] shutdown complete\n");
 }
 
 FMOD_STUDIO_EVENTINSTANCE* sound_play(const char* name, Vec2 pos, float cooldown_ms) {
