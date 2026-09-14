@@ -190,7 +190,7 @@ class TickScheduler {
 
     doSingleTick() {
         var profiling = globalThis.ScaffoldProfiler && ScaffoldProfiler._enabled;
-        var t0, t1;
+        var t0 = 0, t1 = 0, normalUs = 0, rareUs = 0;
 
         for (let i = 0; i < this._maps.length; i++) {
             const map = this._maps[i];
@@ -205,14 +205,14 @@ class TickScheduler {
         this._tickBucketEvery.tick(this._ticksSimInt);
         if (profiling) {
             t1 = RealTime.realtimeSinceStartupUs();
-            var normalUs = t1 - t0;
+            normalUs = t1 - t0;
             t0 = t1;
         }
 
         this._tickBucketSparse.tick(this._ticksSimInt);
         if (profiling) {
             t1 = RealTime.realtimeSinceStartupUs();
-            var rareUs = t1 - t0;
+            rareUs = t1 - t0;
             t0 = t1;
         }
 
