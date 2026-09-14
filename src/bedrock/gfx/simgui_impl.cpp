@@ -100,8 +100,32 @@ static SimguiListStat s_list_stats[SIMGUI_MAX_LIST_STATS];
 static int s_list_stat_count = 0;
 static int s_list_stat_total = 0;         // 真实 list 数 (可能超过数组上限)
 
+// ImGui 纹理上传 (动态字体图集按需烘字形 / 用户纹理): 本帧由 simgui_render 实际 sg_update_image 的
+// 纹理数与字节 (sokol_imgui 每次整张上传 GetSizeInBytes), 另带累计值, 供消费者证明稳定帧零上传
+static int s_last_tex_updates = 0;
+static int s_last_tex_update_bytes = 0;
+static double s_total_tex_updates = 0;
+static double s_total_tex_update_bytes = 0;
+
 void simgui_render_wrapper(void) {
     if (!s_simgui_initialized) return;
+    // Render() 内部同样先 EndFrame (已结束则跳过), 提前结束后纹理登记已完整, 状态即 simgui_render 要处理的集合
+    ImGui::EndFrame();
+    {
+        int n = 0, bytes = 0;
+        ImVector<ImTextureData*>& texs = ImGui::GetPlatformIO().Textures;
+        for (int i = 0; i < texs.Size; i++) {
+            ImTextureData* tex = texs[i];
+            if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates) {
+                n++;
+                bytes += tex->GetSizeInBytes();
+            }
+        }
+        s_last_tex_updates = n;
+        s_last_tex_update_bytes = bytes;
+        s_total_tex_updates += n;
+        s_total_tex_update_bytes += bytes;
+    }
     simgui_render();
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data) {
@@ -171,6 +195,13 @@ int simgui_get_list_stats(int index, const char** owner, int* cmds, int* effecti
     *effective = st->effective;
     *tex_switches = st->tex_switches;
     return 1;
+}
+
+void simgui_get_texture_update_stats(int* last, int* last_bytes, double* total, double* total_bytes) {
+    *last = s_last_tex_updates;
+    *last_bytes = s_last_tex_update_bytes;
+    *total = s_total_tex_updates;
+    *total_bytes = s_total_tex_update_bytes;
 }
 
 uint64_t simgui_texture_id_wrapper(sg_view view) {

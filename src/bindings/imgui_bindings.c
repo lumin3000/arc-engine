@@ -31,6 +31,7 @@ extern bool simgui_handle_event_wrapper(const sapp_event *event);
 extern int simgui_get_draw_call_count(void);
 extern int simgui_get_effective_draw_count(void);
 extern int simgui_get_texture_switch_count(void);
+extern void simgui_get_texture_update_stats(int* last, int* last_bytes, double* total, double* total_bytes);
 extern int simgui_get_list_stats(int index, const char** owner, int* cmds, int* effective,
                                  int* tex_switches, int* out_total);
 extern float simgui_get_font_em_scale(void);
@@ -908,6 +909,21 @@ static JSValue js_imgui_get_draw_list_stats(JSContext *ctx, JSValueConst this_va
   return arr;
 }
 
+// imgui.get_texture_update_stats() — 上一帧 ImGui 纹理上传 {updates, bytes} 与累计 {totalUpdates, totalBytes}
+static JSValue js_imgui_get_texture_update_stats(JSContext *ctx,
+                                                 JSValueConst this_val, int argc,
+                                                 JSValueConst *argv) {
+  int last = 0, last_bytes = 0;
+  double total = 0, total_bytes = 0;
+  simgui_get_texture_update_stats(&last, &last_bytes, &total, &total_bytes);
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "updates", JS_NewInt32(ctx, last));
+  JS_SetPropertyStr(ctx, o, "bytes", JS_NewInt32(ctx, last_bytes));
+  JS_SetPropertyStr(ctx, o, "totalUpdates", JS_NewFloat64(ctx, total));
+  JS_SetPropertyStr(ctx, o, "totalBytes", JS_NewFloat64(ctx, total_bytes));
+  return o;
+}
+
 // imgui.get_texture_switch_count() — 上一帧有效命令序列中的纹理切换次数
 static JSValue js_imgui_get_texture_switch_count(JSContext *ctx,
                                                  JSValueConst this_val, int argc,
@@ -1519,6 +1535,7 @@ int js_init_imgui_module(JSContext *ctx) {
   REG(imgui, "get_draw_call_count", js_imgui_get_draw_call_count, 0);
   REG(imgui, "get_effective_draw_count", js_imgui_get_effective_draw_count, 0);
   REG(imgui, "get_texture_switch_count", js_imgui_get_texture_switch_count, 0);
+  REG(imgui, "get_texture_update_stats", js_imgui_get_texture_update_stats, 0);
   REG(imgui, "get_draw_list_stats", js_imgui_get_draw_list_stats, 0);
 
   // Input query
