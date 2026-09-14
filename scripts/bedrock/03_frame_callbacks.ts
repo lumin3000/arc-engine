@@ -1,5 +1,7 @@
 
-globalThis.FrameStagePriority = {
+// 消费者追加的业务别名优先级经 FrameStagePriorityExtension 声明；GROUPS 在下方紧接着挂上
+type EngineFrameStageGroup = { min: number; max: number; name: string };
+const _FrameStagePriorityLiteral = {
 
     BLOCKING_TASK_CHECK: 10,
 
@@ -34,6 +36,9 @@ globalThis.FrameStagePriority = {
     FRAME_END: 900,
     DIAGNOSTICS: 950,
 };
+const FrameStagePriority = _FrameStagePriorityLiteral as typeof _FrameStagePriorityLiteral
+    & { GROUPS: Record<string, EngineFrameStageGroup> } & FrameStagePriorityExtension;
+globalThis.FrameStagePriority = FrameStagePriority;
 
 FrameStagePriority.GROUPS = {
     BLOCKING:     { min: 0,   max: 99,  name: "Blocking" },

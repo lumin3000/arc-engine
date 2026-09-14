@@ -21,7 +21,7 @@ const jtask = globalThis.jtask;
 
 // 标题屏：active 期间每帧 draw；启动步骤：生成器函数，产出值转交 BlockingTaskQueue 显示进度
 type EngineTitleScreen = { active: boolean; draw(): void };
-type EngineStartupStep = () => Iterator<{ status?: string; progress?: number } | null | undefined | void>;
+type EngineStartupStep = () => Iterable<{ status?: string; progress?: number } | null | undefined | void>;
 globalThis.StartupFlow = {
   _titleScreen: null as EngineTitleScreen | null,
   _steps: [] as EngineStartupStep[],

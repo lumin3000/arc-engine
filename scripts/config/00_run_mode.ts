@@ -9,7 +9,8 @@ declare global {
     var __RUN_MODE__: string | undefined;
 }
 
-globalThis.RunMode = {
+// 消费者追加的模式开关 getter 经 RunModeExtension 声明（消费者 boundary_contracts extensions 生成）
+const _RunModeLiteral = {
     get MODE() { return globalThis.__RUN_MODE__ || 'default'; },
 
     get _manifest() {
@@ -26,5 +27,7 @@ globalThis.RunMode = {
     get showUI()       { return !!this.config.ui; },
     get showHUD()      { return !!this.config.hud; },
 };
+const RunMode = _RunModeLiteral as typeof _RunModeLiteral & RunModeExtension;
+globalThis.RunMode = RunMode;
 
 jtask.log("[RunMode] Module loaded (mode resolved on first access)");
