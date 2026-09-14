@@ -21,13 +21,13 @@
 // 消费者注册的文件处理器收到解析后的 JSON；引擎不认识文件内容，形状由消费者按文件校验
 type EngineLoaderHandler = (data: unknown) => void;
 
-function loadJSONFromPtr(ptr_info: { __ptr?: unknown } | null | undefined) {
+function loadJSONFromPtr(ptr_info: { __ptr?: number } | null | undefined) {
   if (!ptr_info || !ptr_info.__ptr) {
     return null;
   }
   const size = loader.get_size();
   const str = loader.get_string(ptr_info.__ptr, size);
-  return JSON.parse(str);
+  return JSON.parse(String(str));  // JSON.parse 本就对实参 ToString；显式写出以匹配 get_string 可返回 undefined 的签名
 }
 
 let loadState = {
@@ -57,7 +57,7 @@ globalThis.Loader = {
   basePath: function() { return loadState.basePath; },
 };
 
-G.loader_onFileLoaded = function (msg: { __ptr?: unknown } | null | undefined) {
+G.loader_onFileLoaded = function (msg: { __ptr?: number } | null | undefined) {
   if (msg && msg.__ptr) {
     try {
       const data = loadJSONFromPtr(msg);
