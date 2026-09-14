@@ -1,5 +1,13 @@
 
-var _atlasData = null;
+// res/atlas/atlas_uv.json（tools/pack_atlas.py 产出）：frames 按名索引；single 单帧、sheet 等格序列帧、sub_anim 引用父表的子帧
+type EngineAtlasPivot = [number, number];
+type EngineAtlasEntry =
+    { type: "single"; u0: number; v0: number; u1: number; v1: number; w: number; h: number; pivot_x?: number; pivot_y?: number; pivots?: EngineAtlasPivot[] }
+  | { type: "sub_anim"; parent: string; frames: { u0: number; v0: number; u1: number; v1: number; _linearIdx?: number }[]; cell_w: number; cell_h: number; total_frames: number; pivots?: EngineAtlasPivot[] }
+  | { type: "sheet"; u0: number; v0: number; cols: number; cell_w: number; cell_h: number; total_frames: number; pivots?: EngineAtlasPivot[] };
+type EngineAtlasData = { atlas_size: number; frames: Partial<Record<string, EngineAtlasEntry>> };
+
+var _atlasData: EngineAtlasData | null = null;
 var _atlasTexId = -1;
 
 globalThis.Atlas = {
@@ -10,7 +18,7 @@ globalThis.Atlas = {
         if (!jsonStr) {
             throw new Error("[Atlas] failed to load res/atlas/atlas_uv.json");
         }
-        _atlasData = JSON.parse(jsonStr);
+        _atlasData = JSON.parse(jsonStr) as EngineAtlasData;
 
         batch.load_atlas("res/atlas/atlas_page_0.png");
 
@@ -22,11 +30,13 @@ globalThis.Atlas = {
         return _atlasTexId;
     },
 
-    getEntry: function(name) {
+    getEntry: function(name: string) {
+        if (!_atlasData) throw new Error("[Atlas] getEntry('" + name + "') before Atlas.load()");
         return _atlasData.frames[name];
     },
 
-    getFrameUV: function(name, frameIndex) {
+    getFrameUV: function(name: string, frameIndex: number) {
+        if (!_atlasData) throw new Error("[Atlas] getFrameUV('" + name + "') before Atlas.load()");
         var entry = _atlasData.frames[name];
         if (!entry) return null;
 
@@ -69,7 +79,8 @@ globalThis.Atlas = {
                  pivotX: raw.pivotX, pivotY: raw.pivotY };
     },
 
-    getTotalFrames: function(name) {
+    getTotalFrames: function(name: string) {
+        if (!_atlasData) throw new Error("[Atlas] getTotalFrames('" + name + "') before Atlas.load()");
         var entry = _atlasData.frames[name];
         if (!entry) return 0;
         if (entry.type === "single") return 1;
