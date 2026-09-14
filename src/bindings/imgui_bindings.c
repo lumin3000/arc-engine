@@ -131,6 +131,8 @@ static int mu_opts_to_imgui_flags(int mu_opt) {
     flags |= ImGuiWindowFlags_NoBackground; // OPT_NOFRAME
   if (mu_opt & 0x04)
     flags |= ImGuiWindowFlags_NoInputs; // OPT_NOINTERACT
+  if (mu_opt & 0x2000)
+    flags |= ImGuiWindowFlags_NoBringToFrontOnFocus; // OPT_NOBRINGTOFRONT
   // OPT_NOCLOSE (0x40) — handled by passing NULL as p_open
   return flags;
 }
@@ -1221,6 +1223,8 @@ static void js_register_compat_constants(JSContext *ctx, JSValue obj) {
   JS_SetPropertyStr(ctx, obj, "OPT_NOSCROLL", JS_NewInt32(ctx, 0x20));
   JS_SetPropertyStr(ctx, obj, "OPT_NOCLOSE", JS_NewInt32(ctx, 0x40));
   JS_SetPropertyStr(ctx, obj, "OPT_NOTITLE", JS_NewInt32(ctx, 0x80));
+  // 扩展 (非 microui 原值): 点击/聚焦不提到显示序最前, 叠在其上的子窗口保持可点
+  JS_SetPropertyStr(ctx, obj, "OPT_NOBRINGTOFRONT", JS_NewInt32(ctx, 0x2000));
 
   // Input keys
   JS_SetPropertyStr(ctx, obj, "KEY_RETURN", JS_NewInt32(ctx, 0));
