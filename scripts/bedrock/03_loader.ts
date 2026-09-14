@@ -18,7 +18,10 @@
 //     handler: function(data) { ... Loader.addFile(...); ... }
 //   });
 
-function loadJSONFromPtr(ptr_info) {
+// 消费者注册的文件处理器收到解析后的 JSON；引擎不认识文件内容，形状由消费者按文件校验
+type EngineLoaderHandler = (data: unknown) => void;
+
+function loadJSONFromPtr(ptr_info: { __ptr?: unknown } | null | undefined) {
   if (!ptr_info || !ptr_info.__ptr) {
     return null;
   }
@@ -29,22 +32,22 @@ function loadJSONFromPtr(ptr_info) {
 
 let loadState = {
   basePath: "",
-  files: [],
+  files: [] as { path: string; handler: EngineLoaderHandler }[],
   fileIndex: 0,
   currentFileLoaded: false
 };
 
-let _summarySpec = null;
+let _summarySpec: { name: string; handler: EngineLoaderHandler } | null = null;
 
 globalThis.Loader = {
-  registerSummaryHandler: function(spec) {
+  registerSummaryHandler: function(spec: { name: string; handler: EngineLoaderHandler }) {
     if (!spec || typeof spec.name !== 'string' || typeof spec.handler !== 'function') {
       throw new Error("[Loader] registerSummaryHandler requires { name: string, handler: function }");
     }
     _summarySpec = spec;
   },
 
-  addFile: function(path, handler) {
+  addFile: function(path: string, handler: EngineLoaderHandler) {
     if (typeof path !== 'string' || typeof handler !== 'function') {
       throw new Error("[Loader] addFile requires (path: string, handler: function)");
     }
@@ -54,7 +57,7 @@ globalThis.Loader = {
   basePath: function() { return loadState.basePath; },
 };
 
-G.loader_onFileLoaded = function (msg) {
+G.loader_onFileLoaded = function (msg: { __ptr?: unknown } | null | undefined) {
   if (msg && msg.__ptr) {
     try {
       const data = loadJSONFromPtr(msg);
@@ -63,13 +66,13 @@ G.loader_onFileLoaded = function (msg) {
         file.handler(data);
       }
     } catch (e) {
-      jtask.log.error("[loader] Parse error: " + e.message);
+      jtask.log.error("[loader] Parse error: " + (e as Error).message);
     }
   }
   loadState.currentFileLoaded = true;
 };
 
-function* LoaderRoutine(basePath, onCompleteCallback) {
+function* LoaderRoutine(basePath: string, onCompleteCallback: (() => void) | null | undefined) {
   jtask.log("[loader] Starting LoaderRoutine: " + basePath);
 
   if (!_summarySpec) {
@@ -120,7 +123,7 @@ function* LoaderRoutine(basePath, onCompleteCallback) {
 
 G.loader_runRoutine = LoaderRoutine;
 
-G.loader_startLoad = function (basePath, onComplete) {
+G.loader_startLoad = function (basePath: string, onComplete: (() => void) | null | undefined) {
   if (typeof BlockingTaskQueue !== 'undefined') {
     const routine = function* () {
       yield* LoaderRoutine(basePath, onComplete);

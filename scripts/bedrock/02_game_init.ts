@@ -9,15 +9,15 @@ const EngineBootstrap = {
     },
 
     _currentPhase: 0,
-    _callbacks: {},
+    _callbacks: {} as Partial<Record<number, (() => void)[]>>,
     _phaseNames: {
         1: 'CLASSES_DEFINED',
         2: 'DATA_LOADED',
         3: 'MAP_READY',
         4: 'GAME_STARTED'
-    },
+    } as Partial<Record<number, string>>,
 
-    onPhase(phase, callback) {
+    onPhase(phase: number, callback: () => void) {
         if (typeof callback !== 'function') {
             jtask.log("[EngineBootstrap] ERROR: callback must be a function");
             return;
@@ -28,7 +28,7 @@ const EngineBootstrap = {
             try {
                 callback();
             } catch (e) {
-                jtask.log("[EngineBootstrap] Callback error: " + e.message + "\n" + (e.stack || ''));
+                jtask.log("[EngineBootstrap] Callback error: " + (e as Error).message + "\n" + ((e as Error).stack || ''));
             }
         } else {
 
@@ -39,7 +39,7 @@ const EngineBootstrap = {
         }
     },
 
-    triggerPhase(phase) {
+    triggerPhase(phase: number) {
         if (phase <= this._currentPhase) {
             jtask.log("[EngineBootstrap] WARNING: Phase " + this._phaseNames[phase] + " already triggered");
             return;
@@ -53,7 +53,7 @@ const EngineBootstrap = {
             try {
                 cb();
             } catch (e) {
-                jtask.log("[EngineBootstrap] Callback error in " + this._phaseNames[phase] + ": " + e.message + "\n" + (e.stack || ''));
+                jtask.log("[EngineBootstrap] Callback error in " + this._phaseNames[phase] + ": " + (e as Error).message + "\n" + ((e as Error).stack || ''));
             }
         }
 
@@ -64,7 +64,7 @@ const EngineBootstrap = {
         return this._currentPhase;
     },
 
-    isPhaseReached(phase) {
+    isPhaseReached(phase: number) {
         return this._currentPhase >= phase;
     }
 };

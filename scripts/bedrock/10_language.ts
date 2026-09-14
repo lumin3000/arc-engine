@@ -1,9 +1,9 @@
 
 (function() {
   var currentLang = "English";
-  var keys = {};
+  var keys: Partial<Record<string, string>> = {};
 
-  function loadLanguage(lang) {
+  function loadLanguage(lang: string) {
     var path = "Languages/" + lang + "/Keyed/Keys.json";
     var content = loader.read_string(path);
     if (!content) {
@@ -16,14 +16,14 @@
       jtask.log("[Lang] Loaded: " + lang + " (" + Object.keys(keys).length + " keys)");
       return true;
     } catch (e) {
-      jtask.log("[Lang] Parse error: " + path + " " + e.message);
+      jtask.log("[Lang] Parse error: " + path + " " + (e as Error).message);
       return false;
     }
   }
 
   globalThis.G = globalThis.G || {};
 
-  G.Translate = function(key) {
+  G.Translate = function(key: string) {
     return keys[key] || key;
   };
 
@@ -31,7 +31,7 @@
     return currentLang;
   };
 
-  G.SetLanguage = function(lang) {
+  G.SetLanguage = function(lang: string) {
     loadLanguage(lang);
   };
 

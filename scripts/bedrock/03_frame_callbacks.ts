@@ -46,11 +46,12 @@ FrameStagePriority.GROUPS = {
     FRAME_END:    { min: 900, max: 999, name: "FrameEnd" },
 };
 
+type EngineFrameStageItem = { callback: (dt: number) => void; priority: number; name: string };
 globalThis.FrameStageCallbacks = {
-    _list: [],
+    _list: [] as EngineFrameStageItem[],
     _sorted: false,
 
-    register: function(callback, priority, name) {
+    register: function(callback: (dt: number) => void, priority: number, name?: string) {
         if (typeof callback !== 'function') {
             jtask.log("[FrameStageCallbacks] ERROR: callback must be a function");
             return;
@@ -66,8 +67,8 @@ globalThis.FrameStageCallbacks = {
         }
     },
 
-    unregister: function(callback) {
-        const idx = this._list.findIndex(item => item.callback === callback);
+    unregister: function(callback: (dt: number) => void) {
+        const idx = this._list.findIndex((item: EngineFrameStageItem) => item.callback === callback);
         if (idx !== -1) {
             const removed = this._list.splice(idx, 1)[0];
             if (globalThis.__BP_VERBOSE__) {
@@ -86,11 +87,11 @@ globalThis.FrameStageCallbacks = {
         return this._blocked;
     },
 
-    runAll: function(dt) {
+    runAll: function(dt: number) {
         this._blocked = false;
 
         if (!this._sorted) {
-            this._list.sort((a, b) => a.priority - b.priority);
+            this._list.sort((a: EngineFrameStageItem, b: EngineFrameStageItem) => a.priority - b.priority);
             this._sorted = true;
         }
         for (let i = 0; i < this._list.length; i++) {
@@ -105,8 +106,8 @@ globalThis.FrameStageCallbacks = {
                     return;
                 }
             } catch (e) {
-                jtask.log("[FrameStageCallbacks] ERROR " + item.name + ": " + e.message);
-                if (e.stack) jtask.log(e.stack);
+                jtask.log("[FrameStageCallbacks] ERROR " + item.name + ": " + (e as Error).message);
+                if ((e as Error).stack) jtask.log((e as Error).stack);
             }
         }
     },
@@ -118,7 +119,7 @@ globalThis.FrameStageCallbacks = {
 
     dump: function() {
         if (!this._sorted) {
-            this._list.sort((a, b) => a.priority - b.priority);
+            this._list.sort((a: EngineFrameStageItem, b: EngineFrameStageItem) => a.priority - b.priority);
             this._sorted = true;
         }
         jtask.log("[FrameStageCallbacks] === " + this._list.length + " callbacks ===");
@@ -137,7 +138,7 @@ globalThis.FrameStageCallbacks = {
 };
 
 if (typeof BlockingTaskQueue !== 'undefined') {
-    FrameStageCallbacks.register(function(dt) {
+    FrameStageCallbacks.register(function(dt: number) {
         if (BlockingTaskQueue.isBlocking) {
             coord.push_screen_space();
             BlockingTaskQueue.drawProgress();
@@ -153,22 +154,23 @@ if (typeof BlockingTaskQueue !== 'undefined') {
 // See rt/render_service.js for the consumer (calls runAll(dt) inside
 // render_frame, before FrameStageCallbacks.runAll).
 // ============================================================================
+type EngineRenderFrameCallback = { fn: (dt: number) => void; name: string };
 globalThis.RenderFrameCallbacks = {
-  _list: [],
-  _after: [],
-  register: function(fn, name) {
+  _list: [] as EngineRenderFrameCallback[],
+  _after: [] as EngineRenderFrameCallback[],
+  register: function(fn: (dt: number) => void, name?: string) {
     if (typeof fn !== 'function') {
       throw new Error("[RenderFrameCallbacks] callback must be a function");
     }
     this._list.push({ fn: fn, name: name || "anonymous" });
   },
-  registerAfter: function(fn, name) {
+  registerAfter: function(fn: (dt: number) => void, name?: string) {
     if (typeof fn !== 'function') throw new Error("[RenderFrameCallbacks] callback must be a function");
     this._after.push({fn, name: name || "anonymous"});
   },
-  runAll: function(dt) { this._run(this._list, dt); },
-  runAfter: function(dt) { this._run(this._after, dt); },
-  _run: function(callbacks, dt) {
+  runAll: function(dt: number) { this._run(this._list, dt); },
+  runAfter: function(dt: number) { this._run(this._after, dt); },
+  _run: function(callbacks: EngineRenderFrameCallback[], dt: number) {
     for (const cb of callbacks) {
       try {
         cb.fn(dt);
@@ -177,7 +179,7 @@ globalThis.RenderFrameCallbacks = {
         // service 侧 jslib 加的)——catch 里再抛会杀死整个帧循环且零日志
         // (渲染契约 P1 验收时的"静默卡死")。此处必须用兜底链路喊出来。
         const msg = "[RenderFrameCallbacks] '" + cb.name + "' threw: " +
-          ((e && e.message) || String(e)) + "\n" + ((e && e.stack) || "");
+          ((e && (e as Error).message) || String(e)) + "\n" + ((e && (e as Error).stack) || "");
         try {
           if (jtask.log && typeof jtask.log.error === 'function') jtask.log.error(msg);
           else jtask.log(msg);

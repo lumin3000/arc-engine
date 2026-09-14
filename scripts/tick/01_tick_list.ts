@@ -1,20 +1,31 @@
 
+// 引擎 tick 调度的最小结构约定：消费者注册的 tickable 与地图只需满足这些成员（引擎不认识具体游戏类型）
+interface EngineTickMap { mapPreTick?(): void; mapPostTick?(): void; }
+interface EngineTickableBase {
+    destroyed?: boolean; spawned?: boolean; holdsChildren?: boolean;
+    position?: { x: number; z: number } | null; map?: EngineTickMap | null;
+    def?: { tickRate?: number | string | null } | null;
+    toStringSafe?(): string; getHashCode(): number;
+    doTick?(): void; tick(): void;  // 有 doTick 调度器优先，否则裸 tick
+}
+type EngineTickable = EngineTickableBase;
+
 const TickRate = Object.freeze({
     None: 0, Every: 1, Sparse: 2, Slow: 3,
-    toString(v) { return ["None","Every","Sparse","Slow"][v] || "Unknown"; },
-    fromString(s) { return {None:0,Every:1,Sparse:2,Slow:3}[s] ?? 0; }
+    toString(v: number) { return ["None","Every","Sparse","Slow"][v] || "Unknown"; },
+    fromString(s: string) { return ({None:0,Every:1,Sparse:2,Slow:3} as Partial<Record<string, number>>)[s] ?? 0; }
 });
 const SimSpeed = Object.freeze({
     Paused: 0, Normal: 1, Fast: 2, Superfast: 3, Ultrafast: 4,
-    toString(v) { return ["Paused","Normal","Fast","Superfast","Ultrafast"][v] || "Unknown"; },
-    fromString(s) { return {Paused:0,Normal:1,Fast:2,Superfast:3,Ultrafast:4}[s] ?? 0; }
+    toString(v: number) { return ["Paused","Normal","Fast","Superfast","Ultrafast"][v] || "Unknown"; },
+    fromString(s: string) { return ({Paused:0,Normal:1,Fast:2,Superfast:3,Ultrafast:4} as Partial<Record<string, number>>)[s] ?? 0; }
 });
 globalThis.TickRate = TickRate;
 globalThis.SimSpeed = SimSpeed;
 
 class TickBucket {
-    declare _tickType: number; declare _buckets: any[][]; declare _toRegister: any[]; declare _toDeregister: any[]; declare _ticking: boolean;
-    constructor(tickType) {
+    declare _tickType: number; declare _buckets: EngineTickable[][]; declare _toRegister: EngineTickable[]; declare _toDeregister: EngineTickable[]; declare _ticking: boolean;
+    constructor(tickType: number) {
 
         this._tickType = tickType;
 
@@ -53,13 +64,13 @@ class TickBucket {
         this._toDeregister.length = 0;
     }
 
-    removeWhere(predicate) {
+    removeWhere(predicate: (tickable: EngineTickable) => boolean) {
         for (const _ of this.removeWhereAsync(predicate)) { /* drain */ }
     }
 
     // 分帧版: 大批清除 (整图退役) 在阻塞过场内逐段让帧, 同步 removeWhere =
     // 原地 drain 同路径。桶间让帧, 单桶内不让 (桶均摊小)。
-    *removeWhereAsync(predicate) {
+    *removeWhereAsync(predicate: (tickable: EngineTickable) => boolean) {
         const BUCKET_BATCH = 64;
         for (let i = 0; i < this._buckets.length; i++) {
             const list = this._buckets[i];
@@ -88,7 +99,7 @@ class TickBucket {
     // 挂起队列只为 tick 迭代期防列表突变而设; 非 tick 期 (阻塞过场批量
     // spawn/deSpawn) 直接进出桶 — 否则恢复后首个 tick 一口气 flush 数十万
     // 挂起项 (768² 实测 380ms 单帧)。语义等价: 桶成员在下一 tick 前就位。
-    register(tickable) {
+    register(tickable: EngineTickable) {
         if (this._ticking) {
             this._toRegister.push(tickable);
             return;
@@ -96,7 +107,7 @@ class TickBucket {
         this._bucketOf(tickable).push(tickable);
     }
 
-    deregister(tickable) {
+    deregister(tickable: EngineTickable) {
         if (this._ticking) {
             this._toDeregister.push(tickable);
             return;
@@ -106,7 +117,7 @@ class TickBucket {
         if (idx > -1) bucket.splice(idx, 1);
     }
 
-    tick(ticksSimulation) {
+    tick(ticksSimulation: number) {
 
         for (let i = 0; i < this._toRegister.length; i++) {
             const tickable = this._toRegister[i];
@@ -144,7 +155,7 @@ class TickBucket {
 
                     const pos = tickable.spawned ? ` (at ${tickable.position?.x ?? '?'},${tickable.position?.z ?? '?'})` : "";
                     const label = tickable.toStringSafe?.() ?? tickable.toString?.() ?? "Tickable";
-                    jtask.log.error(`Exception ticking ${label}${pos}: ${e}\n${e.stack || ''}`);
+                    jtask.log.error(`Exception ticking ${label}${pos}: ${e}\n${(e as Error).stack || ''}`);
                 }
             }
         } finally {
@@ -152,7 +163,7 @@ class TickBucket {
         }
     }
 
-    _bucketOf(tickable) {
+    _bucketOf(tickable: EngineTickable) {
 
         let num = tickable.getHashCode();
 
@@ -199,7 +210,7 @@ class TickBucket {
     }
 
     toString() {
-        const typeNames = {
+        const typeNames: Partial<Record<number, string>> = {
             [TickRate.None]: "None",
             [TickRate.Every]: "Every",
             [TickRate.Sparse]: "Sparse",

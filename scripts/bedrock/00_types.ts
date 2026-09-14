@@ -7,16 +7,16 @@ class IntVec3 {
         this.z = z | 0;
     }
 
-    static _Zero = null;
-    static _North = null;
-    static _East = null;
-    static _South = null;
-    static _West = null;
-    static _NorthWest = null;
-    static _NorthEast = null;
-    static _SouthWest = null;
-    static _SouthEast = null;
-    static _Invalid = null;
+    static _Zero: IntVec3 | null = null;
+    static _North: IntVec3 | null = null;
+    static _East: IntVec3 | null = null;
+    static _South: IntVec3 | null = null;
+    static _West: IntVec3 | null = null;
+    static _NorthWest: IntVec3 | null = null;
+    static _NorthEast: IntVec3 | null = null;
+    static _SouthWest: IntVec3 | null = null;
+    static _SouthEast: IntVec3 | null = null;
+    static _Invalid: IntVec3 | null = null;
 
     static get Zero() { return IntVec3._Zero || (IntVec3._Zero = new IntVec3(0, 0, 0)); }
     static get North() { return IntVec3._North || (IntVec3._North = new IntVec3(0, 0, 1)); }
@@ -54,7 +54,7 @@ class IntVec3 {
         return this.y >= 0;
     }
 
-    static isValid(c) {
+    static isValid(c: { x: number; y?: number; z: number } | null | undefined) {
         if (!c) return false;
 
         if (c.x === -1000 || c.z === -1000) return false;
@@ -101,19 +101,19 @@ class IntVec3 {
         return degrees;
     }
 
-    add(other) {
+    add(other: { x: number; y: number; z: number }) {
         return new IntVec3(this.x + other.x, this.y + other.y, this.z + other.z);
     }
 
-    sub(other) {
+    sub(other: { x: number; y: number; z: number }) {
         return new IntVec3(this.x - other.x, this.y - other.y, this.z - other.z);
     }
 
-    mul(i) {
+    mul(i: number) {
         return new IntVec3(this.x * i, this.y * i, this.z * i);
     }
 
-    div(i) {
+    div(i: number) {
         return new IntVec3((this.x / i) | 0, (this.y / i) | 0, (this.z / i) | 0);
     }
 
@@ -121,18 +121,18 @@ class IntVec3 {
         return new IntVec3(-this.x, -this.y, -this.z);
     }
 
-    equals(other) {
+    equals(other: { x: number; y: number; z: number } | null | undefined) {
         if (!other) return false;
         return this.x === other.x && this.y === other.y && this.z === other.z;
     }
 
-    static equals(a, b) {
+    static equals(a: { x: number; y: number; z: number } | null | undefined, b: { x: number; y: number; z: number } | null | undefined) {
         if (a === b) return true;
         if (!a || !b) return false;
         return a.x === b.x && a.y === b.y && a.z === b.z;
     }
 
-    static add(a, b) {
+    static add(a: { x: number; y?: number; z: number }, b: { x: number; y?: number; z: number }) {
         return new IntVec3(
             a.x + b.x,
             (a.y || 0) + (b.y || 0),
@@ -140,7 +140,7 @@ class IntVec3 {
         );
     }
 
-    static sub(a, b) {
+    static sub(a: { x: number; y?: number; z: number }, b: { x: number; y?: number; z: number }) {
         return new IntVec3(
             a.x - b.x,
             (a.y || 0) - (b.y || 0),
@@ -148,7 +148,7 @@ class IntVec3 {
         );
     }
 
-    static getHashCode(v) {
+    static getHashCode(v: { x: number; y?: number; z: number } | null | undefined) {
         if (!v) return 0;
         if (v instanceof IntVec3 && typeof v.getHashCode === 'function') {
             return v.getHashCode();
@@ -168,7 +168,7 @@ class IntVec3 {
         return { x: this.x + 0.5, y: this.y, z: this.z + 0.5 };
     }
 
-    toVector3ShiftedWithAltitude(altitude) {
+    toVector3ShiftedWithAltitude(altitude: number) {
         return { x: this.x + 0.5, y: this.y + altitude, z: this.z + 0.5 };
     }
 
@@ -180,23 +180,23 @@ class IntVec3 {
         return `(${this.x}, ${this.y}, ${this.z})`;
     }
 
-    inHorDistOf(other, maxDist) {
+    inHorDistOf(other: { x: number; z: number }, maxDist: number) {
         const dx = this.x - other.x;
         const dz = this.z - other.z;
         return dx * dx + dz * dz <= maxDist * maxDist;
     }
 
-    distanceToSquared(other) {
+    distanceToSquared(other: { x: number; z: number }) {
         const dx = this.x - other.x;
         const dz = this.z - other.z;
         return dx * dx + dz * dz;
     }
 
-    distanceTo(other) {
+    distanceTo(other: { x: number; z: number }) {
         return Math.sqrt(this.distanceToSquared(other));
     }
 
-    adjacentToCardinal(other) {
+    adjacentToCardinal(other: { x: number; z: number }) {
         if (!this.isValid) return false;
         if (other.z === this.z && (other.x === this.x + 1 || other.x === this.x - 1)) {
             return true;
@@ -207,16 +207,16 @@ class IntVec3 {
         return false;
     }
 
-    adjacentToDiagonal(other) {
+    adjacentToDiagonal(other: { x: number; z: number }) {
         if (!this.isValid) return false;
         return Math.abs(this.x - other.x) === 1 && Math.abs(this.z - other.z) === 1;
     }
 
-    adjacentTo(other) {
+    adjacentTo(other: { x: number; z: number }) {
         return this.adjacentToDiagonal(other) || this.adjacentToCardinal(other);
     }
 
-    cardinalTo(other) {
+    cardinalTo(other: IntVec3) {
         if (!this.isValid || !other.isValid) {
             return false;
         }
@@ -226,7 +226,7 @@ class IntVec3 {
         return true;
     }
 
-    clampInsideRect(rect) {
+    clampInsideRect(rect: { minX: number; minZ: number; maxX: number; maxZ: number }) {
         return new IntVec3(
             Math.max(rect.minX, Math.min(rect.maxX, this.x)),
             0,
@@ -234,11 +234,11 @@ class IntVec3 {
         );
     }
 
-    clampInsideMap(map) {
+    clampInsideMap(map: { size: { x: number; z: number } }) {
         return this.clampInsideRect(CellRect.wholeMap(map));
     }
 
-    clampMagnitude(maxMagnitude) {
+    clampMagnitude(maxMagnitude: number) {
         const len = this.lengthHorizontal;
         if (len <= maxMagnitude) {
             return this;
@@ -251,7 +251,7 @@ class IntVec3 {
         );
     }
 
-    static fromString(str) {
+    static fromString(str: string | null | undefined) {
         if (!str) return IntVec3.Invalid;
 
         str = str.replace(/[()]/g, '').trim();
@@ -270,11 +270,11 @@ class IntVec3 {
         return IntVec3.Invalid;
     }
 
-    static fromVector3(v, newY = 0) {
+    static fromVector3(v: { x: number; z: number }, newY = 0) {
         return new IntVec3(v.x | 0, newY, v.z | 0);
     }
 
-    static fromPolar(angle, distance) {
+    static fromPolar(angle: number, distance: number) {
         const radians = angle * (Math.PI / 180);
         const x = Math.cos(radians) * distance;
         const z = Math.sin(radians) * distance;
@@ -294,11 +294,11 @@ class IntVec3 {
         return BigInt(this.x) + BigInt(4096) * BigInt(this.z) + BigInt(16777216) * BigInt(this.y);
     }
 
-    toIndex(mapSizeX) {
+    toIndex(mapSizeX: number) {
         return this.z * mapSizeX + this.x;
     }
 
-    static fromIndex(index, mapSizeX) {
+    static fromIndex(index: number, mapSizeX: number) {
         return new IntVec3(index % mapSizeX, 0, (index / mapSizeX) | 0);
     }
 }
@@ -316,7 +316,7 @@ class CellRect {
         return new CellRect(0, 0, 0, 0);
     }
 
-    static fromLimits(minX, minZ, maxX, maxZ) {
+    static fromLimits(minX: number, minZ: number, maxX: number, maxZ: number) {
         const rect = new CellRect();
         rect.minX = Math.min(minX, maxX);
         rect.minZ = Math.min(minZ, maxZ);
@@ -325,11 +325,11 @@ class CellRect {
         return rect;
     }
 
-    static fromLimitsVec(first, second) {
+    static fromLimitsVec(first: { x: number; z: number }, second: { x: number; z: number }) {
         return CellRect.fromLimits(first.x, first.z, second.x, second.z);
     }
 
-    static centeredOn(center, radius) {
+    static centeredOn(center: { x: number; z: number }, radius: number) {
         const rect = new CellRect();
         rect.minX = center.x - radius;
         rect.maxX = center.x + radius;
@@ -338,7 +338,7 @@ class CellRect {
         return rect;
     }
 
-    static centeredOnWithSize(center, width, height) {
+    static centeredOnWithSize(center: { x: number; z: number }, width: number, height: number) {
         const rect = new CellRect();
         rect.minX = center.x - ((width / 2) | 0);
         rect.minZ = center.z - ((height / 2) | 0);
@@ -347,11 +347,11 @@ class CellRect {
         return rect;
     }
 
-    static singleCell(c) {
+    static singleCell(c: { x: number; z: number }) {
         return new CellRect(c.x, c.z, 1, 1);
     }
 
-    static wholeMap(map) {
+    static wholeMap(map: { size: { x: number; z: number } }) {
         return new CellRect(0, 0, map.size.x, map.size.z);
     }
 
@@ -405,23 +405,23 @@ class CellRect {
         return new IntVec3(this.maxX, 0, this.maxZ);
     }
 
-    contains(c) {
+    contains(c: { x: number; z: number }) {
         return c.x >= this.minX && c.x <= this.maxX &&
             c.z >= this.minZ && c.z <= this.maxZ;
     }
 
-    overlaps(other) {
+    overlaps(other: CellRect) {
         if (this.isEmpty || other.isEmpty) return false;
         return this.minX <= other.maxX && this.maxX >= other.minX &&
             this.maxZ >= other.minZ && this.minZ <= other.maxZ;
     }
 
-    inBounds(map) {
+    inBounds(map: { size: { x: number; z: number } }) {
         return this.minX >= 0 && this.minZ >= 0 &&
             this.maxX < map.size.x && this.maxZ < map.size.z;
     }
 
-    isOnEdge(c) {
+    isOnEdge(c: { x: number; z: number }) {
         if (c.x === this.minX && c.z >= this.minZ && c.z <= this.maxZ) return true;
         if (c.x === this.maxX && c.z >= this.minZ && c.z <= this.maxZ) return true;
         if (c.z === this.minZ && c.x >= this.minX && c.x <= this.maxX) return true;
@@ -429,12 +429,12 @@ class CellRect {
         return false;
     }
 
-    isCorner(c) {
+    isCorner(c: { x: number; z: number }) {
         return (c.x === this.minX || c.x === this.maxX) &&
             (c.z === this.minZ || c.z === this.maxZ);
     }
 
-    clipInsideMap(map) {
+    clipInsideMap(map: { size: { x: number; z: number } }) {
         const result = new CellRect();
         result.minX = Math.max(0, this.minX);
         result.minZ = Math.max(0, this.minZ);
@@ -443,7 +443,7 @@ class CellRect {
         return result;
     }
 
-    clipInsideRect(other) {
+    clipInsideRect(other: { minX: number; minZ: number; maxX: number; maxZ: number }) {
         const result = new CellRect();
         result.minX = Math.max(other.minX, this.minX);
         result.maxX = Math.min(other.maxX, this.maxX);
@@ -462,7 +462,7 @@ class CellRect {
     // 此前只认标量，传对象时 `minX - {…}` 得 NaN → 走廊矩形坐标全 NaN，
     // 下游 _divideRectsByCorridor 打出 "rect and corridor are not overlapping" 警告，
     // 房间划分全错（探针 N 实测：修前 corridor=(NaN,NaN,59[object Object],…)）。
-    expandedBy(dist, z = undefined) {
+    expandedBy(dist: number | { x: number; y?: number; z: number }, z: number | undefined = undefined) {
         const result = new CellRect();
         let dx, dz;
         if (dist !== null && typeof dist === "object") {
@@ -484,7 +484,7 @@ class CellRect {
 
     // 对齐: Verse/CellRect.cs:1354-1357 - ContractedBy(x, z) => ExpandedBy(new IntVec3(-x, 0, -z))
     // 随 expandedBy 一起支持三种形态：`-dist` 对对象形态会得 NaN，故逐轴取负。
-    contractedBy(dist, z = undefined) {
+    contractedBy(dist: number | { x: number; y?: number; z: number }, z: number | undefined = undefined) {
         if (dist !== null && typeof dist === "object") {
             return this.expandedBy({ x: -dist.x, y: 0, z: -dist.z });
         }
@@ -492,7 +492,7 @@ class CellRect {
         return this.expandedBy(-dist);
     }
 
-    movedBy(offset) {
+    movedBy(offset: { x: number; z: number }) {
         const result = new CellRect();
         result.minX = this.minX + offset.x;
         result.minZ = this.minZ + offset.z;
@@ -543,7 +543,7 @@ class CellRect {
         }
     }
 
-    forEach(callback) {
+    forEach(callback: (cell: IntVec3) => void) {
         for (const cell of this.cells()) {
             callback(cell);
         }
@@ -554,7 +554,7 @@ class CellRect {
     // （RimWorld/LayoutRoom.cs:128 与 RoomLayoutGenerator.cs:526 的直译）都当实例方法调，
     // 故落在 CellRect 上。语义：两矩形重叠记 0；否则按四条边逐一判「正好贴边且在另一轴上
     // 有交叠」，返回交叠长度（重合格数 - 1，与 RW 的 Min - Max 逐式相同）。
-    getAdjacencyScore(other) {
+    getAdjacencyScore(other: CellRect) {
         if (this.overlaps(other)) return 0;
         // 对齐 GenGeo.cs:237-241 - 本矩形上边紧贴对方下边
         if (this.maxZ === other.minZ - 1 && this.minX < other.maxX && this.maxX > other.minX) {
@@ -582,7 +582,7 @@ class CellRect {
         return CellRect.fromLimits(this.minX, this.minZ, this.maxX, this.maxZ);
     }
 
-    equals(other) {
+    equals(other: { minX: number; minZ: number; maxX: number; maxZ: number } | null | undefined) {
         if (!other) return false;
         return this.minX === other.minX && this.maxX === other.maxX &&
             this.minZ === other.minZ && this.maxZ === other.maxZ;
@@ -592,7 +592,7 @@ class CellRect {
         return `(${this.minX},${this.minZ},${this.maxX},${this.maxZ})`;
     }
 
-    static fromString(str) {
+    static fromString(str: string) {
         str = str.replace(/[()]/g, '').trim();
         const parts = str.split(',').map(s => parseInt(s.trim(), 10));
         if (parts.length !== 4 || parts.some(isNaN)) {
@@ -603,7 +603,7 @@ class CellRect {
 
     // 对齐: Verse/CellRect.cs:643-661 - public IntVec3 GetCellOnEdge(Rot4 rot, IntVec3 point)
     // 把 point 投影到 rot 指定的那条边上：南北边锁 z、东西边锁 x，另一轴取 point 的。
-    getCellOnEdge(rot, point) {
+    getCellOnEdge(rot: number, point: { x: number; y?: number; z: number }) {
         if (rot === Rot4.North) return new IntVec3(point.x, point.y ?? 0, this.maxZ);
         if (rot === Rot4.East) return new IntVec3(this.maxX, point.y ?? 0, point.z);
         if (rot === Rot4.South) return new IntVec3(point.x, point.y ?? 0, this.minZ);
@@ -614,7 +614,7 @@ class CellRect {
     // 对齐: Verse/CellRect.cs:664-681 - public IntVec3 GetCenterCellOnEdge(Rot4 rot, int offset)
     // 以 centerCell 为基准沿边平移 offset 格。offset 省略即 RW 的 GetCenterCellOnEdge(rot)
     // 一参重载（CellRect.cs:638-641 = GetCellOnEdge(rot, CenterCell)，等价于 offset=0）。
-    getCenterCellOnEdge(rot, offset = 0) {
+    getCenterCellOnEdge(rot: number, offset = 0) {
         const c = this.centerCell;
         if (rot === Rot4.North) return new IntVec3(c.x + offset, c.y, this.maxZ);
         if (rot === Rot4.East) return new IntVec3(this.maxX, c.y, c.z + offset);
@@ -623,7 +623,7 @@ class CellRect {
         return IntVec3.Invalid;
     }
 
-    *getCellsOnEdge(rot) {
+    *getCellsOnEdge(rot: number) {
         if (this.isEmpty) return;
 
         if (rot === Rot4.North) {
@@ -655,13 +655,13 @@ class Vector2 { declare x: number; declare y: number;
     static get zero() { return new Vector2(0, 0); }
     static get one() { return new Vector2(1, 1); }
 
-    add(other) { return new Vector2(this.x + other.x, this.y + other.y); }
-    sub(other) { return new Vector2(this.x - other.x, this.y - other.y); }
-    mul(scalar) { return new Vector2(this.x * scalar, this.y * scalar); }
+    add(other: { x: number; y: number }) { return new Vector2(this.x + other.x, this.y + other.y); }
+    sub(other: { x: number; y: number }) { return new Vector2(this.x - other.x, this.y - other.y); }
+    mul(scalar: number) { return new Vector2(this.x * scalar, this.y * scalar); }
 
     get magnitude() { return Math.sqrt(this.x * this.x + this.y * this.y); }
 
-    equals(other) {
+    equals(other: { x: number; y: number } | null | undefined) {
         return other && this.x === other.x && this.y === other.y;
     }
 
@@ -695,7 +695,7 @@ class Color { declare r: number; declare g: number; declare b: number; declare a
         ];
     }
 
-    equals(other) {
+    equals(other: { r: number; g: number; b: number; a: number } | null | undefined) {
         return other && this.r === other.r && this.g === other.g &&
             this.b === other.b && this.a === other.a;
     }
@@ -737,22 +737,22 @@ class Rect { declare x: number; declare y: number; declare width: number; declar
     get size() { return new Vector2(this.width, this.height); }
     set size(value) { this.width = value.x; this.height = value.y; }
 
-    Contains(point) {
+    Contains(point: { x: number; y: number }) {
         return point.x >= this.x && point.x < this.xMax &&
             point.y >= this.y && point.y < this.yMax;
     }
 
-    Overlaps(other) {
+    Overlaps(other: Rect) {
         return this.xMax > other.x && this.x < other.xMax &&
             this.yMax > other.y && this.y < other.yMax;
     }
 
-    ContractedBy(margin) {
+    ContractedBy(margin: number) {
         return new Rect(this.x + margin, this.y + margin,
             this.width - margin * 2, this.height - margin * 2);
     }
 
-    ExpandedBy(margin) {
+    ExpandedBy(margin: number) {
         return new Rect(this.x - margin, this.y - margin,
             this.width + margin * 2, this.height + margin * 2);
     }
@@ -761,20 +761,20 @@ class Rect { declare x: number; declare y: number; declare width: number; declar
         return new Rect(0, 0, this.width, this.height);
     }
 
-    LeftPart(pct) {
+    LeftPart(pct: number) {
         return new Rect(this.x, this.y, this.width * pct, this.height);
     }
 
-    RightPart(pct) {
+    RightPart(pct: number) {
         const w = this.width * pct;
         return new Rect(this.x + this.width - w, this.y, w, this.height);
     }
 
-    TopPart(pct) {
+    TopPart(pct: number) {
         return new Rect(this.x, this.y, this.width, this.height * pct);
     }
 
-    BottomPart(pct) {
+    BottomPart(pct: number) {
         const h = this.height * pct;
         return new Rect(this.x, this.y + this.height - h, this.width, h);
     }
@@ -789,7 +789,7 @@ class Rect { declare x: number; declare y: number; declare width: number; declar
     get h() { return this.height; }
     set h(v) { this.height = v; }
 
-    equals(other) {
+    equals(other: { x: number; y: number; width: number; height: number } | null | undefined) {
         return other && this.x === other.x && this.y === other.y &&
             this.width === other.width && this.height === other.height;
     }

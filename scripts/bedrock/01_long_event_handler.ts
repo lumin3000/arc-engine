@@ -1,11 +1,18 @@
 
+// 阻塞任务：同步 action 直接执行；异步 action 返回迭代器，每帧推进一步，产出值可带进度文本/比例
+type EngineBlockingYield = { status?: string; progress?: number } | null | undefined | void;
+interface EngineBlockingEvent {
+    action: () => Iterator<EngineBlockingYield> | void; textKey: string; doAsync: boolean;
+    exceptionHandler: ((e: Error) => void) | null | undefined; callback: (() => void) | null | undefined;
+}
+
 const BlockingTaskQueue = {
 
-    _eventQueue: [],
+    _eventQueue: [] as EngineBlockingEvent[],
 
-    _currentEvent: null,
+    _currentEvent: null as EngineBlockingEvent | null,
 
-    _currentIterator: null,
+    _currentIterator: null as Iterator<EngineBlockingYield> | void | null,
 
     _loadingText: "",
     _loadingProgress: -1,
@@ -17,11 +24,12 @@ const BlockingTaskQueue = {
     _segStartFrame: -1,
     _segStartMs: 0,
     blockedFrames: 0,          // 当前段已被截断的帧数 (drawProgress 每阻塞帧 +1)
-    history: [],               // {name, blockedFrames, ms, endFrame, endMs, outcome}
-    blockedFrameHooks: [],     // 消费者钩子 (阻塞帧标志等), 与 customProgressUI 无关
+    history: [] as { name: string; blockedFrames: number; ms: number; endFrame: number; endMs: number; outcome: string }[],
+    blockedFrameHooks: [] as (() => void)[],     // 消费者钩子 (阻塞帧标志等), 与 customProgressUI 无关
     get currentName() { return this._currentEvent ? this._currentEvent.textKey : null; },
 
-    enqueueBlockingTask(action, textKey, doAsynchronously, exceptionHandler?, callback?) {
+    enqueueBlockingTask(action: EngineBlockingEvent["action"], textKey: string | null | undefined, doAsynchronously: boolean,
+                        exceptionHandler?: EngineBlockingEvent["exceptionHandler"], callback?: EngineBlockingEvent["callback"]) {
         this._eventQueue.push({
             action: action,
             textKey: textKey || "Loading...",
@@ -34,7 +42,7 @@ const BlockingTaskQueue = {
     tick() {
 
         if (!this._currentEvent && this._eventQueue.length > 0) {
-            this._currentEvent = this._eventQueue.shift();
+            this._currentEvent = this._eventQueue.shift() as EngineBlockingEvent;  // 上行已判 length > 0
             this._loadingText = this._currentEvent.textKey;
             this._segStartFrame = RealTime.frameCount;
             this._segStartMs = Date.now();
@@ -104,7 +112,7 @@ const BlockingTaskQueue = {
         }
     },
 
-    _recordSegmentEnd(outcome) {
+    _recordSegmentEnd(outcome: string) {
         if (!this._currentEvent) return;
         const now = Date.now();
         const rec = { name: this._currentEvent.textKey, blockedFrames: this.blockedFrames,
@@ -122,7 +130,7 @@ const BlockingTaskQueue = {
             try {
                 this._currentEvent.callback();
             } catch (e) {
-                jtask.log.error("[BlockingTaskQueue] Callback error: " + e.message);
+                jtask.log.error("[BlockingTaskQueue] Callback error: " + (e as Error).message);
             }
         }
         this._currentEvent = null;
@@ -132,11 +140,11 @@ const BlockingTaskQueue = {
         this._loadingProgress = -1;
     },
 
-    _handleException(e) {
+    _handleException(e: unknown) {
         this._recordSegmentEnd("error");
-        jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${e.message}\n${e.stack}`);
+        jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${(e as Error).message}\n${(e as Error).stack}`);
         if (this._currentEvent && this._currentEvent.exceptionHandler) {
-            this._currentEvent.exceptionHandler(e);
+            this._currentEvent.exceptionHandler(e as Error);
         }
         this._currentEvent = null;
         this._currentIterator = null;
@@ -154,7 +162,7 @@ const BlockingTaskQueue = {
     // 消费者可接管阻塞期 UI: 置为函数后, 阻塞帧不再画下面的默认灰框,
     // 由该函数全权负责本帧的加载期画面 (帧链在 BLOCKING_TASK_CHECK 截断,
     // 这是阻塞期间唯一还在跑的 UI 出口)。
-    customProgressUI: null,
+    customProgressUI: null as (() => void) | null,
 
     drawProgress() {
         if (!this.isBlocking) return;
@@ -200,7 +208,7 @@ const BlockingTaskQueue = {
 
     _runBlockedFrameHooks() {
         for (const h of this.blockedFrameHooks) {
-            try { h(); } catch (e) { jtask.log("[BlockingTaskQueue] blockedFrameHook error: " + e.message); }
+            try { h(); } catch (e) { jtask.log("[BlockingTaskQueue] blockedFrameHook error: " + (e as Error).message); }
         }
     }
 };

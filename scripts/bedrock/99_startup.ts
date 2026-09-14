@@ -19,18 +19,21 @@ const jtask = globalThis.jtask;
 // Games register both during bundle evaluation (before the first
 // frame stage tick).
 
+// 标题屏：active 期间每帧 draw；启动步骤：生成器函数，产出值转交 BlockingTaskQueue 显示进度
+type EngineTitleScreen = { active: boolean; draw(): void };
+type EngineStartupStep = () => Iterator<{ status?: string; progress?: number } | null | undefined | void>;
 globalThis.StartupFlow = {
-  _titleScreen: null,
-  _steps: [],
+  _titleScreen: null as EngineTitleScreen | null,
+  _steps: [] as EngineStartupStep[],
 
-  registerTitleScreen: function(ts) {
+  registerTitleScreen: function(ts: EngineTitleScreen | null) {
     if (ts && typeof ts.draw !== 'function') {
       throw new Error("[StartupFlow] TitleScreen must expose draw()");
     }
     this._titleScreen = ts;
   },
 
-  registerStartupSteps: function(steps) {
+  registerStartupSteps: function(steps: EngineStartupStep[]) {
     if (!Array.isArray(steps)) {
       throw new Error("[StartupFlow] registerStartupSteps expects an array of generator functions");
     }

@@ -1,6 +1,15 @@
 
+// 消费者可在全局挂 tick 后置钩子数组（引擎只读），参数为本 tick 的模拟刻
+declare global {
+    var __engine_pre_session_post_tick_hooks__: ((ticksSimulation: number) => void)[] | undefined;
+    var __engine_post_tick_hooks__: ((ticksSimulation: number) => void)[] | undefined;
+}
+// tickable / 地图的结构约定定义在 01_tick_list.ts（每文件独立作用域，经全局 TickBucket 类型取回）
+type EngineTickable = Parameters<TickBucket["register"]>[0];
+type EngineTickMap = NonNullable<EngineTickable["map"]>;
+
 class TickScheduler {
-    declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: any[];
+    declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: EngineTickMap[];
     constructor() {
 
         this._ticksSimInt = 0;
@@ -114,21 +123,21 @@ class TickScheduler {
         }
     }
 
-    registerAllTickabilityFor(tickable) {
+    registerAllTickabilityFor(tickable: EngineTickable) {
         const tickList = this._tickListFor(tickable);
         if (tickList !== null) {
             tickList.register(tickable);
         }
     }
 
-    deRegisterAllTickabilityFor(tickable) {
+    deRegisterAllTickabilityFor(tickable: EngineTickable) {
         const tickList = this._tickListFor(tickable);
         if (tickList !== null) {
             tickList.deregister(tickable);
         }
     }
 
-    tickManagerUpdate(deltaTimeSeconds) {
+    tickManagerUpdate(deltaTimeSeconds: number) {
 
         this._ticksThisFrame = 0;
 
@@ -252,19 +261,19 @@ class TickScheduler {
         }
     }
 
-    removeAllFromMap(map) {
+    removeAllFromMap(map: EngineTickMap) {
         for (const _ of this.removeAllFromMapAsync(map)) { /* drain */ }
     }
 
     // 分帧版 (阻塞过场内逐段让帧; 同步版=drain 同路径)
-    *removeAllFromMapAsync(map) {
-        const predicate = (tickable) => tickable.map === map;
+    *removeAllFromMapAsync(map: EngineTickMap) {
+        const predicate = (tickable: EngineTickable) => tickable.map === map;
         yield* this._tickBucketEvery.removeWhereAsync(predicate);
         yield* this._tickBucketSparse.removeWhereAsync(predicate);
         yield* this._tickBucketSlow.removeWhereAsync(predicate);
     }
 
-    debugSetTicksSimulation(newTicks) {
+    debugSetTicksSimulation(newTicks: number) {
         this._ticksSimInt = newTicks;
     }
 
@@ -278,20 +287,20 @@ class TickScheduler {
         this._tickBucketSlow.reset();
     }
 
-    registerMap(map) {
+    registerMap(map: EngineTickMap) {
         if (this._maps.indexOf(map) === -1) {
             this._maps.push(map);
         }
     }
 
-    deregisterMap(map) {
+    deregisterMap(map: EngineTickMap) {
         const idx = this._maps.indexOf(map);
         if (idx > -1) {
             this._maps.splice(idx, 1);
         }
     }
 
-    _tickListFor(tickable) {
+    _tickListFor(tickable: EngineTickable) {
 
         if (tickable.holdsChildren) {
             return this._tickBucketEvery;
@@ -325,7 +334,7 @@ class TickScheduler {
         };
     }
 
-    loadData(data) {
+    loadData(data: { ticksSimulation?: number }) {
         if (data.ticksSimulation !== undefined) {
             this._ticksSimInt = data.ticksSimulation;
         }
@@ -376,7 +385,7 @@ if (typeof TickClock !== 'undefined' && TickClock.setTickDataProvider) {
 }
 
 if (typeof FrameStageCallbacks !== 'undefined' && typeof FrameStagePriority !== 'undefined') {
-    FrameStageCallbacks.register(function(dt) {
+    FrameStageCallbacks.register(function(dt: number) {
         const tm = globalThis.EngineRefs?.tickManager;
         if (tm) {
 

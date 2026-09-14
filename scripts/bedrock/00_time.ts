@@ -1,4 +1,9 @@
 
+// 时间源：C 每帧传入 dt；暂停/倍速与模拟刻由消费者（tick 调度）经 provider 回调提供，引擎不持有调度对象
+type EngineTickStateProvider = () => { paused: boolean; multiplier: number } | null;
+type EngineTickDataProvider = () => { ticksAbsolute: number; ticksSimulation: number } | null;
+interface EngineGameTimer { id: number; startTick: number; durationTicks: number; callback: () => void; repeat: boolean; interval: number; }
+
 const RealTime = {
 
     deltaTime: 0,
@@ -11,7 +16,7 @@ const RealTime = {
 
     _unpausedTime: 0,
 
-    _tickStateProvider: null,
+    _tickStateProvider: null as EngineTickStateProvider | null,
 
     realtimeSinceStartup() {
         return jtask.counter_us() / 1_000_000;
@@ -25,11 +30,11 @@ const RealTime = {
         return jtask.counter_us();
     },
 
-    setTickStateProvider(provider) {
+    setTickStateProvider(provider: EngineTickStateProvider) {
         this._tickStateProvider = provider;
     },
 
-    update(deltaTFromC) {
+    update(deltaTFromC: number) {
         this.frameCount++;
         this.deltaTime = deltaTFromC;
 
@@ -56,9 +61,9 @@ const RealTime = {
 
 const _TickClockLiteral = {  // 消费者可扩展（索引签名开放），引擎成员保持精确类型
 
-    _tickDataProvider: null,
+    _tickDataProvider: null as EngineTickDataProvider | null,
 
-    setTickDataProvider(provider) {
+    setTickDataProvider(provider: EngineTickDataProvider) {
         this._tickDataProvider = provider;
     },
 
@@ -86,27 +91,27 @@ const _TickClockLiteral = {  // 消费者可扩展（索引签名开放），引
         return 0;
     },
 
-    ticksToSeconds(numTicks) {
+    ticksToSeconds(numTicks: number) {
         return numTicks / this.TICKS_PER_REAL_SECOND;
     },
 
-    secondsToTicks(numSeconds) {
+    secondsToTicks(numSeconds: number) {
         return Math.round(numSeconds * this.TICKS_PER_REAL_SECOND);
     },
 
-    toStringSecondsFromTicks(numTicks) {
+    toStringSecondsFromTicks(numTicks: number) {
         return this.ticksToSeconds(numTicks).toFixed(1) + "s";
     },
 
-    isTickInterval(period) {
+    isTickInterval(period: number) {
         return this.ticksSimulation % period === 0;
     },
 
-    isTickIntervalWithOffset(offset, period) {
+    isTickIntervalWithOffset(offset: number, period: number) {
         return (this.ticksSimulation + offset) % period === 0;
     },
 
-    getTickIntervalOffset(index, count, period) {
+    getTickIntervalOffset(index: number, count: number, period: number) {
         return Math.ceil((period / count) * index) % period;
     }
 }; const TickClock = _TickClockLiteral as typeof _TickClockLiteral & { [key: string]: any };
@@ -115,9 +120,9 @@ const GameTimer = {
 
     _nextId: 1,
 
-    _timers: [],
+    _timers: [] as EngineGameTimer[],
 
-    setTimeout(callback, delayTicks) {
+    setTimeout(callback: () => void, delayTicks: number) {
         const id = this._nextId++;
         const currentTick = TickClock.ticksSimulation;
 
@@ -133,14 +138,14 @@ const GameTimer = {
         return id;
     },
 
-    clearTimeout(id) {
+    clearTimeout(id: number) {
         const idx = this._timers.findIndex(t => t.id === id);
         if (idx !== -1) {
             this._timers.splice(idx, 1);
         }
     },
 
-    setInterval(callback, intervalTicks) {
+    setInterval(callback: () => void, intervalTicks: number) {
         const id = this._nextId++;
         const currentTick = TickClock.ticksSimulation;
 
@@ -156,19 +161,19 @@ const GameTimer = {
         return id;
     },
 
-    clearInterval(id) {
+    clearInterval(id: number) {
         this.clearTimeout(id);
     },
 
-    setTimeoutSeconds(callback, delaySeconds) {
+    setTimeoutSeconds(callback: () => void, delaySeconds: number) {
         return this.setTimeout(callback, TickClock.secondsToTicks(delaySeconds));
     },
 
-    setIntervalSeconds(callback, intervalSeconds) {
+    setIntervalSeconds(callback: () => void, intervalSeconds: number) {
         return this.setInterval(callback, TickClock.secondsToTicks(intervalSeconds));
     },
 
-    tick(currentTick) {
+    tick(currentTick: number) {
 
         for (let i = this._timers.length - 1; i >= 0; i--) {
             const timer = this._timers[i];
@@ -179,7 +184,7 @@ const GameTimer = {
                 try {
                     timer.callback();
                 } catch (e) {
-                    jtask.log.error(`[GameTimer] Callback error: ${e.message}`);
+                    jtask.log.error(`[GameTimer] Callback error: ${(e as Error).message}`);
                 }
 
                 if (timer.repeat) {

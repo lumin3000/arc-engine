@@ -20,13 +20,22 @@
 const jtask = globalThis.jtask;
 globalThis.__BP_VERBOSE__ = false;
 
-const S = {
+/**
+ * stdin/external 命令载荷：JSON 对象或原始字符串（字符串没有 cmd 字段，读到 undefined）。
+ * @typedef {{ cmd?: string, path?: string, js?: string }} RenderServiceCommand
+ * @typedef {RenderServiceCommand | (string & { cmd?: undefined, path?: undefined, js?: undefined })} RenderServiceExternalMsg
+ * @typedef {{ _gc: { finalize(): void }, frame(msg: unknown): void, SERVICE_ID: number,
+ *   external(msg: RenderServiceExternalMsg): void, stdin_command(msg: RenderServiceExternalMsg): void,
+ *   file_loaded(msg: unknown): void }} RenderServiceTable
+ */
+/** @type {RenderServiceTable} */
+const S = /** @type {RenderServiceTable} */ ({
   _gc: {
     finalize() {
       jtask.log("[render] exit");
     },
   },
-};
+});
 
 let frame_count = 0;
 let last_frame_time = 0;
@@ -51,7 +60,7 @@ function render_frame() {
     FrameStageCallbacks.runAll(dt);
 
   } catch (e) {
-    jtask.log.error("[render_frame] CRITICAL ERROR: " + e.message + "\n" + e.stack);
+    jtask.log.error("[render_frame] CRITICAL ERROR: " + /** @type {Error} */ (e).message + "\n" + /** @type {Error} */ (e).stack);
   } finally {
     // Staged resources finish once, after all draw submissions, even when stages block.
     RenderFrameCallbacks.runAfter(dt);
@@ -70,7 +79,7 @@ S.frame = function (msg) {
     try {
       BlockingTaskQueue.tick();
     } catch (e) {
-      jtask.log.error("[S.frame] BlockingTaskQueue.tick() threw: " + e.message + "\n" + (e.stack || ""));
+      jtask.log.error("[S.frame] BlockingTaskQueue.tick() threw: " + /** @type {Error} */ (e).message + "\n" + (/** @type {Error} */ (e).stack || ""));
     }
   }
 
@@ -117,6 +126,7 @@ S.external = function (msg) {
 };
 
 S.stdin_command = function (msg) {
+  /** @type {RenderServiceExternalMsg} */
   let parsed = msg;
   if (typeof msg === "string") {
     try {
@@ -150,7 +160,7 @@ S.stdin_command = function (msg) {
       try {
         out = String(eval(src));
       } catch (e) {
-        out = "eval error: " + e.message;
+        out = "eval error: " + /** @type {Error} */ (e).message;
       }
       jtask.log("[render] stdin eval → " + out);
     });
