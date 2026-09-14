@@ -2,9 +2,11 @@
 var EngineRoot = (function() {
     'use strict';
 
-    var _soundRoot = null;
-    var _uiRoot = null;
-    var _windowStack = null;
+    // soundRoot/uiRoot 目前无人赋值（恒 null）；windowStack 为消费者窗口栈（动态边界例外，负责 B22）
+    type EngineRootWindowStackSlot = any;
+    var _soundRoot: null = null;
+    var _uiRoot: null = null;
+    var _windowStack: EngineRootWindowStackSlot = null;
     var _initialized = false;
 
     return {

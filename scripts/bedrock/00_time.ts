@@ -59,7 +59,7 @@ const RealTime = {
     }
 };
 
-const _TickClockLiteral = {  // 消费者可扩展（索引签名开放），引擎成员保持精确类型
+const _TickClockLiteral = {  // 消费者成员经 TickClockExtension 声明（消费者 boundary_contracts extensions 生成），引擎成员保持精确类型
 
     _tickDataProvider: null as EngineTickDataProvider | null,
 
@@ -114,7 +114,7 @@ const _TickClockLiteral = {  // 消费者可扩展（索引签名开放），引
     getTickIntervalOffset(index: number, count: number, period: number) {
         return Math.ceil((period / count) * index) % period;
     }
-}; const TickClock = _TickClockLiteral as typeof _TickClockLiteral & { [key: string]: any };
+}; const TickClock = _TickClockLiteral as typeof _TickClockLiteral & TickClockExtension;
 
 const GameTimer = {
 

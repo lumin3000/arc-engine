@@ -1,14 +1,18 @@
 declare var SignalManager: any; declare var UniqueIDsManager: any;  // 消费者可选提供，引擎只探测
+// 消费者对象槽位（动态边界例外，逐项登记 tests/typecheck_strict_exceptions.json；负责批收紧为消费者真实类型）
+type EngineSessionMapSlot = any;       // 地图（负责 B07）
+type EngineSessionSelectorSlot = any;  // 选择器（负责 B22）
+type EngineSessionManagerSlot = any;   // SignalManager/UniqueIDsManager 实例（负责 B20）
 var EngineSession = (function() {
     'use strict';
 
-    var _tickManager = null;
-    var _signalManager = null;
-    var _uniqueIDsManager = null;
-    var _selector = null;
-    var _cameraController = null;
-    var _currentMap = null;
-    var _maps = [];
+    var _tickManager: TickScheduler | null = null;
+    var _signalManager: EngineSessionManagerSlot = null;
+    var _uniqueIDsManager: EngineSessionManagerSlot = null;
+    var _selector: EngineSessionSelectorSlot = null;
+    var _cameraController: CameraController | null = null;
+    var _currentMap: EngineSessionMapSlot = null;
+    var _maps: EngineSessionMapSlot[] = [];
     var _initialized = false;
 
     return {
@@ -52,7 +56,7 @@ var EngineSession = (function() {
             }
         },
 
-        setCurrentMap: function(map) {
+        setCurrentMap: function(map: EngineSessionMapSlot) {
             _currentMap = map;
             if (map && _maps.indexOf(map) === -1) {
                 _maps.push(map);
@@ -64,7 +68,7 @@ var EngineSession = (function() {
             jtask.log("[EngineSession] Current map set");
         },
 
-        addMap: function(map) {
+        addMap: function(map: EngineSessionMapSlot) {
             if (_maps.indexOf(map) === -1) {
                 _maps.push(map);
 
@@ -76,7 +80,7 @@ var EngineSession = (function() {
 
         // infmap P3: 图退役 (重建壳事务换图 / 多图休眠 L6)。tick 注销 + 会话摘除;
         // currentMap 若指向该图一并清空, 由调用方随后 setCurrentMap 新图。
-        removeMap: function(map) {
+        removeMap: function(map: EngineSessionMapSlot) {
             var idx = _maps.indexOf(map);
             if (idx > -1) {
                 _maps.splice(idx, 1);

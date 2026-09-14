@@ -1,9 +1,11 @@
 
-const _engineStateFactory = function() {  // 消费者可在其上挂自己的状态字段（索引签名开放），引擎成员保持精确类型
+const _engineStateFactory = function() {  // 消费者状态字段经 EngineStateExtension 声明，引擎成员保持精确类型
     'use strict';
 
-    var _root = null;
-    var _session = null;
+    // session 上挂有消费者世界字段（world/storyteller…）且大量调用点未判空（动态边界例外，负责 B12）
+    type EngineStateSessionSlot = any;
+    var _root: typeof EngineRoot | null = null;
+    var _session: EngineStateSessionSlot = null;
 
     return {
 
@@ -30,7 +32,7 @@ const _engineStateFactory = function() {  // 消费者可在其上挂自己的�
         get hasSession() { return _session !== null; },
         get hasRoot() { return _root !== null; }
     };
-}; var EngineState = _engineStateFactory() as ReturnType<typeof _engineStateFactory> & { [key: string]: any };
+}; var EngineState = _engineStateFactory() as ReturnType<typeof _engineStateFactory> & EngineStateExtension;
 
 globalThis.EngineState = EngineState;
 

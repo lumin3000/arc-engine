@@ -1,5 +1,5 @@
 
-var EnginePrefs = {} as { langFolderName: string; _filePath: string; load: () => void; save: () => void } & { [key: string]: any };  // 消费者可加自家偏好字段
+var EnginePrefs = {} as { langFolderName: string; _filePath: string; load: () => void; save: () => void } & EnginePrefsExtension;  // 消费者偏好字段经 EnginePrefsExtension 声明；成员随后逐个挂上
 
 EnginePrefs.langFolderName = "English";
 
