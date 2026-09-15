@@ -1,5 +1,5 @@
 
-class CameraController { declare _cachedRect: any; declare _lastTick: number;
+class CameraController { declare _cachedRect: null; declare _lastTick: number;
     constructor() {
         this._cachedRect = null;
         this._lastTick = -1;
