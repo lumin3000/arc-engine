@@ -1,16 +1,27 @@
+interface DrawPoint3 { x?: number; y?: number; z?: number; }
+interface DrawQuaternion { x?: number; y?: number; z?: number; w?: number; }
+interface DrawMeshView { flipped?: boolean; _cMeshId?: number | null; }
+interface DrawMaterialView {
+    _uvMeshId?: number | null;
+    color?: { r?: number; g?: number; b?: number; a?: number } | null;
+    shader?: { id?: number; name?: string } | null;
+    blendMode?: number;
+    params?: readonly number[] | null;
+    textureId?: number;
+}
 
 const Illustrations = {
 
-    _sharedQuadMeshId: null,
+    _sharedQuadMeshId: null as number | null,
 
-    _getSharedQuadMesh() {
+    _getSharedQuadMesh(): number | null {
         if (this._sharedQuadMeshId === null && typeof graphics !== 'undefined') {
             this._sharedQuadMeshId = graphics.create_quad_mesh();
         }
         return this._sharedQuadMeshId;
     },
 
-    drawMesh(mesh, loc, quat, material, layer, scale) {
+    drawMesh(mesh: DrawMeshView | number | null | undefined, loc: DrawPoint3, quat: DrawQuaternion, material: DrawMaterialView | null | undefined, layer?: number | null, scale?: DrawPoint3 | null): void {
 
         if (typeof graphics === 'undefined') {
 
@@ -56,7 +67,7 @@ const Illustrations = {
         const worldY = (loc.y ?? 0);
         const worldZ = (loc.z ?? 0);
 
-        const flipX = mesh?.flipped ? -1 : 1;
+        const flipX = (mesh as DrawMeshView | null | undefined)?.flipped ? -1 : 1;
         const sx = (scale?.x ?? 1) * flipX;
         const sy = scale?.y ?? 1;
         const sz = scale?.z ?? 1;
@@ -73,7 +84,7 @@ const Illustrations = {
         );
     },
 
-    drawMeshAt(mesh, loc, material, layer) {
+    drawMeshAt(mesh: unknown, loc: DrawPoint3, material: DrawMaterialView | null | undefined, layer?: number | null): void {
         if (typeof graphics === 'undefined') {
             this._drawFallback(loc, material);
             return;
@@ -118,7 +129,7 @@ const Illustrations = {
         );
     },
 
-    _drawFallback(loc, material) {
+    _drawFallback(loc: DrawPoint3, material: DrawMaterialView | null | undefined): void {
         if (typeof draw === 'undefined') return;
 
         const color = material?.color
@@ -136,7 +147,7 @@ const Illustrations = {
         );
     },
 
-    freeMesh(mesh) {
+    freeMesh(mesh: unknown): void {
 
     },
 

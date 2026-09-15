@@ -1,5 +1,5 @@
 
-class Mesh { declare _cMeshId: any; declare name: string; declare vertices: any[]; declare uvs: any[]; declare colors: any[]; declare triangles: any[]; declare isUploaded: boolean; declare type: string; declare size: any; declare flipped: boolean;
+class Mesh { declare _cMeshId: number | null; declare name: string; declare vertices: unknown[]; declare uvs: unknown[]; declare colors: unknown[]; declare triangles: number[]; declare isUploaded: boolean; declare type: string; declare size: { x: number; y: number }; declare flipped: boolean;
     constructor() {
         this._cMeshId = null;
         this.name = "Unnamed Mesh";
@@ -12,15 +12,15 @@ class Mesh { declare _cMeshId: any; declare name: string; declare vertices: any[
         this.isUploaded = false;
     }
 
-    ensureUploaded() {
+    ensureUploaded(): void {
 
     }
 }
 
 const MeshPool = {
-    _cache: new Map(),
+    _cache: new Map<string, Mesh>(),
 
-    gridPlane(size, flipped = false) {
+    gridPlane(size: { x: number; y: number }, flipped = false): Mesh | undefined {
         const key = `plane_${size.x}_${size.y}_${flipped}`;
         if (this._cache.has(key)) {
             return this._cache.get(key);
@@ -36,7 +36,7 @@ const MeshPool = {
         return mesh;
     },
 
-    getCustomMesh(name, generatorFn) {
+    getCustomMesh(name: string, generatorFn?: ((mesh: Mesh) => void) | null): Mesh | undefined {
         if (this._cache.has(name)) {
             return this._cache.get(name);
         }
@@ -47,7 +47,7 @@ const MeshPool = {
         return mesh;
     },
 
-    clear() {
+    clear(): void {
         this._cache.clear();
     }
 };
