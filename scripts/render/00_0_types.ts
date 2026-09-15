@@ -42,7 +42,7 @@ const _ShaderTypeLiteral = {  // 消费者可追加自家 shader 槽位（索引
     FxSpark: 21,
     FxShard: 22,
     FxFire: 23,
-}; const ShaderType = _ShaderTypeLiteral as typeof _ShaderTypeLiteral & { [key: string]: number };
+}; const ShaderType = _ShaderTypeLiteral as typeof _ShaderTypeLiteral & ShaderTypeExtension;
 
 globalThis.BlendMode = BlendMode;
 globalThis.RenderQueue = RenderQueue;
