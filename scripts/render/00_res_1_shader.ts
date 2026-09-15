@@ -1,6 +1,7 @@
+interface ShaderHandle { name: string; id: number; valid: boolean; }
 
-class Shader { declare name: string; declare vs: any; declare fs: any; declare id: number; declare valid: boolean;
-    constructor(name, vs, fs) {
+class Shader { declare name: string; declare vs: unknown; declare fs: unknown; declare id: number; declare valid: boolean;
+    constructor(name: string, vs: unknown, fs: unknown) {
         this.name = name;
         this.vs = vs;
         this.fs = fs;
@@ -10,7 +11,7 @@ class Shader { declare name: string; declare vs: any; declare fs: any; declare i
         this._compile();
     }
 
-    _compile() {
+    _compile(): void {
         if (!globalThis.graphics?.create_shader) {
             throw new Error("[Shader] graphics.create_shader binding not found!");
         }
@@ -25,10 +26,10 @@ class Shader { declare name: string; declare vs: any; declare fs: any; declare i
 }
 
 const ShaderDatabase = {
-    _shaders: new Map(),
+    _shaders: new Map<string, ShaderHandle>(),
     _initialized: false,
 
-    load(name, vs, fs) {
+    load(name: string, vs: unknown, fs: unknown): ShaderHandle | undefined {
         if (this._shaders.has(name)) {
             return this._shaders.get(name);
         }
@@ -37,12 +38,12 @@ const ShaderDatabase = {
         return shader;
     },
 
-    get(name) {
+    get(name: string): ShaderHandle | null {
 
         return this._shaders.get(name) || null;
     },
 
-    init() {
+    init(): void {
         if (this._initialized) return;
         this._initialized = true;
 

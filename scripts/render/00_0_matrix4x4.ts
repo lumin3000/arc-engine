@@ -1,3 +1,5 @@
+interface MatrixPoint3 { x: number; y: number; z: number; }
+interface MatrixQuaternion { x: number; y: number; z: number; w: number; }
 
 class Matrix4x4 { declare m: Float32Array;
     constructor() {
@@ -5,13 +7,13 @@ class Matrix4x4 { declare m: Float32Array;
         this.m = new Float32Array(16);
     }
 
-    static get identity() {
+    static get identity(): Matrix4x4 {
         const r = new Matrix4x4();
         r.m[0] = 1; r.m[5] = 1; r.m[10] = 1; r.m[15] = 1;
         return r;
     }
 
-    static TRS(pos, q, s) {
+    static TRS(pos: MatrixPoint3, q: MatrixQuaternion, s: MatrixPoint3): Matrix4x4 {
         const r = new Matrix4x4();
         const m = r.m;
 
@@ -46,7 +48,7 @@ class Matrix4x4 { declare m: Float32Array;
         return r;
     }
 
-    static Translate(v) {
+    static Translate(v: MatrixPoint3): Matrix4x4 {
         const r = Matrix4x4.identity;
         r.m[12] = v.x;
         r.m[13] = v.y;
@@ -54,7 +56,7 @@ class Matrix4x4 { declare m: Float32Array;
         return r;
     }
 
-    static Scale(v) {
+    static Scale(v: MatrixPoint3): Matrix4x4 {
         const r = new Matrix4x4();
         r.m[0] = v.x;
         r.m[5] = v.y;
@@ -63,15 +65,15 @@ class Matrix4x4 { declare m: Float32Array;
         return r;
     }
 
-    static Rotate(q) {
+    static Rotate(q: MatrixQuaternion): Matrix4x4 {
         return Matrix4x4.TRS({ x: 0, y: 0, z: 0 }, q, { x: 1, y: 1, z: 1 });
     }
 
-    Position() {
+    Position(): MatrixPoint3 {
         return { x: this.m[12], y: this.m[13], z: this.m[14] };
     }
 
-    mul(other) {
+    mul(other: Matrix4x4): Matrix4x4 {
         const r = new Matrix4x4();
         const a = this.m, b = other.m, o = r.m;
 
@@ -90,7 +92,7 @@ class Matrix4x4 { declare m: Float32Array;
         return r;
     }
 
-    MultiplyPoint3x4(p) {
+    MultiplyPoint3x4(p: MatrixPoint3): MatrixPoint3 {
         const m = this.m;
         return {
             x: m[0] * p.x + m[4] * p.y + m[8]  * p.z + m[12],
@@ -99,22 +101,22 @@ class Matrix4x4 { declare m: Float32Array;
         };
     }
 
-    get m00() { return this.m[0]; }  set m00(v) { this.m[0] = v; }
-    get m10() { return this.m[1]; }  set m10(v) { this.m[1] = v; }
-    get m20() { return this.m[2]; }  set m20(v) { this.m[2] = v; }
-    get m30() { return this.m[3]; }  set m30(v) { this.m[3] = v; }
-    get m01() { return this.m[4]; }  set m01(v) { this.m[4] = v; }
-    get m11() { return this.m[5]; }  set m11(v) { this.m[5] = v; }
-    get m21() { return this.m[6]; }  set m21(v) { this.m[6] = v; }
-    get m31() { return this.m[7]; }  set m31(v) { this.m[7] = v; }
-    get m02() { return this.m[8]; }  set m02(v) { this.m[8] = v; }
-    get m12() { return this.m[9]; }  set m12(v) { this.m[9] = v; }
-    get m22() { return this.m[10]; } set m22(v) { this.m[10] = v; }
-    get m32() { return this.m[11]; } set m32(v) { this.m[11] = v; }
-    get m03() { return this.m[12]; } set m03(v) { this.m[12] = v; }
-    get m13() { return this.m[13]; } set m13(v) { this.m[13] = v; }
-    get m23() { return this.m[14]; } set m23(v) { this.m[14] = v; }
-    get m33() { return this.m[15]; } set m33(v) { this.m[15] = v; }
+    get m00(): number { return this.m[0]; }  set m00(v: number) { this.m[0] = v; }
+    get m10(): number { return this.m[1]; }  set m10(v: number) { this.m[1] = v; }
+    get m20(): number { return this.m[2]; }  set m20(v: number) { this.m[2] = v; }
+    get m30(): number { return this.m[3]; }  set m30(v: number) { this.m[3] = v; }
+    get m01(): number { return this.m[4]; }  set m01(v: number) { this.m[4] = v; }
+    get m11(): number { return this.m[5]; }  set m11(v: number) { this.m[5] = v; }
+    get m21(): number { return this.m[6]; }  set m21(v: number) { this.m[6] = v; }
+    get m31(): number { return this.m[7]; }  set m31(v: number) { this.m[7] = v; }
+    get m02(): number { return this.m[8]; }  set m02(v: number) { this.m[8] = v; }
+    get m12(): number { return this.m[9]; }  set m12(v: number) { this.m[9] = v; }
+    get m22(): number { return this.m[10]; } set m22(v: number) { this.m[10] = v; }
+    get m32(): number { return this.m[11]; } set m32(v: number) { this.m[11] = v; }
+    get m03(): number { return this.m[12]; } set m03(v: number) { this.m[12] = v; }
+    get m13(): number { return this.m[13]; } set m13(v: number) { this.m[13] = v; }
+    get m23(): number { return this.m[14]; } set m23(v: number) { this.m[14] = v; }
+    get m33(): number { return this.m[15]; } set m33(v: number) { this.m[15] = v; }
 }
 
 globalThis.Matrix4x4 = Matrix4x4;
