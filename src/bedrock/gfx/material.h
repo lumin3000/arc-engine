@@ -76,6 +76,7 @@ typedef struct Material {
 
   sg_image texture;
   sg_view texture_view;
+  sg_sampler texture_sampler; // zero uses the renderer default
   Vec4 color;
   ShaderType shader_type;
   int renderQueue;

@@ -28,6 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "stb_image_resize2.h"
 
 // ============================================================================
 // 常量
@@ -420,6 +423,13 @@ typedef struct {
   uint8_t *staging;
   int width;
   int height;
+  // Optional isolated-tile mip chain. Base pixels remain unchanged.
+  int mip_levels, mip_tile;
+  uint8_t *mip_pixels[4];
+  uint8_t *mip_dirty;
+  sg_sampler mip_sampler;
+  sg_view mip_view;
+  bool minify_enabled;
 } GraphicsTextureCache;
 
 static GraphicsTextureCache g_graphics_textures[MAX_GRAPHICS_TEXTURES];
@@ -882,6 +892,9 @@ static JSValue js_graphics_compose_layers(JSContext *ctx, JSValueConst this_val,
     return JS_ThrowRangeError(ctx, "compose_layers: bad layer count %d", layerCount);
 
   const size_t slotPx = (size_t)sw * sh;
+  if (tex->mip_tile && (sx % tex->mip_tile || sy % tex->mip_tile ||
+      sw != tex->mip_tile || sh != tex->mip_tile))
+    return JS_ThrowRangeError(ctx, "filtered staged texture requires aligned complete tile writes");
   float *acc = (float *)calloc(slotPx, 4 * sizeof(float)); // 槽累积 (straight alpha)
   float *lay = (float *)malloc(slotPx * 4 * sizeof(float)); // 单层工作区(槽大小上限)
   if (!acc || !lay) {
@@ -1063,22 +1076,132 @@ static JSValue js_graphics_compose_layers(JSContext *ctx, JSValueConst this_val,
       }
     }
   }
+  if (tex->mip_dirty) {
+    const int n = tex->width / tex->mip_tile;
+    tex->mip_dirty[(sy / tex->mip_tile) * n + sx / tex->mip_tile] = 1;
+  }
   free(acc);
   return JS_UNDEFINED;
+}
+
+// Lanczos3 prefilter; stb handles non-premultiplied RGBA alpha weighting.
+static float staged_lanczos3(float x, float scale, void *user) {
+  (void)scale; (void)user;
+  x = fabsf(x);
+  if (x < 0.00001f) return 1.0f;
+  if (x >= 3.0f) return 0.0f;
+  float p = (float)M_PI * x;
+  return sinf(p) * sinf(p / 3.0f) / (p * p / 3.0f);
+}
+static float staged_support3(float scale, void *user) {
+  (void)scale; (void)user; return 3.0f;
+}
+
+static bool staged_build_mips(GraphicsTextureCache *tex, int *tiles) {
+  *tiles = 0;
+  if (!tex->minify_enabled) return true;
+  int tile = tex->mip_tile, cols = tex->width / tile, rows = tex->height / tile;
+  for (int i = 0; i < cols * rows; i++) *tiles += tex->mip_dirty[i] != 0;
+  if (!*tiles) return true;
+  for (int level = 1; level < tex->mip_levels; level++) {
+    int w = tex->width >> level, h = tex->height >> level, small = tile >> level;
+    STBIR_RESIZE resize;
+    stbir_resize_init(&resize, tex->staging, tile, tile, tex->width * 4,
+        tex->mip_pixels[level], small, small, w * 4, STBIR_RGBA, STBIR_TYPE_UINT8);
+    stbir_set_filter_callbacks(&resize, staged_lanczos3, staged_support3,
+                               staged_lanczos3, staged_support3);
+    if (!stbir_build_samplers(&resize)) return false;
+    for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) {
+      if (!tex->mip_dirty[y * cols + x]) continue;
+      // Staging is vertically flipped. Each tile is filtered in isolation.
+      const uint8_t *src = tex->staging +
+          ((size_t)(tex->height - (y + 1) * tile) * tex->width + x * tile) * 4;
+      uint8_t *dst = tex->mip_pixels[level] +
+          ((size_t)(h - (y + 1) * small) * w + x * small) * 4;
+      stbir_set_buffer_ptrs(&resize, src, tex->width * 4, dst, w * 4);
+      if (!stbir_resize_extended(&resize)) { stbir_free_samplers(&resize); return false; }
+    }
+    stbir_free_samplers(&resize);
+  }
+  memset(tex->mip_dirty, 0, (size_t)cols * rows);
+  return true;
+}
+static void staged_upload(GraphicsTextureCache *tex) {
+  sg_image_data data = {0};
+  data.mip_levels[0] = (sg_range){tex->staging, (size_t)tex->width * tex->height * 4};
+  for (int l = 1; l < tex->mip_levels; l++)
+    data.mip_levels[l] = (sg_range){tex->mip_pixels[l], (size_t)(tex->width >> l) * (tex->height >> l) * 4};
+  sg_update_image(tex->image, &data);
+}
+
+// Explicit opt-in, callable at a frame boundary for live A/B. levels=1 selects
+// the original sampler; allocated mip storage is retained for cheap toggling.
+static JSValue js_graphics_texture_staged_minification(JSContext *ctx,
+    JSValueConst this_val, int argc, JSValueConst *argv) {
+  if (argc < 3) return JS_ThrowTypeError(ctx, "texture_staged_minification(texId, tileSize, levels)");
+  JSValue err = JS_UNDEFINED;
+  GraphicsTextureCache *tex = compose_staged_tex(ctx, argv[0], &err);
+  if (!tex) return err;
+  int32_t tile, levels;
+  if (JS_ToInt32(ctx, &tile, argv[1]) < 0 || JS_ToInt32(ctx, &levels, argv[2]) < 0) return JS_EXCEPTION;
+  if (levels < 1 || levels > 4) return JS_ThrowRangeError(ctx, "mip levels must be 1..4");
+  if (levels == 1) { tex->minify_enabled = false; return JS_NewFloat64(ctx, 0); }
+  int step = 1 << (levels - 1);
+  if (tile <= 0 || tile > tex->width || tile > tex->height || tile % step || tex->width % step || tex->height % step)
+    return JS_ThrowRangeError(ctx, "mip tile and page dimensions must support requested levels");
+  if (tex->mip_levels && (tex->mip_levels != levels || tex->mip_tile != tile))
+    return JS_ThrowRangeError(ctx, "cannot change an allocated mip layout");
+  if (!tex->mip_levels) {
+    uint8_t *buffers[4] = {0};
+    uint8_t *dirty = calloc((size_t)(tex->width / tile) * (tex->height / tile), 1);
+    bool ok = dirty != NULL;
+    for (int l = 1; l < levels; l++) {
+      buffers[l] = calloc((size_t)(tex->width >> l) * (tex->height >> l), 4);
+      ok = ok && buffers[l] != NULL;
+    }
+    if (!ok) { free(dirty); for (int l = 1; l < levels; l++) free(buffers[l]); return JS_ThrowInternalError(ctx, "mip allocation failed"); }
+    sg_image img = sg_make_image(&(sg_image_desc){.width=tex->width,.height=tex->height,
+        .num_mipmaps=levels,.pixel_format=SG_PIXELFORMAT_RGBA8,.usage.dynamic_update=true});
+    sg_view view = {0}, mip_view = {0}; sg_sampler sampler = {0};
+    if (sg_query_image_state(img) == SG_RESOURCESTATE_VALID) {
+      view = sg_make_view(&(sg_view_desc){.texture={.image=img,.mip_levels={.base=0,.count=1}}});
+      mip_view = sg_make_view(&(sg_view_desc){.texture.image=img});
+      sampler = sg_make_sampler(&(sg_sampler_desc){.min_filter=SG_FILTER_LINEAR,
+          .mag_filter=SG_FILTER_LINEAR,.mipmap_filter=SG_FILTER_LINEAR,.max_lod=(float)(levels-1),
+          .wrap_u=SG_WRAP_CLAMP_TO_EDGE,.wrap_v=SG_WRAP_CLAMP_TO_EDGE});
+    }
+    if (sg_query_image_state(img) != SG_RESOURCESTATE_VALID || sg_query_view_state(view) != SG_RESOURCESTATE_VALID || sg_query_view_state(mip_view) != SG_RESOURCESTATE_VALID || sg_query_sampler_state(sampler) != SG_RESOURCESTATE_VALID) {
+      if (sampler.id) sg_destroy_sampler(sampler);
+      if (view.id) sg_destroy_view(view);
+      if (mip_view.id) sg_destroy_view(mip_view);
+      if (img.id) sg_destroy_image(img);
+      free(dirty); for (int l=1;l<levels;l++) free(buffers[l]);
+      return JS_ThrowInternalError(ctx, "mip GPU allocation failed");
+    }
+    sg_destroy_view(tex->view); sg_destroy_image(tex->image);
+    tex->image=img; tex->view=view; tex->mip_view=mip_view; tex->mip_sampler=sampler;
+    tex->mip_levels=levels; tex->mip_tile=tile; tex->mip_dirty=dirty;
+    for (int l=1;l<levels;l++) tex->mip_pixels[l]=buffers[l];
+    memset(dirty,1,(size_t)(tex->width/tile)*(tex->height/tile));
+  }
+  tex->minify_enabled = true;
+  clock_t begin=clock(); int tiles=0;
+  if (!staged_build_mips(tex,&tiles)) return JS_ThrowInternalError(ctx,"mip filtering failed");
+  // Only upload when base/mips changed; repeated toggling does not reupload.
+  if (tiles) staged_upload(tex);
+  return JS_NewFloat64(ctx,1000.0*(clock()-begin)/CLOCKS_PER_SEC);
 }
 
 static JSValue js_graphics_texture_flush_staged(JSContext *ctx,
                                                 JSValueConst this_val, int argc,
                                                 JSValueConst *argv) {
-  if (argc < 1)
-    return JS_ThrowTypeError(ctx, "texture_flush_staged(texId)");
+  if (argc < 1) return JS_ThrowTypeError(ctx, "texture_flush_staged(texId)");
   JSValue err = JS_UNDEFINED;
   GraphicsTextureCache *tex = compose_staged_tex(ctx, argv[0], &err);
   if (!tex) return err;
-  sg_update_image(tex->image, &(sg_image_data){
-      .mip_levels[0] = { .ptr = tex->staging,
-                         .size = (size_t)tex->width * tex->height * 4 },
-  });
+  int tiles;
+  if (!staged_build_mips(tex,&tiles)) return JS_ThrowInternalError(ctx,"mip filtering failed");
+  staged_upload(tex);
   return JS_UNDEFINED;
 }
 
@@ -1807,6 +1930,8 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
 
   sg_image old_tex = dm->material.texture;
   sg_view old_view = dm->material.texture_view;
+  sg_sampler old_sampler = dm->material.texture_sampler;
+  dm->material.texture_sampler = (sg_sampler){0};
 
   extern bool atlas_texture_get(int texture_id, sg_image *out_image,
                                 sg_view *out_view);
@@ -1822,6 +1947,10 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
     // load_texture 纹理池
     dm->material.texture = g_graphics_textures[textureId].image;
     dm->material.texture_view = g_graphics_textures[textureId].view;
+    if (g_graphics_textures[textureId].minify_enabled) {
+      dm->material.texture_sampler = g_graphics_textures[textureId].mip_sampler;
+      dm->material.texture_view = g_graphics_textures[textureId].mip_view;
+    }
   }
 
   graphics_draw_mesh_instanced(&dm->mesh, &dm->material, transforms, colors,
@@ -1830,6 +1959,7 @@ static JSValue js_graphics_draw_mesh_instanced(JSContext *ctx,
   // Restore material (optional, but good practice)
   dm->material.texture = old_tex;
   dm->material.texture_view = old_view;
+  dm->material.texture_sampler = old_sampler;
 
   JS_FreeValue(ctx, trans_buf);
   if (!JS_IsUndefined(col_buf)) {
@@ -1880,6 +2010,9 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "texture_flush_staged",
                     JS_NewCFunction(ctx, js_graphics_texture_flush_staged,
                                     "texture_flush_staged", 1));
+  JS_SetPropertyStr(ctx, obj, "texture_staged_minification",
+                    JS_NewCFunction(ctx, js_graphics_texture_staged_minification,
+                                    "texture_staged_minification", 3));
   JS_SetPropertyStr(ctx, obj, "texture_staged_read",
                     JS_NewCFunction(ctx, js_graphics_texture_staged_read,
                                     "texture_staged_read", 5));

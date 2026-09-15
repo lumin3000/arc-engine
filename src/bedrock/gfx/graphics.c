@@ -435,8 +435,8 @@ void graphics_submit_meshes(void) {
 
     bind.views[VIEW_ripple_tex] = render_state.bind.views[VIEW_ripple_tex];
     bind.views[VIEW_noise_tex]  = render_state.bind.views[VIEW_noise_tex];
-    bind.samplers[SMP_default_sampler] =
-        render_state.bind.samplers[SMP_default_sampler];
+    bind.samplers[SMP_default_sampler] = mat->texture_sampler.id
+        ? mat->texture_sampler : render_state.bind.samplers[SMP_default_sampler];
 
     sg_apply_bindings(&bind);
 
@@ -566,8 +566,8 @@ int graphics_submit_meshes_range_count(int rq_min, int rq_max, bool clear_after,
     bind.views[VIEW_flow_map] = render_state.bind.views[VIEW_flow_map];
     bind.views[VIEW_ripple_tex] = render_state.bind.views[VIEW_ripple_tex];
     bind.views[VIEW_noise_tex]  = render_state.bind.views[VIEW_noise_tex];
-    bind.samplers[SMP_default_sampler] =
-        render_state.bind.samplers[SMP_default_sampler];
+    bind.samplers[SMP_default_sampler] = mat->texture_sampler.id
+        ? mat->texture_sampler : render_state.bind.samplers[SMP_default_sampler];
     sg_apply_bindings(&bind);
 
     VS_MVP_t vs_mvp = {0};
@@ -666,8 +666,8 @@ static void submit_one_instanced(InstancedDrawRequest *req) {
   bind.views[VIEW_flow_map] = render_state.bind.views[VIEW_flow_map];
   bind.views[VIEW_ripple_tex] = render_state.bind.views[VIEW_ripple_tex];
   bind.views[VIEW_noise_tex] = render_state.bind.views[VIEW_noise_tex];
-  bind.samplers[SMP_default_sampler] =
-      render_state.bind.samplers[SMP_default_sampler];
+  bind.samplers[SMP_default_sampler] = req->material.texture_sampler.id
+      ? req->material.texture_sampler : render_state.bind.samplers[SMP_default_sampler];
 
   sg_apply_bindings(&bind);
 
