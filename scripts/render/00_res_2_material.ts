@@ -1,6 +1,8 @@
+interface MaterialColor { r: number; g: number; b: number; a: number; }
+interface MaterialShader { name: string; id?: number; valid?: boolean; }
 
-class Material { declare shader: any; declare color: { r: number; g: number; b: number; a: number }; declare texturePath: string | null; declare textureId: number; declare blendMode: any; declare renderQueue: any; declare uvOffset: { x: number; y: number }; declare uvScale: { x: number; y: number }; declare id: any; declare path: string; declare atlasIndex: number;
-    constructor(shader, color) {
+class Material { declare shader: MaterialShader | null | undefined; declare color: { r: number; g: number; b: number; a: number }; declare texturePath: string | null; declare textureId: number; declare blendMode: number; declare renderQueue: number; declare uvOffset: { x: number; y: number }; declare uvScale: { x: number; y: number }; declare id: string | null; declare path: string; declare atlasIndex: number; declare _uvMeshId?: number; declare params?: readonly number[] | null;
+    constructor(shader: MaterialShader | null | undefined, color?: MaterialColor | null) {
         this.shader = shader;
         this.color = color || { r: 1, g: 1, b: 1, a: 1 };
         this.texturePath = null;
@@ -15,11 +17,11 @@ class Material { declare shader: any; declare color: { r: number; g: number; b: 
         this.id = null;
     }
 
-    get mainTexture() {
+    get mainTexture(): string | null {
         return this.texturePath;
     }
 
-    set mainTexture(path) {
+    set mainTexture(path: string | null) {
         if (this.texturePath === path) return;
         this.texturePath = path;
 
@@ -30,17 +32,17 @@ class Material { declare shader: any; declare color: { r: number; g: number; b: 
         }
     }
 
-    setShader(shader) {
+    setShader(shader: MaterialShader | null | undefined): void {
         this.shader = shader;
     }
 
-    setColor(r, g, b, a) {
+    setColor(r: number, g: number, b: number, a: number): void {
         this.color = { r, g, b, a };
     }
 }
 
 const MaterialPool = {
-    _cache: new Map(),
+    _cache: new Map<string, Material>(),
 
     get TEXTURE_PATHS() {
         return globalThis.GAME_CONFIG?.TEXTURE_PATHS || [];
@@ -50,9 +52,9 @@ const MaterialPool = {
         return this.TEXTURE_PATHS[0];
     },
 
-    _fileExistsCache: new Map(),
+    _fileExistsCache: new Map<string | null, boolean>(),
 
-    _fileExists(path) {
+    _fileExists(path: string | null): boolean | undefined {
         if (this._fileExistsCache.has(path)) {
             return this._fileExistsCache.get(path);
         }
@@ -67,7 +69,7 @@ const MaterialPool = {
         return exists;
     },
 
-    resolveTexturePath(texPath, suffix = "") {
+    resolveTexturePath(texPath: string | null | undefined, suffix = ""): string | null {
         if (!texPath) return null;
 
         if (texPath.startsWith("/")) {
@@ -104,7 +106,7 @@ const MaterialPool = {
         return this.TEXTURE_PATHS[0] + "/" + firstFullFileName;
     },
 
-    matFrom(path, shaderDef?, color?, silent = false) {
+    matFrom(path: string | null | undefined, shaderDef?: { name?: string } | null, color?: MaterialColor | null, silent = false): Material | null | undefined {
         if (!path) return null;
 
         const shaderName = shaderDef?.name || 'Standard';
@@ -149,13 +151,13 @@ const MaterialPool = {
         return mat;
     },
 
-    clear() {
+    clear(): void {
         this._cache.clear();
     }
 };
 
 class MaterialAtlas { declare _rootMat: Material; declare _subMats: Material[];
-    constructor(rootMat) {
+    constructor(rootMat: Material) {
         this._rootMat = rootMat;
         this._subMats = new Array(16);
 
@@ -182,7 +184,7 @@ class MaterialAtlas { declare _rootMat: Material; declare _subMats: Material[];
         }
     }
 
-    subMat(linkDir) {
+    subMat(linkDir: number): Material {
         const index = linkDir & 0xF;
         return this._subMats[index] || this._subMats[0];
     }
@@ -195,9 +197,9 @@ function requiredCachedAtlas(atlas: MaterialAtlas | null | undefined): MaterialA
 }
 
 const MaterialAtlasPool = {
-    _atlasDict: new Map(),
+    _atlasDict: new Map<string | null, MaterialAtlas>(),
 
-    subMaterialFromAtlas(mat, linkSet) {
+    subMaterialFromAtlas(mat: Material | null | undefined, linkSet: number): Material | null {
         if (!mat) return null;
 
         const key = mat.id || mat.path;
@@ -208,20 +210,20 @@ const MaterialAtlasPool = {
         return requiredCachedAtlas(this._atlasDict.get(key)).subMat(linkSet);
     },
 
-    clear() {
+    clear(): void {
         this._atlasDict.clear();
     }
 };
 
 const _MatBasesLiteral = {  // 消费者可扩展（索引签名开放），引擎成员保持精确类型
-    _loaded: {},
+    _loaded: {} as Record<string, Material | null | undefined>,
 
     get SunShadow() { return this._get('SunShadow', 'SunShadow'); },
     get SunShadowFade() { return this._get('SunShadowFade', 'SunShadowFade'); },
     get LightOverlay() { return this._get('LightOverlay', 'LightOverlay'); },
     get ShadowMask() { return this._get('ShadowMask', 'ShadowMask'); },
 
-    _get(name, shaderName) {
+    _get(name: string, shaderName: string): Material | null | undefined {
         if (!this._loaded[name]) {
 
             this._loaded[name] = MaterialPool.matFrom(`MatBases/${name}`, { name: shaderName }, { r: 1, g: 1, b: 1, a: 1 });
@@ -229,7 +231,7 @@ const _MatBasesLiteral = {  // 消费者可扩展（索引签名开放），引�
         }
         return this._loaded[name];
     }
-}; const MatBases = _MatBasesLiteral as typeof _MatBasesLiteral & { [key: string]: any };
+}; const MatBases = _MatBasesLiteral as typeof _MatBasesLiteral & MatBasesExtension;
 
 globalThis.Material = Material;
 globalThis.MaterialPool = MaterialPool;
