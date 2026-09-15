@@ -53,7 +53,7 @@ const Illustrations = {
 
         if (material?.shader?.name && graphics.set_mesh_shader_type) {
             const st = globalThis.ShaderType;
-            const shaderTypeNum = st?.[material.shader.name] ?? st?.Textured ?? 9;
+            const shaderTypeNum = (st == null ? undefined : Reflect.get(st, material.shader.name)) ?? st?.Textured ?? 9;
             graphics.set_mesh_shader_type(meshId, shaderTypeNum);
         }
 
@@ -110,7 +110,7 @@ const Illustrations = {
 
         if (material?.shader?.name && graphics.set_mesh_shader_type) {
             const st = globalThis.ShaderType;
-            const shaderTypeNum = st?.[material.shader.name] ?? st?.Textured ?? 9;
+            const shaderTypeNum = (st == null ? undefined : Reflect.get(st, material.shader.name)) ?? st?.Textured ?? 9;
             graphics.set_mesh_shader_type(meshId, shaderTypeNum);
         }
 
