@@ -59,7 +59,7 @@ const MaterialPool = {
 
         let exists = false;
         if (typeof std !== "undefined" && std.loadFile) {
-            const content = std.loadFile(path);
+            const content = Reflect.apply(std.loadFile, std, [path]);
             exists = (content !== null);
         }
 
@@ -188,6 +188,12 @@ class MaterialAtlas { declare _rootMat: Material; declare _subMats: Material[];
     }
 }
 
+function requiredCachedAtlas(atlas: MaterialAtlas | null | undefined): MaterialAtlas {
+    // Preserve the existing failed member read if a cache entry is absent.
+    if (atlas == null) throw new TypeError("[MaterialAtlasPool] missing cached atlas at subMat read");
+    return atlas;
+}
+
 const MaterialAtlasPool = {
     _atlasDict: new Map(),
 
@@ -199,7 +205,7 @@ const MaterialAtlasPool = {
             this._atlasDict.set(key, new MaterialAtlas(mat));
         }
 
-        return this._atlasDict.get(key).subMat(linkSet);
+        return requiredCachedAtlas(this._atlasDict.get(key)).subMat(linkSet);
     },
 
     clear() {
