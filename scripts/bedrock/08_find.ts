@@ -36,7 +36,7 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
             return EngineState.session?.maps;
         },
 
-        get currentMap() {
+        get currentMap(): EngineSessionExtension["currentMap"] | undefined {
             return EngineState.session?.currentMap;
         },
 
@@ -50,11 +50,11 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
             }
         },
 
-        get cameraController() {
+        get cameraController(): CameraController | null | undefined {
             return EngineState.session?.cameraController;
         },
 
-        set cameraController(value) {
+        set cameraController(value: CameraController | null) {
             if (EngineState.session) {
                 EngineState.session.cameraController = value;
             }
@@ -76,7 +76,7 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
             return EngineState.hasRoot;
         },
 
-        set currentMap(value) {
+        set currentMap(value: EngineSessionExtension["currentMap"]) {
             if (EngineState.session) {
                 EngineState.session.setCurrentMap(value);
             } else {
