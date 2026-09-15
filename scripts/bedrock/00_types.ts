@@ -410,7 +410,7 @@ class CellRect {
             c.z >= this.minZ && c.z <= this.maxZ;
     }
 
-    overlaps(other: CellRect) {
+    overlaps(other: { readonly minX: number; readonly maxX: number; readonly minZ: number; readonly maxZ: number; readonly isEmpty?: boolean }) {  // 只读四边与 isEmpty；消费方已用矩形表含 {minX,maxX,minZ,maxZ} 字面量（无 isEmpty 视为非空）
         if (this.isEmpty || other.isEmpty) return false;
         return this.minX <= other.maxX && this.maxX >= other.minX &&
             this.maxZ >= other.minZ && this.minZ <= other.maxZ;
