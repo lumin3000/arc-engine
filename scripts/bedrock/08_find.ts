@@ -1,5 +1,5 @@
 
-const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRefsExtension 声明（消费者 boundary_contracts extensions 生成）；索引签名仍开放，可容纳未声明键（例外登记）；引擎成员保持精确类型
+const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRefsExtension 声明（消费者 boundary_contracts extensions 生成）；未登记键不再开放；引擎成员保持精确类型
     'use strict';
 
     return {
@@ -104,7 +104,7 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
         get dataReady() { return this._dataReady; },
         set dataReady(value) { this._dataReady = value; }
     };
-}; var EngineRefs = _engineRefsFactory() as ReturnType<typeof _engineRefsFactory> & EngineRefsExtension & { [key: string]: any };
+}; var EngineRefs = _engineRefsFactory() as ReturnType<typeof _engineRefsFactory> & EngineRefsExtension;
 
 globalThis.EngineRefs = EngineRefs;
 
