@@ -168,13 +168,13 @@ S.stdin_command = function (msg) {
   }
 
   if (typeof G.handleExternalCommand === "function") {
-    G.handleExternalCommand(parsed);
+    G.handleExternalCommand(/** @type {Parameters<typeof G.handleExternalCommand>[0]} */ (parsed));
   }
 };
 
 S.file_loaded = function (msg) {
   if (typeof G.loader_onFileLoaded === "function") {
-    G.loader_onFileLoaded(msg);
+    G.loader_onFileLoaded(/** @type {Parameters<typeof G.loader_onFileLoaded>[0]} */ (msg));
   }
 };
 
