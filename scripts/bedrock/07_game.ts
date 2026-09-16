@@ -1,7 +1,7 @@
 declare var SignalManager: (new () => NonNullable<EngineSessionExtension["signalManager"]>) | undefined; declare var UniqueIDsManager: (new () => NonNullable<EngineSessionExtension["uniqueIDsManager"]>) | undefined;  // 消费者可选提供，引擎只探测
 // 消费者对象槽位（动态边界例外，逐项登记 tests/typecheck_strict_exceptions.json；负责批收紧为消费者真实类型）
 type EngineSessionMapSlot = EngineSessionExtension["currentMap"];  // 地图槽位：类型由消费者 EngineSessionExtension 声明（消费者 boundary_contracts extensions 生成），引擎不引用消费者地图类
-type EngineSessionSelectorSlot = any;  // 选择器（负责 B22）
+type EngineSessionSelectorSlot = EngineSessionExtension["selector"];  // Consumer-owned selection capability; null before installation.
 type EngineSessionManagerSlot<K extends "signalManager" | "uniqueIDsManager"> = EngineSessionExtension[K];  // Optional providers: consumer-defined capabilities, null before installation
 var EngineSession = (function() {
     'use strict';

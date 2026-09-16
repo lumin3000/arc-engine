@@ -4,6 +4,14 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
 
     return {
 
+        // Preserve nullable service getters; check required receivers at their use site.
+        requireReference<T>(value: T | null | undefined): T {
+            if (value === null || value === undefined) {
+                throw new TypeError("[EngineRefs] Required reference is null or undefined");
+            }
+            return value;
+        },
+
         get root() {
             return EngineState.root;
         },
@@ -40,11 +48,11 @@ const _engineRefsFactory = function() {  // 消费者已登记成员经 EngineRe
             return EngineState.session?.currentMap;
         },
 
-        get selector() {
+        get selector(): EngineSessionExtension["selector"] | undefined {
             return EngineState.session?.selector;
         },
 
-        set selector(value) {
+        set selector(value: EngineSessionExtension["selector"]) {
             if (EngineState.session) {
                 EngineState.session.selector = value;
             }

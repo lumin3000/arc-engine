@@ -2,8 +2,8 @@
 var EngineRoot = (function() {
     'use strict';
 
-    // soundRoot/uiRoot 目前无人赋值（恒 null）；windowStack 为消费者窗口栈（动态边界例外，负责 B22）
-    type EngineRootWindowStackSlot = any;
+    // soundRoot/uiRoot are currently null; windowStack is supplied by the consumer extension.
+    type EngineRootWindowStackSlot = EngineRootExtension["windowStack"];
     var _soundRoot: null = null;
     var _uiRoot: null = null;
     var _windowStack: EngineRootWindowStackSlot = null;
