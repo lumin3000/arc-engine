@@ -80,7 +80,7 @@ static JSValue js_batch_get_buffer(JSContext *ctx, JSValueConst this_val,
     size_t byte_length = (size_t)g_max_quads * BATCH_FLOATS_PER_QUAD * sizeof(float);
 
     JSValue ab = JS_NewArrayBuffer(ctx, (uint8_t *)g_batch_buffer, byte_length,
-                                    NULL, NULL, 1);
+                                    0, NULL, NULL, 1);
     if (JS_IsException(ab)) {
         return ab;
     }

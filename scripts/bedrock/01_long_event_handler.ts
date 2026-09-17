@@ -1,6 +1,6 @@
 
 // 阻塞任务：同步 action 直接执行；异步 action 返回迭代器，每帧推进一步，产出值可带进度文本/比例
-type EngineBlockingYield = { status?: string; progress?: number } | null | undefined | void;
+type EngineBlockingYield = { status?: string; progress?: number; host?: () => void } | null | undefined | void;
 interface EngineBlockingEvent {
     action: () => Iterator<EngineBlockingYield> | void; textKey: string; doAsync: boolean;
     exceptionHandler: ((e: Error) => void) | null | undefined; callback: (() => void) | null | undefined;
@@ -81,7 +81,7 @@ const BlockingTaskQueue = {
                 // 慢步探针: 每帧恰一步, 单步耗时即该帧阻塞成本 — 超阈值打
                 // 步耗时+任务名+上一步/本步 status, 长帧归因直接可读
                 const _stepT0 = Number(RealTime.realtimeSinceStartupUs());
-                const res = this._currentIterator.next();
+                const res: IteratorResult<EngineBlockingYield, EngineBlockingYield> = this._currentIterator.next();
                 const _stepMs = (Number(RealTime.realtimeSinceStartupUs()) - _stepT0) / 1000;
                 if (_stepMs > 150) {
                     jtask.log("[BlockingTaskQueue] slow step " + _stepMs.toFixed(0)
@@ -91,6 +91,12 @@ const BlockingTaskQueue = {
                 }
 
                 if (res.value && typeof res.value === 'object') {
+                    // Generator.next() has returned: handoff now occurs on the
+                    // service coroutine stack, before opening a GPU frame/pass.
+                    if (res.value.host) {
+                        const hostResult = jtask.mainthread_run(res.value.host);
+                        if (!hostResult.success) throw new Error("Host startup step failed: " + hostResult.error);
+                    }
                     if (res.value.status) this._loadingText = res.value.status;
                     if (typeof res.value.progress === 'number') this._loadingProgress = res.value.progress;
                 }

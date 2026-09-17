@@ -1205,9 +1205,11 @@ static JSValue js_graphics_texture_flush_staged(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
-static void compose_ab_free(JSRuntime *rt, void *opaque, void *ptr) {
+static void *compose_ab_free(JSRuntime *rt, void *opaque, void *ptr, size_t size) {
+  if (size) return NULL;
   (void)opaque;
   js_free_rt(rt, ptr);
+  return NULL;
 }
 
 static JSValue js_graphics_texture_staged_read(JSContext *ctx,
@@ -1236,7 +1238,7 @@ static JSValue js_graphics_texture_staged_read(JSContext *ctx,
                ((size_t)(tex->height - 1 - (y + r)) * tex->width + x) * 4,
            (size_t)w * 4);
   }
-  JSValue ab = JS_NewArrayBuffer(ctx, out, (size_t)w * h * 4, compose_ab_free,
+  JSValue ab = JS_NewArrayBuffer(ctx, out, (size_t)w * h * 4, 0, compose_ab_free,
                                  NULL, false);
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue u8ctor = JS_GetPropertyStr(ctx, global, "Uint8Array");

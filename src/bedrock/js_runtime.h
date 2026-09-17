@@ -8,7 +8,11 @@ int js_runtime_init(void);
 
 void js_runtime_shutdown(void);
 
-void js_runtime_render(void);
+// Returns true only when a complete GPU submission ran on this host turn.
+bool js_runtime_render(void);
+
+// Fail immediately if GPU/UI work is called outside the owning host thread.
+void js_runtime_assert_render_thread(void);
 
 void js_runtime_handle_external_command(const char *cmd);
 

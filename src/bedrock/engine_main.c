@@ -150,7 +150,29 @@ static void engine_on_init(void) {
   LOG_INFO("[engine] init done\n");
 }
 
+#ifdef __EMSCRIPTEN__
+static bool g_browser_quit_pending;
+#endif
+static void engine_host_event(const sapp_event *event) {
+#ifdef __EMSCRIPTEN__
+  if (event->type == SAPP_EVENTTYPE_QUIT_REQUESTED) {
+    // Keep the Sokol/GPU host alive until all worker runtimes have relinquished it.
+    sapp_cancel_quit();
+    g_browser_quit_pending = true;
+    return;
+  }
+#endif
+  event_callback(event);
+}
+
 static void engine_on_frame(void) {
+#ifdef __EMSCRIPTEN__
+  if (g_browser_quit_pending) {
+    js_runtime_shutdown();
+    if (!js_runtime_get_context()) sapp_quit();
+    return;
+  }
+#endif
   window_w = sapp_width();
   window_h = sapp_height();
 
@@ -240,14 +262,11 @@ static void engine_on_frame(void) {
 
   if (g_cfg.on_frame) g_cfg.on_frame(ctx.delta_t);
 
-  core_render_frame_start();
-  js_runtime_render();
-  core_render_frame_end();
-
-  reset_input_state(input_state);
+  if (js_runtime_render()) reset_input_state(input_state);
 }
 
 static void engine_on_cleanup(void) {
+  js_runtime_shutdown();
   if (g_cfg.on_cleanup) g_cfg.on_cleanup();
   stdin_reader_shutdown();
   sound_shutdown();
@@ -439,7 +458,7 @@ int arc_engine_run(Arc_Engine *eng) {
       .init_cb = engine_on_init,
       .frame_cb = engine_on_frame,
       .cleanup_cb = engine_on_cleanup,
-      .event_cb = event_callback,
+      .event_cb = engine_host_event,
       .width = window_w,
       .height = window_h,
       .window_title = g_cfg.window_title,

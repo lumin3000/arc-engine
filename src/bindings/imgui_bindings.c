@@ -6,6 +6,7 @@
  */
 
 #include "imgui_bindings.h"
+#include "../bedrock/js_runtime.h"
 #include "../log.h"
 #include "quickjs.h"
 #include <stdbool.h>
@@ -83,6 +84,7 @@ static JSValue js_imgui_init(JSContext *ctx, JSValueConst this_val, int argc,
 
 static JSValue js_imgui_begin_frame(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
+  js_runtime_assert_render_thread();
   if (!g_imgui.initialized)
     return JS_UNDEFINED;
   // 防止同一帧多次调用 NewFrame（WindowStack 和 imgui_demo 都可能调）

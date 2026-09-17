@@ -5,6 +5,8 @@
 #include "../log.h"
 #include "jtask.h"
 #include "jtask_api.h"
+#include "jtask_host.h"
+#include "gfx/render.h"
 #include "message.h"
 #include "quickjs-libc.h"
 #include "quickjs.h"
@@ -16,6 +18,7 @@
 #include <windows.h>
 #else
 #include <dirent.h>
+#include <pthread.h>
 #endif
 #include <stdatomic.h>
 #include <stdio.h>
@@ -29,15 +32,57 @@ static service_id g_loader_service_id = {0};
 static service_id g_game_service_id = {0};
 
 static atomic_int g_render_service_ready = 0;
+#if defined(_WIN32)
+static DWORD g_render_thread;
+#else
+static pthread_t g_render_thread;
+#endif
+void js_runtime_assert_render_thread(void) {
+#if defined(_WIN32)
+  int same = GetCurrentThreadId() == g_render_thread;
+#else
+  int same = pthread_equal(pthread_self(), g_render_thread);
+#endif
+  if (!same) { LOG_ERROR("JS render on non-render thread\n"); abort(); }
+}
+
 
 static int g_render_ctx_modules_initialized = 0;
 
-static JSValue g_mainthread_wait_func;
-static JSValue g_bootstrap_obj;
-static int g_mainthread_wait_cached = 0;
+/* Host owns the outbound queue. Worker result publication uses atomics. */
+static atomic_uint g_host_generation;
+static atomic_uint g_frame_pending;
+static atomic_int g_host_failed;
+static unsigned g_next_frame;
+static unsigned g_gpu_submissions;
+static int g_stopping;
+static unsigned g_out_count;
+struct host_message { struct message *message; struct host_message *next; };
+static struct host_message *g_out_head, *g_out_tail;
 
-static JSValue g_frame_func;
-static int g_frame_func_cached = 0;
+static int host_enqueue(struct message *message) {
+  if (!message) return -1;
+  if (g_out_count == 256) { message_delete(message); return -1; }
+  struct host_message *node = malloc(sizeof(*node));
+  if (!node) { message_delete(message); return -1; }
+  *node = (struct host_message){message, NULL};
+  if (g_out_tail) g_out_tail->next = node; else g_out_head = node;
+  g_out_tail = node;
+  ++g_out_count;
+  return 0;
+}
+static void host_flush(void) {
+  /* One attempt per host turn; busy retains the entire message. */
+  if (!g_out_head) return;
+  struct host_message *node = g_out_head;
+  int result = jtask_send_message(node->message->to, node->message);
+  if (result == 1) return;
+  if (result < 0) { message_delete(node->message); atomic_store(&g_host_failed, 1); }
+  g_out_head = node->next;
+  if (!g_out_head) g_out_tail = NULL;
+  free(node);
+  --g_out_count;
+}
 
 static uint64_t g_js_frame_start_us = 0;
 #define JS_FRAME_TIMEOUT_US 5000000
@@ -61,7 +106,7 @@ static int js_interrupt_handler(JSRuntime *rt, void *opaque) {
   return 0;
 }
 
-static int g_js_error_count = 0;
+static atomic_int g_js_error_count = 0;
 static int g_js_error_threshold = 10;
 
 static bool is_react_sentinel_error(const char *msg) {
@@ -285,7 +330,7 @@ static JSValue js_load_module(JSContext *ctx, JSValueConst this_val, int argc,
   return result;
 }
 
-static void do_inject_render_modules(void) {
+static void do_inject_render_modules(JSContext *ctx) {
   if (g_render_ctx_modules_initialized)
     return;
 
@@ -306,6 +351,10 @@ static void do_inject_render_modules(void) {
     JSContext *render_ctx =
         (JSContext *)service_get_context(task->services, g_render_service_id);
     if (render_ctx) {
+      if (render_ctx != ctx) {
+        LOG_ERROR("render binding injection outside owning context\n");
+        abort();
+      }
       render_registrar(render_ctx);
       g_render_ctx_modules_initialized = 1;
       LOG_VERBOSE(
@@ -316,7 +365,7 @@ static void do_inject_render_modules(void) {
 
 static int g_mod_scripts_loaded = 0;
 
-static void do_load_mod_scripts(void) {
+static void do_load_mod_scripts(JSContext *ctx) {
   if (g_mod_scripts_loaded) return;
 
   struct jtask *task = jtask_get_instance();
@@ -325,6 +374,10 @@ static void do_load_mod_scripts(void) {
 
   JSContext *game_ctx =
       (JSContext *)service_get_context(task->services, g_game_service_id);
+  if (game_ctx && game_ctx != ctx) {
+    LOG_ERROR("mod evaluation outside owning context\n");
+    abort();
+  }
   if (!game_ctx) {
     LOG_ERROR("[mod_scripts] cannot get game_service context\n");
     return;
@@ -428,14 +481,15 @@ static void do_load_mod_scripts(void) {
 static JSValue js_message_inject_render_modules(JSContext *ctx,
                                                 JSValueConst this_val, int argc,
                                                 JSValueConst *argv) {
-  do_inject_render_modules();
+  js_runtime_assert_render_thread();
+  do_inject_render_modules(ctx);
   return JS_UNDEFINED;
 }
 
 static JSValue js_message_load_mod_scripts(JSContext *ctx,
                                            JSValueConst this_val, int argc,
                                            JSValueConst *argv) {
-  do_load_mod_scripts();
+  do_load_mod_scripts(ctx);
   return JS_UNDEFINED;
 }
 
@@ -444,9 +498,45 @@ static JSValue js_message_now(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_NewBigUint64(ctx, get_time_us());
 }
 
-static JSValue js_message_set_ready(JSContext *ctx, JSValueConst this_val,
+static JSValue js_message_host_generation(JSContext *ctx, JSValueConst self,
+                                          int argc, JSValueConst *argv) {
+  return JS_NewUint32(ctx, atomic_load(&g_host_generation));
+}
+static JSValue js_message_set_ready(JSContext *ctx, JSValueConst self,
                                     int argc, JSValueConst *argv) {
-  return JS_UNDEFINED;
+  uint32_t generation;
+  if (argc != 2 || JS_ToUint32(ctx, &generation, argv[0]) < 0)
+    return JS_ThrowTypeError(ctx, "set_ready requires (generation, success)");
+  if (generation != atomic_load(&g_host_generation)) return JS_FALSE;
+  int success = JS_ToBool(ctx, argv[1]);
+  if (!success) atomic_store(&g_host_failed, 1);
+  else atomic_store(&g_render_service_ready, 1);
+  return JS_TRUE;
+}
+static JSValue js_message_frame_result(JSContext *ctx, JSValueConst self,
+                                       int argc, JSValueConst *argv) {
+  uint32_t generation, frame;
+  if (argc != 3 || JS_ToUint32(ctx, &generation, argv[0]) < 0 ||
+      JS_ToUint32(ctx, &frame, argv[1]) < 0)
+    return JS_ThrowTypeError(ctx, "frame_result requires (generation, frame, success)");
+  if (generation != atomic_load(&g_host_generation)) return JS_FALSE;
+  if (!frame || atomic_load(&g_frame_pending) != frame)
+    return JS_ThrowInternalError(ctx, "unexpected frame receipt");
+  if (!JS_ToBool(ctx, argv[2])) atomic_store(&g_host_failed, 1);
+  atomic_store(&g_frame_pending, 0);
+  return JS_TRUE;
+}
+/* All GPU work, including after-frame resource release, closes in this call. */
+static JSValue js_message_render_frame(JSContext *ctx, JSValueConst self,
+                                       int argc, JSValueConst *argv) {
+  js_runtime_assert_render_thread();
+  if (argc != 1 || !JS_IsFunction(ctx, argv[0]))
+    return JS_ThrowTypeError(ctx, "render_frame requires a callback");
+  core_render_frame_start();
+  JSValue result = JS_Call(ctx, argv[0], JS_UNDEFINED, 0, NULL);
+  core_render_frame_end();
+  ++g_gpu_submissions;
+  return result;
 }
 
 static JSValue js_message_register_service(JSContext *ctx,
@@ -510,77 +600,6 @@ static JSValue js_message_get_service(JSContext *ctx, JSValueConst this_val,
   return JS_NewInt32(ctx, sid);
 }
 
-static JSValue js_frame_callback(JSContext *ctx, JSValueConst this_val,
-                                 int argc, JSValueConst *argv) {
-  if (argc < 1) {
-    return JS_ThrowTypeError(ctx, "frame requires (count)");
-  }
-
-  int32_t count;
-  if (JS_ToInt32(ctx, &count, argv[0]) < 0) {
-    return JS_EXCEPTION;
-  }
-
-  uint64_t t0 = get_time_us();
-  uint64_t t1, t2, t3;
-
-  int message_sent = 0;
-  struct jtask *task = jtask_get_instance();
-  if (task && g_render_service_id.id != 0) {
-
-    JSValue pack_args[2] = {JS_NewString(ctx, "frame"),
-                            JS_NewInt32(ctx, count)};
-    int msg_sz = 0;
-    void *msg_data = qjs_seri_pack(ctx, pack_args, 2, &msg_sz);
-    JS_FreeValue(ctx, pack_args[0]);
-    JS_FreeValue(ctx, pack_args[1]);
-
-    if (msg_data) {
-      struct message m;
-      m.from.id = 0;
-      m.to = g_render_service_id;
-      m.session = 0;
-      m.type = 1;
-      m.msg = msg_data;
-      m.sz = msg_sz;
-
-      jtask_send_message(g_render_service_id, message_new(&m));
-
-      message_sent = 1;
-    }
-  }
-
-  t1 = get_time_us();
-
-  if (!message_sent) {
-    return JS_UNDEFINED;
-  }
-
-  t2 = get_time_us();
-
-  if (g_mainthread_wait_cached) {
-    JSValue result =
-        JS_Call(ctx, g_mainthread_wait_func, g_bootstrap_obj, 0, NULL);
-    if (JS_IsException(result)) {
-      return result;
-    }
-    JS_FreeValue(ctx, result);
-  } else {
-    LOG_ERROR("mainthread_wait not cached\n");
-  }
-
-  t3 = get_time_us();
-
-  if (g_log_level >= LOG_LEVEL_VERBOSE && count % 60 == 0) {
-    fprintf(
-        stderr,
-        "[RTT-C] Frame %d | post:%llu wakeup:%llu wait:%llu total:%llu us\n",
-        count, t1 - t0, t2 - t1, t3 - t2, t3 - t0);
-  }
-
-  return JS_UNDEFINED;
-}
-
 int js_init_message_module(JSContext *ctx) {
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue msg_obj = JS_NewObject(ctx);
@@ -600,10 +619,14 @@ int js_init_message_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_message_load_mod_scripts,
                                     "load_mod_scripts", 0));
   JS_SetPropertyStr(ctx, msg_obj, "set_ready",
-                    JS_NewCFunction(ctx, js_message_set_ready, "set_ready", 1));
+                    JS_NewCFunction(ctx, js_message_set_ready, "set_ready", 2));
 
-  JS_SetPropertyStr(ctx, msg_obj, "frame",
-                    JS_NewCFunction(ctx, js_frame_callback, "frame", 1));
+  JS_SetPropertyStr(ctx, msg_obj, "host_generation",
+                    JS_NewCFunction(ctx, js_message_host_generation, "host_generation", 0));
+  JS_SetPropertyStr(ctx, msg_obj, "frame_result",
+                    JS_NewCFunction(ctx, js_message_frame_result, "frame_result", 3));
+  JS_SetPropertyStr(ctx, msg_obj, "render_frame",
+                    JS_NewCFunction(ctx, js_message_render_frame, "render_frame", 1));
 
   JS_SetPropertyStr(ctx, global, "message", msg_obj);
   JS_FreeValue(ctx, global);
@@ -647,6 +670,18 @@ int js_runtime_init(void) {
   if (g_initialized)
     return 0;
 
+#if defined(_WIN32)
+  g_render_thread = GetCurrentThreadId();
+#else
+  g_render_thread = pthread_self();
+#endif
+  if (atomic_fetch_add(&g_host_generation, 1) == UINT32_MAX) abort();
+  atomic_store(&g_frame_pending, 0);
+  atomic_store(&g_host_failed, 0);
+  atomic_store(&g_render_service_ready, 0);
+  g_next_frame = g_gpu_submissions = 0;
+  g_stopping = 0;
+  atomic_store(&g_js_error_count, 0);
   g_runtime = JS_NewRuntime();
   if (!g_runtime) {
     LOG_ERROR("Failed to create JS runtime\n");
@@ -660,6 +695,7 @@ int js_runtime_init(void) {
   if (!g_context) {
     LOG_ERROR("Failed to create JS context\n");
     JS_FreeRuntime(g_runtime);
+    g_runtime = NULL;
     return -1;
   }
   g_bootstrap_ctx = g_context;
@@ -683,8 +719,8 @@ int js_runtime_init(void) {
 
   if (jtask_init_bindings(g_context) < 0) {
     LOG_ERROR("Failed to initialize jtask bindings\n");
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
+    g_initialized = true;
+    js_runtime_shutdown();
     return -1;
   }
 
@@ -696,8 +732,8 @@ int js_runtime_init(void) {
   // invocation of js_init_message_module during service_requiref.
   if (js_init_message_module(g_context) < 0) {
     LOG_ERROR("Failed to initialize message bindings\n");
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
+    g_initialized = true;
+    js_runtime_shutdown();
     return -1;
   }
 
@@ -709,42 +745,20 @@ int js_runtime_init(void) {
     JS_FreeValue(g_context, global);
   }
 
-  JS_SetModuleLoaderFunc(g_runtime, NULL, js_module_loader, NULL);
+  JS_SetModuleLoaderFunc2(g_runtime, NULL, js_module_loader, js_module_check_attributes, NULL);
 
   const char *main_script_override = arc_engine_state()->js_main_script_path;
   const char *script_path = main_script_override ? main_script_override
                                                  : "scripts/main.js";
   if (eval_file(g_context, script_path) < 0) {
     LOG_ERROR("Failed to execute %s\n", script_path);
-    JS_FreeContext(g_context);
-    JS_FreeRuntime(g_runtime);
+    g_initialized = true;
+    js_runtime_shutdown();
     return -1;
   }
 
   g_initialized = true;
 
-  {
-    JSValue global = JS_GetGlobalObject(g_context);
-    JSValue jtask_obj = JS_GetPropertyStr(g_context, global, "jtask");
-    g_bootstrap_obj = JS_GetPropertyStr(g_context, jtask_obj, "bootstrap");
-    g_mainthread_wait_func =
-        JS_GetPropertyStr(g_context, g_bootstrap_obj, "mainthread_wait");
-
-    if (JS_IsFunction(g_context, g_mainthread_wait_func)) {
-      g_mainthread_wait_cached = 1;
-      JSValue result =
-          JS_Call(g_context, g_mainthread_wait_func, g_bootstrap_obj, 0, NULL);
-      if (JS_IsException(result)) {
-        js_std_dump_error(g_context);
-      }
-      JS_FreeValue(g_context, result);
-    } else {
-      LOG_ERROR("mainthread_wait is not a function\n");
-    }
-
-    JS_FreeValue(g_context, jtask_obj);
-    JS_FreeValue(g_context, global);
-  }
 
   {
     struct jtask *task = jtask_get_instance();
@@ -755,7 +769,6 @@ int js_runtime_init(void) {
     }
   }
 
-  atomic_store(&g_render_service_ready, 1);
   return 0;
 }
 
@@ -763,8 +776,29 @@ void js_runtime_shutdown(void) {
   if (!g_initialized)
     return;
 
+  jtask_stop();
+#ifdef __EMSCRIPTEN__
+  g_stopping = 1;
+  if (jtask_try_join() == 0) return;
+#else
   jtask_join();
+#endif
   jtask_shutdown();
+
+  while (g_out_head) {
+    struct host_message *node = g_out_head;
+    g_out_head = node->next;
+    message_delete(node->message); free(node);
+  }
+  g_out_tail = NULL;
+  g_out_count = 0;
+  atomic_store(&g_frame_pending, 0);
+  g_start_service_id.id = g_render_service_id.id = 0;
+  g_loader_service_id.id = g_game_service_id.id = 0;
+  g_render_ctx_modules_initialized = g_mod_scripts_loaded = 0;
+  atomic_store(&g_render_service_ready, 0);
+  g_bootstrap_ctx = NULL;
+  JS_SetErrorCallback(NULL);
 
   if (g_context) {
     JS_FreeContext(g_context);
@@ -809,66 +843,58 @@ void js_runtime_handle_external_command(const char *cmd) {
   m.msg = msg_data;
   m.sz = msg_sz;
 
-  jtask_send_message(g_game_service_id, message_new(&m));
+  struct message *msg = message_new(&m);
+  if (!msg) free(msg_data);
+  if (host_enqueue(msg) < 0) {
+    atomic_store(&g_host_failed, 1);
+    LOG_ERROR("[stdin] unable to queue command\n");
+    return;
+  }
 
   LOG_VERBOSE("[stdin] Sent to game_service: %s\n", cmd);
 }
 
-static int g_render_frame_count = 0;
-
-void js_runtime_render(void) {
-  if (!g_initialized || !g_context) {
-    return;
+bool js_runtime_render(void) {
+  js_runtime_assert_render_thread();
+  if (!g_initialized || !g_context) return false;
+  if (g_stopping) { js_runtime_shutdown(); return false; }
+  if (atomic_load(&g_host_failed)) {
+    LOG_ERROR("[JSRuntime] host protocol failed; stopping session\n");
+    js_runtime_shutdown(); return false;
   }
-
-  struct jtask *task = jtask_get_instance();
-  if (!task || !task->external_message) {
-    return;
+  unsigned before = g_gpu_submissions;
+  host_flush();
+  g_js_frame_start_us = get_time_us();
+  int result = jtask_mainthread_poll(g_context);
+  g_js_frame_start_us = 0;
+  if (result == JTASK_HOST_ERROR) {
+    js_std_dump_error(g_context);
+    atomic_store(&g_host_failed, 1);
+  } else if (result == JTASK_HOST_STOPPED) {
+    js_runtime_shutdown();
+    return g_gpu_submissions != before;
   }
-
-  if (!atomic_load(&g_render_service_ready)) {
-    return;
+  if (atomic_load(&g_render_service_ready) && !atomic_load(&g_host_failed) &&
+      !atomic_load(&g_frame_pending) && !g_out_head) {
+    if (++g_next_frame == 0) abort();
+    JSValue args[3] = {JS_NewString(g_context, "frame"),
+      JS_NewUint32(g_context, atomic_load(&g_host_generation)),
+      JS_NewUint32(g_context, g_next_frame)};
+    int size = 0;
+    void *data = qjs_seri_pack(g_context, args, 3, &size);
+    for (int i=0;i<3;++i) JS_FreeValue(g_context, args[i]);
+    if (!data) { atomic_store(&g_host_failed, 1); return g_gpu_submissions != before; }
+    struct message m = {.from={0}, .to=g_render_service_id,
+      .session=0, .type=MESSAGE_REQUEST, .msg=data, .sz=size};
+    struct message *msg = message_new(&m);
+    if (!msg) free(data);
+    if (host_enqueue(msg) < 0) atomic_store(&g_host_failed, 1);
+    else atomic_store(&g_frame_pending, g_next_frame);
   }
-
-  if (!g_render_ctx_modules_initialized && g_render_service_id.id != 0) {
-    do_inject_render_modules();
-  }
-
-  if (!g_frame_func_cached) {
-    JSValue global = JS_GetGlobalObject(g_context);
-    JSValue msg_obj = JS_GetPropertyStr(g_context, global, "message");
-    g_frame_func = JS_GetPropertyStr(g_context, msg_obj, "frame");
-
-    if (JS_IsFunction(g_context, g_frame_func)) {
-      g_frame_func_cached = 1;
-      LOG_VERBOSE("[JSRuntime] frame function cached\n");
-    } else {
-      LOG_ERROR("message.frame is not a function\n");
-      JS_FreeValue(g_context, g_frame_func);
-    }
-
-    JS_FreeValue(g_context, msg_obj);
-    JS_FreeValue(g_context, global);
-  }
-
-  if (g_frame_func_cached) {
-    ++g_render_frame_count;
-    JSValue args[1] = {JS_NewInt32(g_context, g_render_frame_count)};
-
-    g_js_frame_start_us = get_time_us();
-
-    JSValue result = JS_Call(g_context, g_frame_func, JS_UNDEFINED, 1, args);
-
-    g_js_frame_start_us = 0;
-
-    if (JS_IsException(result)) {
-      LOG_ERROR("[JSRuntime] JS frame exception detected!\n");
-      js_std_dump_error(g_context);
-    }
-
-    JS_FreeValue(g_context, result);
-    JS_FreeValue(g_context, args[0]);
-  }
+  return g_gpu_submissions != before;
 }
 
-bool js_runtime_is_ready(void) { return g_initialized; }
+bool js_runtime_is_ready(void) {
+  return g_initialized && atomic_load(&g_render_service_ready) &&
+    !atomic_load(&g_host_failed) && !g_stopping;
+}

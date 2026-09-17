@@ -72,8 +72,12 @@ function* StartupRoutine() {
   yield;
 
   if (typeof EngineBootstrap !== 'undefined') {
-    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.CLASSES_DEFINED);
-    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.DATA_LOADED);
+    // Phase callbacks may create GPU resources. Run outside a render pass,
+    // on the host. Yield a command: coroutine handoff cannot cross generator.next().
+    yield { host: () => {
+      EngineBootstrap.triggerPhase(EngineBootstrap.Phase.CLASSES_DEFINED);
+      EngineBootstrap.triggerPhase(EngineBootstrap.Phase.DATA_LOADED);
+    } };
   }
 
   for (const step of globalThis.StartupFlow._steps) {
@@ -81,8 +85,12 @@ function* StartupRoutine() {
   }
 
   if (typeof EngineBootstrap !== 'undefined') {
-    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.MAP_READY);
-    EngineBootstrap.triggerPhase(EngineBootstrap.Phase.GAME_STARTED);
+    // Phase callbacks may create GPU resources. Run outside a render pass,
+    // on the host. Yield a command: coroutine handoff cannot cross generator.next().
+    yield { host: () => {
+      EngineBootstrap.triggerPhase(EngineBootstrap.Phase.MAP_READY);
+      EngineBootstrap.triggerPhase(EngineBootstrap.Phase.GAME_STARTED);
+    } };
   }
 
   jtask.log("[game] Startup sequence complete.");

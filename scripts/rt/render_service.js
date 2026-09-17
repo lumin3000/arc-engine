@@ -5,7 +5,7 @@
 //   - BlockingTaskQueue.tick() per frame
 //   - mainthread_run(render_frame), which dispatches to:
 //       RenderFrameCallbacks.runAll(dt)   — game-side mainthread work
-//       FrameStageCallbacks.runAll(dt)      — game-side worker-thread chain
+//       FrameStageCallbacks.runAll(dt)      — game-side host-thread chain
 //   - imgui.begin_frame() if imgui is available
 //   - RealTime.update(dt)
 //   - file_loaded forwarding to G.loader_onFileLoaded
@@ -15,7 +15,7 @@
 // registers via:
 //   - StartupFlow.registerStartupSteps([...])  for staged startup work
 //   - RenderFrameCallbacks.register(fn, name)  for per-frame mainthread
-//   - FrameStageCallbacks.register(fn, prio, name) for per-frame worker
+//   - FrameStageCallbacks.register(fn, prio, name) for per-frame host work
 
 const jtask = globalThis.jtask;
 globalThis.__BP_VERBOSE__ = false;
@@ -24,7 +24,7 @@ globalThis.__BP_VERBOSE__ = false;
  * stdin/external 命令载荷：JSON 对象或原始字符串（字符串没有 cmd 字段，读到 undefined）。
  * @typedef {{ cmd?: string, path?: string, js?: string }} RenderServiceCommand
  * @typedef {RenderServiceCommand | (string & { cmd?: undefined, path?: undefined, js?: undefined })} RenderServiceExternalMsg
- * @typedef {{ _gc: { finalize(): void }, frame(msg: unknown): void, SERVICE_ID: number,
+ * @typedef {{ _gc: { finalize(): void }, frame(generation: number, frame: number): void, SERVICE_ID: number,
  *   external(msg: RenderServiceExternalMsg): void, stdin_command(msg: RenderServiceExternalMsg): void,
  *   file_loaded(msg: unknown): void }} RenderServiceTable
  */
@@ -60,7 +60,7 @@ function render_frame() {
     FrameStageCallbacks.runAll(dt);
 
   } catch (e) {
-    jtask.log.error("[render_frame] CRITICAL ERROR: " + /** @type {Error} */ (e).message + "\n" + /** @type {Error} */ (e).stack);
+    throw e;
   } finally {
     // Staged resources finish once, after all draw submissions, even when stages block.
     RenderFrameCallbacks.runAfter(dt);
@@ -70,18 +70,15 @@ function render_frame() {
 let rtt_frame_count = 0;
 let rtt_total_us = 0;
 
-S.frame = function (msg) {
+S.frame = function (generation, frame) {
+  if (generation !== message.host_generation()) return;
+  let success = false;
+  try {
   rtt_frame_count++;
 
   const frame_t0 = RealTime.realtimeSinceStartupUs();
 
-  if (typeof BlockingTaskQueue !== "undefined") {
-    try {
-      BlockingTaskQueue.tick();
-    } catch (e) {
-      jtask.log.error("[S.frame] BlockingTaskQueue.tick() threw: " + /** @type {Error} */ (e).message + "\n" + (/** @type {Error} */ (e).stack || ""));
-    }
-  }
+  BlockingTaskQueue.tick();
 
   const logic_t1 = RealTime.realtimeSinceStartupUs();
   const logic_us = logic_t1 - frame_t0;
@@ -90,7 +87,7 @@ S.frame = function (msg) {
   }
 
   const rtt_start = RealTime.realtimeSinceStartupUs();
-  const ret = jtask.mainthread_run(render_frame);
+  const ret = jtask.mainthread_run(() => message.render_frame(render_frame));
   const rtt_end = RealTime.realtimeSinceStartupUs();
 
   const rtt_us = rtt_end - rtt_start;
@@ -107,8 +104,10 @@ S.frame = function (msg) {
     jtask.log.info("[RTT] Frame " + rtt_frame_count + " | RTT: " + rtt_us + "us | Avg: " + (rtt_total_us / rtt_frame_count).toFixed(1) + "us | Mem: " + mem);
   }
 
-  if (!ret.success) {
-    jtask.log.error("[render] mainthread_run failed: " + ret.error);
+  success = ret.success;
+  if (!ret.success) jtask.log.error("[render] mainthread_run failed: " + ret.error);
+  } finally {
+    message.frame_result(generation, frame, success);
   }
 };
 
@@ -116,7 +115,7 @@ S.SERVICE_ID = 0;
 
 S.external = function (msg) {
   if (msg.cmd === "frame") {
-    S.frame(msg);
+    throw new Error("frame requests require the host generation/frame protocol");
     return;
   }
   // stdin 行经 js_runtime_handle_external_command 打成 "external" 消息, 载荷是原始字符串
@@ -181,28 +180,22 @@ S.file_loaded = function (msg) {
 const self_id = jtask.self();
 
 jtask.fork(function () {
-  message.register_service("render", self_id);
-  message.register_service("game", self_id);
-
-  jtask.mainthread_run(function () {
-    if (typeof message.inject_render_modules === 'function') {
+  const generation = message.host_generation();
+  let success = false;
+  try {
+    message.register_service("render", self_id);
+    message.register_service("game", self_id);
+    const modules = jtask.mainthread_run(function () {
       message.inject_render_modules();
-    }
-    if (typeof message.load_mod_scripts === 'function') {
       message.load_mod_scripts();
-    }
-  });
-
-  const ret = jtask.mainthread_run(function () {
-    render_frame();
-  });
-
-  if (!ret.success) {
-    jtask.log.error("[game_service] init mainthread_run failed: " + ret.error);
-  }
-
-  if (globalThis.__BP_VERBOSE__) {
-    jtask.log("[game_service] render ready, id=" + self_id);
+    });
+    if (!modules.success) throw new Error(String(modules.error));
+    const firstFrame = jtask.mainthread_run(() => message.render_frame(render_frame));
+    if (!firstFrame.success) throw new Error(String(firstFrame.error));
+    success = true;
+  } finally {
+    // Both host segments have returned to the worker before publishing ready.
+    message.set_ready(generation, success);
   }
 });
 

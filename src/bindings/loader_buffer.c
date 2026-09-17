@@ -174,6 +174,7 @@ static JSValue js_loader_readdir(JSContext *ctx, JSValueConst this_val,
   HANDLE hFind = FindFirstFileA(search_path, &fd);
   if (hFind == INVALID_HANDLE_VALUE) {
     JS_FreeCString(ctx, path);
+    JS_FreeValue(ctx, arr);
     return JS_UNDEFINED;
   }
   do {
@@ -189,6 +190,7 @@ static JSValue js_loader_readdir(JSContext *ctx, JSValueConst this_val,
   DIR *dir = opendir(fpath);
   if (!dir) {
     JS_FreeCString(ctx, path);
+    JS_FreeValue(ctx, arr);
     return JS_UNDEFINED;
   }
   struct dirent *entry;

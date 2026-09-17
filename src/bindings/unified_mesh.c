@@ -92,8 +92,8 @@ static void ensure_initialized(void) {
   memset(g_unified_meshes, 0, sizeof(g_unified_meshes));
   memset(g_atlas_textures, 0, sizeof(g_atlas_textures));
 
+  // CPU-only: called by worker-side RGBA reads and mesh collection.
   g_initialized = true;
-  ensure_shader();
 
   LOG_INFO("[unified_mesh] Initialized (%d slots, %dK max verts)\n",
            MAX_UNIFIED_MESHES, MAX_UNIFIED_VERTICES / 1024);
@@ -1074,6 +1074,7 @@ static JSValue js_load_texture_pixels(JSContext *ctx, JSValueConst this_val,
 static JSValue js_alloc(JSContext *ctx, JSValueConst this_val, int argc,
                         JSValueConst *argv) {
   ensure_initialized();
+  ensure_shader();
 
   int max_verts = DEFAULT_MAX_VERTICES;
   if (argc >= 1 && !JS_IsUndefined(argv[0])) {
