@@ -810,6 +810,7 @@ void js_runtime_shutdown(void) {
   }
 
   g_initialized = false;
+  LOG_INFO("[Lifecycle] runtime released: workers joined, services/context freed, pending messages=0\n");
 }
 
 void js_runtime_handle_external_command(const char *cmd) {

@@ -22,6 +22,11 @@
 #include "../../external/sokol/c/sokol_glue.h"
 #include "../../external/sokol/c/sokol_log.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+#endif
+
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -152,6 +157,14 @@ static void engine_on_init(void) {
 
 #ifdef __EMSCRIPTEN__
 static bool g_browser_quit_pending;
+static void browser_finish_shutdown(void *unused) {
+  (void)unused;
+  // Run after Sokol has unregistered handlers and discarded its app state.
+  EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl = emscripten_webgl_get_current_context();
+  if (gl) emscripten_webgl_destroy_context(gl);
+  LOG_INFO("[Lifecycle] host cleanup complete; exiting browser runtime\n");
+  emscripten_force_exit(0);
+}
 #endif
 static void engine_host_event(const sapp_event *event) {
 #ifdef __EMSCRIPTEN__
@@ -159,6 +172,7 @@ static void engine_host_event(const sapp_event *event) {
     // Keep the Sokol/GPU host alive until all worker runtimes have relinquished it.
     sapp_cancel_quit();
     g_browser_quit_pending = true;
+    LOG_INFO("[Lifecycle] quit requested; draining runtime\n");
     return;
   }
 #endif
@@ -271,6 +285,9 @@ static void engine_on_cleanup(void) {
   stdin_reader_shutdown();
   sound_shutdown();
   sg_shutdown();
+#ifdef __EMSCRIPTEN__
+  emscripten_async_call(browser_finish_shutdown, NULL, 0);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +485,9 @@ int arc_engine_run(Arc_Engine *eng) {
       .clipboard_size = 4096,
   });
 
+#ifdef __EMSCRIPTEN__
+  emscripten_exit_with_live_runtime();
+#endif
   return 0;
 }
 
