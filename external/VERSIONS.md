@@ -13,7 +13,7 @@ Snapshot date: 2026-04-24 (arc-engine extraction from gunslinger)
 | cimgui | source in-tree | 1.92.6 snapshot |
 | sokol | source in-tree | Oct 2025 snapshot |
 | stb | source in-tree | image 2.30 / ds 0.67 |
-| fmod | source in-tree | Core + Studio binary SDK |
+| miniaudio | source in-tree | 0.11.25 (+ bundled stb_vorbis.c) |
 
 Submodule pins match arc-mapgen exactly (verified content-identical with
 gunslinger's copy-form before extraction).
@@ -30,7 +30,7 @@ gunslinger's copy-form before extraction).
 | Dear ImGui (cimgui) | MIT | https://github.com/cimgui/cimgui |
 | stb_image | Public domain | https://github.com/nothings/stb |
 | stb_ds | Public domain | https://github.com/nothings/stb |
-| FMOD | Proprietary (free for indie, revenue threshold) | https://www.fmod.com/ |
+| miniaudio | Public domain (Unlicense) or MIT-0 | https://github.com/mackron/miniaudio |
 
 ## Notes
 
@@ -38,6 +38,6 @@ gunslinger's copy-form before extraction).
 - **QuickJS-ng**: Version from `QJS_VERSION_MAJOR/MINOR/PATCH` defines in `quickjs.h`.
 - **jtask**: Custom library, architecturally aligned with ltask but uses QuickJS instead of Lua.
   Depends on ltask (header-only: queue.h, atomic.h, service.h) and Tina (coroutines).
-- **FMOD**: Binary-only distribution. dylib built from FMOD teamcity CI.
-  Check fmod.com for version matching your dylib size/date.
+- **miniaudio**: Single-header audio backend for `src/bedrock/sound/sound.h`. Version from
+  `MA_VERSION_*` defines in `miniaudio/miniaudio.h`. Replaced FMOD (removed in 48fc282).
 - **cimgui**: C wrapper around Dear ImGui. Version from `IMGUI_VERSION` define in `imgui/imgui.h`.
