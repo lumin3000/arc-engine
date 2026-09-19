@@ -147,11 +147,6 @@ static void engine_on_init(void) {
     LOG_ERROR("[engine] js_runtime_init failed\n");
   }
 
-  if (g_cfg.startup_ambiance_event) {
-    Vec2 no_pos = {99999.0f, 99999.0f};
-    sound_play(g_cfg.startup_ambiance_event, no_pos, 0.0f);
-  }
-
   LOG_INFO("[engine] init done\n");
 }
 

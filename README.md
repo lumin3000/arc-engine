@@ -7,7 +7,7 @@
 - **C 层渲染**：sokol_gfx 驱动，跨平台（macOS/Windows/Linux/WASM）
 - **JS 游戏逻辑**：QuickJS 解释执行，jtask 协程调度
 - **即时 GUI**：Dear ImGui 集成
-- **资源管线**：atlas 打包、字体 SDF、音频（FMOD）
+- **资源管线**：atlas 打包、字体 SDF、音频（miniaudio）
 - **热加载**：开发期无重启迭代
 
 ## 架构
@@ -59,6 +59,6 @@ git submodule add git@github.com:lumin3000/arc-engine.git external/arc-engine
 | Tina | fiber 实现 | MIT |
 | Dear ImGui (cimgui) | 即时 GUI | MIT |
 | stb | 图像/数据结构 | Public Domain |
-| FMOD | 音频中间件 | 专有（indie 免费） |
+| miniaudio | 音频设备与解码 | Public Domain / MIT-0 |
 
 详见 [external/VERSIONS.md](external/VERSIONS.md)。

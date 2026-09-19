@@ -1,17 +1,14 @@
-// sound_miniaudio.c - sound.h 的 miniaudio 后端（与 FMOD 版 sound.c 二选一）。
+// sound_miniaudio.c - sound.h 的 miniaudio 后端。
 //
-// 消费者源列表选本文件 + miniaudio_impl.c 即得到不依赖 FMOD 的音频底座：
+// 消费者源列表选本文件 + miniaudio_impl.c 即得到音频底座：
 // 原生经 miniaudio 的平台设备后端输出，浏览器经其 Web Audio 后端输出
 // （默认 ScriptProcessor 路径；AudioWorklet 路径要求全程序 Asyncify，本引擎
 // 的 pthread WASM 构建不启用）。浏览器须在用户手势后才真正出声，miniaudio
 // 自带手势解锁；解锁前 state=playing 但 position 不推进，如实反映。
 //
-// 线程契约与 sound.c 完全相同（见 sound.h）：request/get_status 任意线程，
+// 线程契约见 sound.h：request/get_status 任意线程，
 // 只碰自旋锁保护的信箱/快照；全部 miniaudio 调用由主线程在 sound_update 内
 // 执行。error_code 为 ma_result（负值）；cue 样本缓存满记 SOUND_MA_CACHE_FULL。
-//
-// FMOD Studio 事件面（sound_play / sound_play_continuously / emitters）依赖
-// .bank 工程，本后端不提供：调用即明确报错返回 NULL，不伪装播放成功。
 
 #include "sound.h"
 #include "miniaudio_config.h"
@@ -519,20 +516,3 @@ void sound_shutdown(void) {
     state.initialized = false;
     LOG_INFO("[sound] shutdown complete\n");
 }
-
-// ---------------------------------------------------------------------------
-// FMOD Studio 事件面：本后端不提供（见文件头）。
-
-FMOD_STUDIO_EVENTINSTANCE* sound_play(const char* event_name, Vec2 pos, float cooldown_ms) {
-    (void)pos; (void)cooldown_ms;
-    LOG_ERROR("[sound] event \"%s\" rejected: miniaudio backend has no Studio event bank; "
-              "use sound_music_* / sound_cue_*\n", event_name ? event_name : "(null)");
-    return NULL;
-}
-
-void sound_play_continuously(const char* event_name, const char* unique_id_suffix, Vec2 pos) {
-    (void)unique_id_suffix;
-    sound_play(event_name, pos, 0.0f);
-}
-
-void sound_update_emitters(void) {}

@@ -8,7 +8,7 @@
 
 // Engine entry point. Called by the game's main(). The engine owns the
 // sapp_run loop, init/frame/cleanup/event callbacks, argument parsing,
-// camera controls, stdin command handling, FMOD listener updates, and
+// camera controls, stdin command handling, audio updates, and
 // js_runtime rendering. The game customizes behavior via Engine_Config.
 
 typedef struct {
@@ -45,10 +45,6 @@ typedef struct {
     // games with large cell maps; such games bump this to e.g. 60.
     // Pixel-style games leave at default.
     float camera_pan_speed;
-
-    // Optional: play this FMOD event at startup (e.g. "event:/ambiance").
-    // NULL to skip.
-    const char *startup_ambiance_event;
 
     // Optional: override paths for jtask bootstrap and the main JS entry.
     // Useful for consumers that bundle arc-engine as a submodule, where

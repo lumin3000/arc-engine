@@ -14,7 +14,7 @@
 //                                       lastErrorCode, lastErrorContext }
 //
 // 线程契约：三个函数任意 JS worker 可调；内部只操作 sound.c 的命令信箱/
-// 状态快照，FMOD 调用全部由主线程在 sound_update 内执行（见 sound.h）。
+// 状态快照，后端调用全部由主线程在 sound_update 内执行（见 sound.h）。
 
 #include "audio_bindings.h"
 #include "../log.h"
