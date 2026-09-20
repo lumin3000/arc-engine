@@ -56,7 +56,6 @@ git submodule add git@github.com:lumin3000/arc-engine.git external/arc-engine
 | QuickJS-ng | JS 运行时 | MIT |
 | jtask | 协程任务调度 | 私有 |
 | ltask | jtask 依赖 | MIT |
-| Tina | fiber 实现 | MIT |
 | Dear ImGui (cimgui) | 即时 GUI | MIT |
 | stb | 图像/数据结构 | Public Domain |
 | miniaudio | 音频设备与解码 | Public Domain / MIT-0 |
