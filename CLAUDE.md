@@ -43,7 +43,7 @@ arc-engine 是**纯引擎**，不认识任何具体游戏。违反下列规则�
 
 ## 构建
 
-arc-engine 本身不直接构建可执行文件，依赖消费者的 Makefile 将引擎源码参与编译。单元测试位于 `tests/`（S2+ 引入）。
+arc-engine 本身不直接构建可执行文件，依赖消费者的 Makefile 将引擎源码参与编译。
 
 单独验证 jtask 可用：
 ```bash
@@ -62,9 +62,7 @@ cd external/jtask && make MODE=release
 | `scripts/tick/` | TickManager |
 | `scripts/rt/` | jtask 服务（start/loader/render） |
 | `external/` | 第三方库（submodule + 源码入仓混合） |
-| `tools/` | pack_atlas.py 等工具 |
 | `docs/engine_api.md` | 公开 API 列表 |
-| `docs/how_to_consume.md` | 消费者接入指南 |
 
 ## 消费者
 
