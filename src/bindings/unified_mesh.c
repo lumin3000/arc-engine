@@ -611,6 +611,18 @@ static JSValue js_read_prebaked_rgba(JSContext *ctx, JSValueConst this_val,
   }
   int width = (int)header[0];
   int height = (int)header[1];
+  // Optional row limit: the packer fills pages top-down, so the rows below the
+  // used height are blank and need not be read or uploaded.
+  if (argc >= 2 && !JS_IsUndefined(argv[1])) {
+    int max_rows;
+    if (JS_ToInt32(ctx, &max_rows, argv[1])) {
+      fclose(f);
+      JS_FreeCString(ctx, path);
+      return JS_EXCEPTION;
+    }
+    if (max_rows > 0 && max_rows < height)
+      height = max_rows;
+  }
   size_t pixel_size = (size_t)width * height * 4;
 
   struct timespec ts0, ts1;
@@ -748,18 +760,17 @@ static JSValue js_mod_pack_apply(JSContext *ctx, JSValueConst this_val,
         "mod_pack_apply: slot %d already uploaded", slot_id);
   }
 
+  // Pages may be cropped to their used height (read_prebaked_rgba row limit),
+  // so U and V are normalized by width and height separately.
   int page_size = at->width;
-  if (at->height != page_size) {
-    return JS_ThrowInternalError(ctx,
-        "mod_pack_apply: non-square page %dx%d", at->width, at->height);
-  }
-  if (core_max_y < 0 || core_max_y >= page_size) {
+  int page_height = at->height;
+  if (core_max_y < 0 || core_max_y >= page_height) {
     return JS_ThrowRangeError(ctx,
-        "mod_pack_apply: invalid core_max_y %d (page_size %d)",
-        core_max_y, page_size);
+        "mod_pack_apply: invalid core_max_y %d (page_height %d)",
+        core_max_y, page_height);
   }
 
-  int mod_region_height = page_size - core_max_y;
+  int mod_region_height = page_height - core_max_y;
 
   uint32_t num_mods;
   {
@@ -951,11 +962,11 @@ static JSValue js_mod_pack_apply(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, r, "u0",
         JS_NewFloat64(ctx, (x + shrink) / (double)page_size));
     JS_SetPropertyStr(ctx, r, "v0",
-        JS_NewFloat64(ctx, (y + shrink) / (double)page_size));
+        JS_NewFloat64(ctx, (y + shrink) / (double)page_height));
     JS_SetPropertyStr(ctx, r, "u1",
         JS_NewFloat64(ctx, (x + w - shrink) / (double)page_size));
     JS_SetPropertyStr(ctx, r, "v1",
-        JS_NewFloat64(ctx, (y + h - shrink) / (double)page_size));
+        JS_NewFloat64(ctx, (y + h - shrink) / (double)page_height));
 
     JS_SetPropertyUint32(ctx, result_rects, i, r);
   }
@@ -963,7 +974,7 @@ static JSValue js_mod_pack_apply(JSContext *ctx, JSValueConst this_val,
   JS_SetPropertyStr(ctx, result, "rects", result_rects);
 
   LOG_INFO("[mod_pack] applied %d textures to slot %d (mod region y=[%d, %d))\n",
-           pending_count, slot_id, core_max_y, page_size);
+           pending_count, slot_id, core_max_y, page_height);
 
   for (int i = 0; i < pending_count; i++) {
     free(pending[i].mod_id);
@@ -1602,7 +1613,7 @@ int js_init_unified_mesh_module(JSContext *ctx) {
                                     "load_prebaked_atlas", 1));
   JS_SetPropertyStr(ctx, obj, "read_prebaked_rgba",
                     JS_NewCFunction(ctx, js_read_prebaked_rgba,
-                                    "read_prebaked_rgba", 1));
+                                    "read_prebaked_rgba", 2));
   JS_SetPropertyStr(ctx, obj, "upload_prebaked_rgba",
                     JS_NewCFunction(ctx, js_upload_prebaked_rgba,
                                     "upload_prebaked_rgba", 1));
