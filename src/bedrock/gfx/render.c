@@ -1,5 +1,6 @@
 
 #include "render.h"
+#include <math.h>
 #include "../engine_state.h"
 #include "../../../external/sokol/c/sokol_app.h"
 #include "../../../external/sokol/c/sokol_gfx.h"
@@ -1032,7 +1033,9 @@ void core_render_frame_end(void) {
     extern int sdf_text_flush_count(int, int, struct font_manager *);
     struct font_manager *fm = get_global_font_manager();
     if (fm) {
-      g_dc_breakdown.sdf_text = sdf_text_flush_count(sapp_width(), sapp_height(), fm);
+      g_dc_breakdown.sdf_text = sdf_text_flush_count(
+          (int)lroundf(sapp_width() / sapp_dpi_scale()),
+          (int)lroundf(sapp_height() / sapp_dpi_scale()), fm);
     }
 
     extern int imgui_frame_is_active(void);

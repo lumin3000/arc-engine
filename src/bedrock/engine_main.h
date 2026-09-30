@@ -16,6 +16,7 @@ typedef struct {
     const char *window_title;        // required
     int window_w;                    // defaults to 1280 if 0
     int window_h;                    // defaults to 720  if 0
+    bool high_dpi;                   // full-resolution framebuffer; screen/input units stay logical
 
     // Optional: process singleton lock. Set to enable a /tmp/<app_name>.lock
     // flock-based check at arc_engine_create(). A second process with the

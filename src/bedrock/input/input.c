@@ -175,8 +175,8 @@ void event_callback(const sapp_event* event) {
             break;
 
         case SAPP_EVENTTYPE_MOUSE_MOVE:
-            input->mouse_x = event->mouse_x;
-            input->mouse_y = event->mouse_y;
+            input->mouse_x = event->mouse_x / sapp_dpi_scale();
+            input->mouse_y = event->mouse_y / sapp_dpi_scale();
             break;
 
         case SAPP_EVENTTYPE_MOUSE_UP: {

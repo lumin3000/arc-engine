@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #if !defined(_WIN32)
 #include <sys/file.h>
@@ -182,8 +183,10 @@ static void engine_on_frame(void) {
     return;
   }
 #endif
-  window_w = sapp_width();
-  window_h = sapp_height();
+  // Layout, screen-space projection and input share logical window units.
+  // The swapchain retains its full physical size for crisp high-DPI rendering.
+  window_w = (int)lroundf(sapp_width() / sapp_dpi_scale());
+  window_h = (int)lroundf(sapp_height() / sapp_dpi_scale());
 
   float base_ortho = g_cfg.base_ortho_size > 0.0f ? g_cfg.base_ortho_size
                                                   : 10.0f;
@@ -452,6 +455,18 @@ int arc_engine_run(Arc_Engine *eng) {
     return 1;
   }
 
+  // Existing screenshot tests request fixed physical dimensions on the main
+  // display. Explicit overrides also allow testing the high-DPI path there.
+  bool high_dpi = g_cfg.high_dpi && !getenv("ARC_WINDOW_MAIN_DISPLAY");
+  const char *dpi_env = getenv("ARC_HIGH_DPI");
+  if (dpi_env) {
+    if (strcmp(dpi_env, "0") != 0 && strcmp(dpi_env, "1") != 0) {
+      fprintf(stderr, "[arc_engine_run] ARC_HIGH_DPI must be 0 or 1\n");
+      return 1;
+    }
+    high_dpi = strcmp(dpi_env, "1") == 0;
+  }
+
 #if defined(_WIN32)
   ShowWindow(GetConsoleWindow(), SW_HIDE);
   // 测试确定性（与 macOS 的 engine_macos_window_to_main_display 同一开关）：
@@ -473,6 +488,7 @@ int arc_engine_run(Arc_Engine *eng) {
       .event_cb = engine_host_event,
       .width = window_w,
       .height = window_h,
+      .high_dpi = high_dpi,
       .window_title = g_cfg.window_title,
       .icon.sokol_default = true,
       .logger.func = slog_func,
