@@ -1192,6 +1192,52 @@ static JSValue js_graphics_texture_staged_minification(JSContext *ctx,
   return JS_NewFloat64(ctx,1000.0*(clock()-begin)/CLOCKS_PER_SEC);
 }
 
+// graphics.texture_staged_resample(srcTex, sx, sy, sw, sh, dstTex, dx, dy, dw, dh, filter)
+// Resample a rectangle of one staged texture into a rectangle of another (image space,
+// top-left origin, same convention as compose_layers / texture_staged_read). Only the CPU
+// staging of dstTex changes; upload stays with texture_flush_staged. filter is "lanczos3"
+// or "catmullrom". Straight-alpha RGBA is alpha-weighted by stb; samples outside the source
+// rectangle clamp to its edge, so neighbouring tiles never bleed in.
+static JSValue js_graphics_texture_staged_resample(JSContext *ctx,
+    JSValueConst this_val, int argc, JSValueConst *argv) {
+  if (argc < 11)
+    return JS_ThrowTypeError(ctx, "texture_staged_resample(srcTex, sx, sy, sw, sh, dstTex, dx, dy, dw, dh, filter)");
+  JSValue err = JS_UNDEFINED;
+  GraphicsTextureCache *src = compose_staged_tex(ctx, argv[0], &err);
+  if (!src) return err;
+  GraphicsTextureCache *dst = compose_staged_tex(ctx, argv[5], &err);
+  if (!dst) return err;
+  if (src == dst) return JS_ThrowRangeError(ctx, "texture_staged_resample: source and destination must differ");
+  if (dst->mip_tile) return JS_ThrowRangeError(ctx, "texture_staged_resample: destination has a filtered tile layout");
+  int32_t r[8];
+  for (int i = 0; i < 4; i++) {
+    if (JS_ToInt32(ctx, &r[i], argv[1 + i]) < 0 || JS_ToInt32(ctx, &r[4 + i], argv[6 + i]) < 0)
+      return JS_EXCEPTION;
+  }
+  if (r[2] <= 0 || r[3] <= 0 || r[0] < 0 || r[1] < 0 || r[0] + r[2] > src->width || r[1] + r[3] > src->height)
+    return JS_ThrowRangeError(ctx, "texture_staged_resample: bad source region");
+  if (r[6] <= 0 || r[7] <= 0 || r[4] < 0 || r[5] < 0 || r[4] + r[6] > dst->width || r[5] + r[7] > dst->height)
+    return JS_ThrowRangeError(ctx, "texture_staged_resample: bad destination region");
+  const char *name = JS_ToCString(ctx, argv[10]);
+  if (!name) return JS_EXCEPTION;
+  int lanczos = strcmp(name, "lanczos3") == 0, cubic = strcmp(name, "catmullrom") == 0;
+  JS_FreeCString(ctx, name);
+  if (!lanczos && !cubic) return JS_ThrowRangeError(ctx, "texture_staged_resample: filter must be lanczos3 or catmullrom");
+  // Staging rows are vertically flipped; both rectangles are addressed from their
+  // bottom image row so the (symmetric) filter runs in the flipped space.
+  const uint8_t *in = src->staging + ((size_t)(src->height - (r[1] + r[3])) * src->width + r[0]) * 4;
+  uint8_t *out = dst->staging + ((size_t)(dst->height - (r[5] + r[7])) * dst->width + r[4]) * 4;
+  STBIR_RESIZE resize;
+  stbir_resize_init(&resize, in, r[2], r[3], src->width * 4, out, r[6], r[7], dst->width * 4,
+                    STBIR_RGBA, STBIR_TYPE_UINT8);
+  if (lanczos)
+    stbir_set_filter_callbacks(&resize, staged_lanczos3, staged_support3, staged_lanczos3, staged_support3);
+  else
+    stbir_set_filters(&resize, STBIR_FILTER_CATMULLROM, STBIR_FILTER_CATMULLROM);
+  if (!stbir_resize_extended(&resize)) return JS_ThrowInternalError(ctx, "texture_staged_resample: filtering failed");
+  return JS_UNDEFINED;
+}
+
 static JSValue js_graphics_texture_flush_staged(JSContext *ctx,
                                                 JSValueConst this_val, int argc,
                                                 JSValueConst *argv) {
@@ -2015,6 +2061,9 @@ int js_init_graphics_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "texture_staged_minification",
                     JS_NewCFunction(ctx, js_graphics_texture_staged_minification,
                                     "texture_staged_minification", 3));
+  JS_SetPropertyStr(ctx, obj, "texture_staged_resample",
+                    JS_NewCFunction(ctx, js_graphics_texture_staged_resample,
+                                    "texture_staged_resample", 11));
   JS_SetPropertyStr(ctx, obj, "texture_staged_read",
                     JS_NewCFunction(ctx, js_graphics_texture_staged_read,
                                     "texture_staged_read", 5));
