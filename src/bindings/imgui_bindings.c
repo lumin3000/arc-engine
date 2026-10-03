@@ -507,7 +507,7 @@ static JSValue js_imgui_set_textbox_state(JSContext *ctx, JSValueConst this_val,
 // ============================================================================
 
 // Atlas texture coordinates are explicit; no file loading or ownership transfer.
-// imgui.draw_image(textureId, x, y, w, h, u0, v0, u1, v1)
+// imgui.draw_image(textureId, x, y, w, h, u0, v0, u1, v1, [r,g,b,a])
 static JSValue js_imgui_draw_image(JSContext *ctx, JSValueConst this_val, int argc,
                                   JSValueConst *argv) {
   if (argc < 9) return JS_ThrowInternalError(ctx, "draw_image requires textureId, rect and UV coordinates");
@@ -519,6 +519,18 @@ static JSValue js_imgui_draw_image(JSContext *ctx, JSValueConst this_val, int ar
     if (!isfinite(v[i])) return JS_ThrowInternalError(ctx, "draw_image coordinates must be finite");
   }
   if (v[2] <= 0 || v[3] <= 0) return JS_ThrowInternalError(ctx, "draw_image dimensions must be positive");
+  unsigned int color = 0xffffffff;
+  if (argc > 9) {
+    if (argc != 13) return JS_ThrowInternalError(ctx, "draw_image tint requires all four RGBA channels");
+    color = 0;
+    for (int i = 0; i < 4; i++) {
+      double channel;
+      if (JS_ToFloat64(ctx, &channel, argv[9 + i]) < 0) return JS_EXCEPTION;
+      if (!isfinite(channel) || channel < 0 || channel > 255)
+        return JS_ThrowInternalError(ctx, "draw_image tint channels must be finite and within 0..255");
+      color |= (unsigned int)round(channel) << (i * 8);
+    }
+  }
   sg_image image;
   sg_view view;
   // 纹理来源两级: atlas 池 (unified_mesh, id≥offset) → graphics 池
@@ -532,7 +544,7 @@ static JSValue js_imgui_draw_image(JSContext *ctx, JSValueConst this_val, int ar
   texture._TexID = (ImTextureID)simgui_texture_id_wrapper(view);
   ImVec2_c p0 = {(float)v[0], (float)v[1]}, p1 = {(float)(v[0]+v[2]), (float)(v[1]+v[3])};
   ImVec2_c uv0 = {(float)v[4], (float)v[5]}, uv1 = {(float)v[6], (float)v[7]};
-  ImDrawList_AddImage(dl, texture, p0, p1, uv0, uv1, 0xffffffff);
+  ImDrawList_AddImage(dl, texture, p0, p1, uv0, uv1, color);
   return JS_UNDEFINED;
 }
 

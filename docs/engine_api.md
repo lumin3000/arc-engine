@@ -10,7 +10,7 @@
 
 ## ImGui 图集图片
 
-`imgui.draw_image(textureId, x, y, w, h, u0, v0, u1, v1)` 向当前 ImGui 窗口的 draw list 添加图片。矩形使用 UI 坐标；UV 使用图集归一化坐标，颜色为不透明白色，保留图片自身 alpha。
+`imgui.draw_image(textureId, x, y, w, h, u0, v0, u1, v1, [r, g, b, a])` 向当前 ImGui 窗口的 draw list 添加图片。矩形使用 UI 坐标；UV 使用图集归一化坐标。旧九参数调用使用不透明白色，保留图片自身 alpha。可选 tint 为四个独立参数，必须全部提供、均为有限的 0–255 数值，四舍五入为 RGBA 字节并乘到源像素；部分 tint 或越界数值抛错。原纹理/UV/所有权不变。
 
 `textureId` 必须是已经加载的图集页 ID（10000+）；普通纹理缓存 ID 不受此接口支持。绑定负责把图集页转换成 `sg_view`，再转换为 ImGui 纹理引用。尺寸必须大于零，坐标必须有限；无效页或参数抛出异常。接口不加载文件、不转移纹理所有权，销毁由图集管理者负责。
 
