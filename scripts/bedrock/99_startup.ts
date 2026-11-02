@@ -98,7 +98,15 @@ function* StartupRoutine() {
 
 function beginStartup() {
   if (typeof BlockingTaskQueue !== 'undefined') {
-    BlockingTaskQueue.enqueueBlockingTask(StartupRoutine, "Initializing...", true);
+    // 启动失败＝基础设施级 fatal：之前无 exceptionHandler，_handleException 记完日志就把
+    // 事件清掉，进程黑屏空转（check-defs 提取器曾挂 2+ 分钟）。非零退出让外层 make 直接红。
+    BlockingTaskQueue.enqueueBlockingTask(StartupRoutine, "Initializing...", true, function(e) {
+      const msg = e instanceof Error
+        ? (e.message + (e.stack ? "\n" + e.stack : ""))
+        : (e !== null && typeof e === "object" ? JSON.stringify(e) : String(e));
+      jtask.log.error("[game] Startup failed: " + msg);
+      app_quit(1);
+    });
   } else {
     jtask.log.error("[game] BlockingTaskQueue missing!");
   }

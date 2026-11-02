@@ -148,7 +148,12 @@ const BlockingTaskQueue = {
 
     _handleException(e: unknown) {
         this._recordSegmentEnd("error");
-        jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${(e as Error).message}\n${(e as Error).stack}`);
+        // 非 Error 投掷物（TypeBox ThrowParseError 等）也须可读：原来 e.message 打 undefined、
+        // String(e) 打 [object Object]，日志只剩栈名查无可查。
+        const msg = e instanceof Error
+            ? (e.message + (e.stack ? "\n" + e.stack : ""))
+            : (e !== null && typeof e === "object" ? JSON.stringify(e) : String(e));
+        jtask.log.error(`[BlockingTaskQueue] Error in ${this._currentEvent?.textKey}: ${msg}`);
         if (this._currentEvent && this._currentEvent.exceptionHandler) {
             this._currentEvent.exceptionHandler(e as Error);
         }
