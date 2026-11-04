@@ -13,6 +13,10 @@ void unified_mesh_free_slot(int slot_id);
 
 bool unified_mesh_begin_collect(int slot_id);
 
+/* 单槽收集缓冲上限（顶点 / 索引）；调用方据此把超量内容分装到多个槽 */
+int unified_mesh_collect_max_vertices(void);
+int unified_mesh_collect_max_indices(void);
+
 bool unified_mesh_append_vertices(int slot_id,
                                    const float *pos, int vert_count,
                                    const float *uv,

@@ -206,6 +206,10 @@ void unified_mesh_free_slot(int slot_id) {
   LOG_VERBOSE("[unified_mesh] C API: Freed slot %d\n", slot_id);
 }
 
+int unified_mesh_collect_max_vertices(void) { return MAX_UNIFIED_VERTICES; }
+
+int unified_mesh_collect_max_indices(void) { return MAX_UNIFIED_INDICES; }
+
 bool unified_mesh_begin_collect(int slot_id) {
   ensure_initialized();
   ensure_collect_buffers();
