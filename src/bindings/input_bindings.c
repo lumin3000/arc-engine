@@ -605,6 +605,9 @@ int js_init_input_module(JSContext *ctx) {
   JS_SetPropertyStr(ctx, obj, "KEY_LEFT_ALT", JS_NewInt32(ctx, KEY_LEFT_ALT));
   JS_SetPropertyStr(ctx, obj, "KEY_RIGHT_ALT", JS_NewInt32(ctx, KEY_RIGHT_ALT));
 
+  JS_SetPropertyStr(ctx, obj, "KEY_LEFT_SUPER", JS_NewInt32(ctx, KEY_LEFT_SUPER));
+  JS_SetPropertyStr(ctx, obj, "KEY_RIGHT_SUPER", JS_NewInt32(ctx, KEY_RIGHT_SUPER));
+
   // 鼠标按钮常量
   JS_SetPropertyStr(ctx, obj, "MOUSE_LEFT", JS_NewInt32(ctx, 0));
   JS_SetPropertyStr(ctx, obj, "MOUSE_MIDDLE", JS_NewInt32(ctx, 1));
