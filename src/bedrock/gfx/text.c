@@ -101,9 +101,6 @@ void draw_text_no_drop_shadow(
         );
 
         float size_x = fabsf(q.x0 - q.x1);
-        float size_y = fabsf(q.y0 - q.y1);
-
-        float bottom_left_y = -q.y1;
         float top_right_y = -q.y0;
 
         if (i == text_len - 1) {
@@ -164,7 +161,7 @@ void draw_text_no_drop_shadow(
         xform_scale(scale_vec, scale_mat);
         xform_translate(offset_to_render_at, translate_offset);
 
-        Matrix4 temp1, temp2;
+        Matrix4 temp1;
         matrix4_mul(translate_pos, scale_mat, temp1);
         matrix4_mul(temp1, translate_offset, xform);
 

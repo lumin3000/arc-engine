@@ -296,8 +296,6 @@ void mesh_upload_to_gpu_with_material(Mesh *mesh, const struct Material *mat) {
     return;
   }
 
-  int tex_index = mat ? material_get_tex_index(mat) : 255;
-
   Vertex *vdata = (Vertex *)mesh->gpu_vertices;
   memset(vdata, 0, mesh->vert_count * sizeof(Vertex));
 

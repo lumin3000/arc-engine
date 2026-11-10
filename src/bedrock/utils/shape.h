@@ -31,7 +31,7 @@ void rect_make_with_pos(Vec2 pos, Vec2 size, Pivot pivot, Rect out);
 
 void rect_make_with_size(Vec2 size, Pivot pivot, Rect out);
 
-void rect_shift(Rect rect, Vec2 amount, Rect out);
+void rect_shift(const Rect rect, Vec2 amount, Rect out);
 
 void rect_size(Rect rect, Vec2 out);
 
@@ -49,7 +49,7 @@ void shape_shift(const Shape* shape, Vec2 amount, Shape* out);
 
 bool collide(const Shape* a, const Shape* b, Vec2 out_depth);
 
-bool rect_collide_rect(Rect a, Rect b, Vec2 out_depth);
-bool rect_collide_circle(Rect aabb, Circle circle, Vec2 out_depth);
+bool rect_collide_rect(const Rect a, const Rect b, Vec2 out_depth);
+bool rect_collide_circle(const Rect aabb, Circle circle, Vec2 out_depth);
 
 #endif

@@ -37,7 +37,7 @@ void rect_make_with_size(Vec2 size, Pivot pivot, Rect out) {
     rect_make_with_pos(zero, size, pivot, out);
 }
 
-void rect_shift(Rect rect, Vec2 amount, Rect out) {
+void rect_shift(const Rect rect, Vec2 amount, Rect out) {
     out[0] = rect[0] + amount[0];
     out[1] = rect[1] + amount[1];
     out[2] = rect[2] + amount[0];
@@ -180,7 +180,7 @@ bool collide(const Shape* a, const Shape* b, Vec2 out_depth) {
     return false;
 }
 
-bool rect_collide_circle(Rect aabb, Circle circle, Vec2 out_depth) {
+bool rect_collide_circle(const Rect aabb, Circle circle, Vec2 out_depth) {
 
     Vec2 closest_point = {
         fmaxf(aabb[0], fminf(circle.pos[0], aabb[2])),
@@ -199,7 +199,7 @@ bool rect_collide_circle(Rect aabb, Circle circle, Vec2 out_depth) {
     return distance <= circle.radius;
 }
 
-bool rect_collide_rect(Rect a, Rect b, Vec2 out_depth) {
+bool rect_collide_rect(const Rect a, const Rect b, Vec2 out_depth) {
 
     float dx = ((a[2] + a[0]) / 2.0f) - ((b[2] + b[0]) / 2.0f);
     float dy = ((a[3] + a[1]) / 2.0f) - ((b[3] + b[1]) / 2.0f);

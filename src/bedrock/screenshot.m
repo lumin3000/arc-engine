@@ -6,7 +6,9 @@
 
 #include "stb_image_write.h"
 
+#ifndef SOKOL_METAL
 #define SOKOL_METAL
+#endif
 #include "../../external/sokol/c/sokol_app.h"
 
 // sokol 本地补丁提供的 Metal 命令队列 getter(sokol_gfx.h 内实现)。

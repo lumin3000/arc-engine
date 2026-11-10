@@ -1159,23 +1159,6 @@ static JSValue js_imgui_set_next_window_size(JSContext *ctx,
   return JS_UNDEFINED;
 }
 
-// imgui.checkbox(label, checked) -> {clicked, checked}
-static JSValue js_imgui_checkbox(JSContext *ctx, JSValueConst this_val,
-                                 int argc, JSValueConst *argv) {
-  if (argc < 2)
-    return JS_UNDEFINED;
-  const char *label = JS_ToCString(ctx, argv[0]);
-  if (!label)
-    return JS_EXCEPTION;
-  bool checked = JS_ToBool(ctx, argv[1]);
-  bool clicked = igCheckbox(label, &checked);
-  JS_FreeCString(ctx, label);
-  JSValue result = JS_NewObject(ctx);
-  JS_SetPropertyStr(ctx, result, "clicked", JS_NewBool(ctx, clicked));
-  JS_SetPropertyStr(ctx, result, "checked", JS_NewBool(ctx, checked));
-  return result;
-}
-
 // imgui.slider_float(label, value, min, max) -> {changed, value}
 static JSValue js_imgui_slider_float(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {

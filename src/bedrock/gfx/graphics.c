@@ -332,9 +332,6 @@ static int compare_mesh_request_by_renderqueue(const void *a, const void *b) {
 
 void graphics_submit_meshes(void) {
 
-  static int s_submit_debug = 0;
-  s_submit_debug++;
-
   // Count non-origin mesh requests (transform[12]/[13] != 0). Used for
   // diagnostic logging only — these are the meshes that actually need
   // a per-frame transform, as opposed to baked geometry that draws at
