@@ -2114,8 +2114,8 @@ int js_init_graphics_module(JSContext *ctx) {
   {
     JSValue rq = JS_NewObject(ctx);
 #define X(name, start, end, desc)                                              \
-  JS_SetPropertyStr(ctx, rq, #name + 3, JS_NewInt32(ctx, (start)));           \
-  JS_SetPropertyStr(ctx, rq, #name "_END" + 3, JS_NewInt32(ctx, (end)));
+  JS_SetPropertyStr(ctx, rq, &(#name)[3], JS_NewInt32(ctx, (start)));         \
+  JS_SetPropertyStr(ctx, rq, &(#name "_END")[3], JS_NewInt32(ctx, (end)));
     RENDER_QUEUE_BANDS(X)
 #undef X
     JS_SetPropertyStr(ctx, obj, "RQ", rq);

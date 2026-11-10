@@ -181,7 +181,7 @@ static JSValue js_diag_rq_bands(JSContext *ctx, JSValueConst this_val,
 
   JSValue obj = JS_NewObject(ctx);
 #define X(name, start, end, desc)                                              \
-  JS_SetPropertyStr(ctx, obj, #name + 3,                                      \
+  JS_SetPropertyStr(ctx, obj, &(#name)[3],                                    \
                     JS_NewInt32(ctx, bands[name##_BAND_IDX]));
   RENDER_QUEUE_BANDS(X)
 #undef X
