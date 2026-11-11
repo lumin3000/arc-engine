@@ -48,8 +48,8 @@ int shader_type_to_tex_index(ShaderType shader_type);
 // renderQueue 必须落在某个已注册带内，material_set_render_queue 对带外值 FATAL。
 // 新增带在此登记：X(带名, 起, 止开区间, 用途)；区间重叠由 static_assert 拒绝。
 #define RENDER_QUEUE_BANDS(X)                                                  \
-  X(RQ_BACKGROUND, 1000, 1600, "全屏底层: 地形 base/水面")                     \
-  X(RQ_BACKGROUND_BLEND, 1600, 2000, "底层过渡: 地形 blend 混边")              \
+  X(RQ_BACKGROUND, 1000, 1599, "全屏底层: 地形 base/水面")                     \
+  X(RQ_BACKGROUND_BLEND, 1599, 2000, "底层过渡: 地形 blend 混边")              \
   X(RQ_GEOMETRY, 2000, 2450, "默认内容: section/物体")                         \
   X(RQ_ALPHA_TEST, 2450, 3000, "alpha 裁切内容")                               \
   X(RQ_TRANSPARENT, 3000, 4000, "透明/叠加罩层")                               \
