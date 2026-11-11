@@ -136,7 +136,7 @@ const BlockingTaskQueue = {
             try {
                 this._currentEvent.callback();
             } catch (e) {
-                jtask.log.error("[BlockingTaskQueue] Callback error: " + (e as Error).message);
+                jtask.log.error("[BlockingTaskQueue] Callback error: " + (e as Error).message + "\n" + ((e as Error)?.stack ?? ""));
             }
         }
         this._currentEvent = null;
@@ -219,7 +219,7 @@ const BlockingTaskQueue = {
 
     _runBlockedFrameHooks() {
         for (const h of this.blockedFrameHooks) {
-            try { h(); } catch (e) { jtask.log("[BlockingTaskQueue] blockedFrameHook error: " + (e as Error).message); }
+            try { h(); } catch (e) { jtask.log.error("[BlockingTaskQueue] blockedFrameHook error: " + (e as Error).message + "\n" + ((e as Error)?.stack ?? "")); }
         }
     }
 };

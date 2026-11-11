@@ -66,7 +66,7 @@ G.loader_onFileLoaded = function (msg: { __ptr?: number } | null | undefined) {
         file.handler(data);
       }
     } catch (e) {
-      jtask.log.error("[loader] Parse error: " + (e as Error).message);
+      jtask.log.error("[loader] Parse error: " + (e as Error).message + "\n" + ((e as Error)?.stack ?? ""));
     }
   }
   loadState.currentFileLoaded = true;

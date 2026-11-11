@@ -28,7 +28,7 @@ const EngineBootstrap = {
             try {
                 callback();
             } catch (e) {
-                jtask.log("[EngineBootstrap] Callback error: " + (e as Error).message + "\n" + ((e as Error).stack || ''));
+                jtask.log.error("[EngineBootstrap] Callback error: " + (e as Error).message + "\n" + ((e as Error).stack || ''));
             }
         } else {
 
@@ -53,7 +53,7 @@ const EngineBootstrap = {
             try {
                 cb();
             } catch (e) {
-                jtask.log("[EngineBootstrap] Callback error in " + this._phaseNames[phase] + ": " + (e as Error).message + "\n" + ((e as Error).stack || ''));
+                jtask.log.error("[EngineBootstrap] Callback error in " + this._phaseNames[phase] + ": " + (e as Error).message + "\n" + ((e as Error).stack || ''));
             }
         }
 

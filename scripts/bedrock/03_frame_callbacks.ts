@@ -111,8 +111,7 @@ globalThis.FrameStageCallbacks = {
                     return;
                 }
             } catch (e) {
-                jtask.log("[FrameStageCallbacks] ERROR " + item.name + ": " + (e as Error).message);
-                if ((e as Error).stack) jtask.log((e as Error).stack);
+                jtask.log.error("[FrameStageCallbacks] ERROR " + item.name + ": " + (e as Error).message + "\n" + ((e as Error).stack || ""));
             }
         }
     },

@@ -184,7 +184,7 @@ const GameTimer = {
                 try {
                     timer.callback();
                 } catch (e) {
-                    jtask.log.error(`[GameTimer] Callback error: ${(e as Error).message}`);
+                    jtask.log.error(`[GameTimer] Callback error: ${e}\n${(e as Error)?.stack ?? ""}`);
                 }
 
                 if (timer.repeat) {

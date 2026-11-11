@@ -237,7 +237,7 @@ class TickScheduler {
         if (preMapHooks) {
             for (let h = 0; h < preMapHooks.length; h++) {
                 try { preMapHooks[h](this._ticksSimInt); }
-                catch (e) { jtask.log(`[TickScheduler] preSessionPostTick hook ${h} error: ${e}`); }
+                catch (e) { jtask.log.error(`[TickScheduler] preSessionPostTick hook ${h} error: ${e}\n${(e as Error)?.stack ?? ""}`); }
             }
         }
 
@@ -252,7 +252,7 @@ class TickScheduler {
         if (postHooks) {
             for (let h = 0; h < postHooks.length; h++) {
                 try { postHooks[h](this._ticksSimInt); }
-                catch (e) { jtask.log(`[TickScheduler] postTick hook ${h} error: ${e}`); }
+                catch (e) { jtask.log.error(`[TickScheduler] postTick hook ${h} error: ${e}\n${(e as Error)?.stack ?? ""}`); }
             }
         }
 
