@@ -9,7 +9,7 @@ type EngineTickable = Parameters<TickBucket["register"]>[0];
 type EngineTickMap = NonNullable<EngineTickable["map"]>;
 
 class TickScheduler {
-    declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: EngineTickMap[];
+    declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: EngineTickMap[]; declare _normalSpeedHoldUntil: number;
     constructor() {
 
         this._ticksSimInt = 0;
@@ -19,6 +19,11 @@ class TickScheduler {
         this._curSimSpeed = SimSpeed.Normal;
 
         this.prePauseSimSpeed = SimSpeed.Normal;
+
+        // Normal-speed hold window (sim ticks): while ticksSimulation < until,
+        // tickSpeedFactor reports 1 regardless of _curSimSpeed; the player's
+        // speed setting itself is never modified. Not persisted.
+        this._normalSpeedHoldUntil = -1;
 
         this._tickBucketEvery = new TickBucket(TickRate.Every);
         this._tickBucketSparse = new TickBucket(TickRate.Sparse);
@@ -48,6 +53,13 @@ class TickScheduler {
     }
 
     get tickSpeedFactor() {
+
+        if (this._curSimSpeed === SimSpeed.Paused) {
+            return 0;
+        }
+        if (this.normalSpeedHeld) {
+            return 1;
+        }
 
         switch (this._curSimSpeed) {
             case SimSpeed.Paused:
@@ -88,6 +100,24 @@ class TickScheduler {
 
     get paused() {
         return this._curSimSpeed === SimSpeed.Paused;
+    }
+
+    /**
+     * Extend the normal-speed hold window to at least `tick` (sim ticks).
+     * Repeated calls keep the furthest deadline (max semantics).
+     */
+    holdNormalSpeedUntil(tick: number): void {
+        this._normalSpeedHoldUntil = Math.max(this._normalSpeedHoldUntil, tick);
+    }
+
+    /** Drop the hold immediately (session/load reset paths). */
+    clearNormalSpeedHold(): void {
+        this._normalSpeedHoldUntil = -1;
+    }
+
+    /** True while ticksSimulation is inside the hold window. */
+    get normalSpeedHeld(): boolean {
+        return this._ticksSimInt < this._normalSpeedHoldUntil;
     }
 
     get curSimSpeed() {
@@ -282,6 +312,7 @@ class TickScheduler {
         this._realTimeToTickThrough = 0;
         this._ticksThisFrame = 0;
         this._curSimSpeed = SimSpeed.Normal;
+        this._normalSpeedHoldUntil = -1;
         this._tickBucketEvery.reset();
         this._tickBucketSparse.reset();
         this._tickBucketSlow.reset();
