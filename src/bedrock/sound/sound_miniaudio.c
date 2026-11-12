@@ -432,6 +432,319 @@ static void cue_release_all(void) {
 }
 
 // ---------------------------------------------------------------------------
+// 声道（voice）：带 id 的样本实例，见 sound.h。
+
+static atomic_flag voice_lock = ATOMIC_FLAG_INIT;
+static _Atomic unsigned int voice_next_id = 1;
+
+typedef enum { VCMD_PLAY = 1, VCMD_SET = 2, VCMD_STOP = 3 } Voice_Cmd_Kind;
+
+typedef struct {
+    int kind;
+    unsigned int id;
+    char path[SOUND_MUSIC_PATH_MAX];
+    float gain, pitch, pan;
+    bool loop;
+    unsigned int fade_ms;
+} Voice_Cmd;
+
+typedef struct {
+    char path[SOUND_MUSIC_PATH_MAX];
+    ma_sound sound;          // 只作解码数据持有者，自身从不起播
+    unsigned int bytes;
+    int refs;                // 在播声道引用数
+    unsigned long long last_used;
+    bool used;
+} Voice_Sample;
+
+typedef struct {
+    ma_sound sound;
+    unsigned int id;
+    int sample;              // samples[] 下标
+    bool active;
+    bool stopping;           // 已请求淡出停止
+    ma_uint64 stop_at_ms;    // 淡出完成的引擎时刻
+} Voice_Slot;
+
+static struct {
+    Voice_Cmd pending[SOUND_VOICE_CMD_CAP];
+    int pending_count;
+    bool stop_all;
+    Sound_Voice_Result results[SOUND_VOICE_RESULT_CAP];
+    int result_count;
+    Sound_Voice_Stats stats;
+    // 主线程私有
+    Voice_Sample samples[SOUND_SAMPLE_CAP];
+    Voice_Slot slots[SOUND_VOICE_MAX];
+    int active;
+    unsigned long long use_clock;
+} vox = {0};
+
+static void voice_lock_acquire(void) {
+    while (atomic_flag_test_and_set_explicit(&voice_lock, memory_order_acquire)) {}
+}
+static void voice_lock_release(void) {
+    atomic_flag_clear_explicit(&voice_lock, memory_order_release);
+}
+
+static bool voice_params_ok(float gain, float pitch, float pan) {
+    return gain >= 0.0f && gain <= 1.0f && pitch > 0.0f && pitch <= 4.0f && pan >= -1.0f && pan <= 1.0f;
+}
+
+static bool voice_enqueue(const Voice_Cmd* cmd) {
+    bool ok;
+    voice_lock_acquire();
+    ok = vox.pending_count < SOUND_VOICE_CMD_CAP;
+    if (ok) vox.pending[vox.pending_count++] = *cmd;
+    vox.stats.pending_cmds = vox.pending_count;
+    voice_lock_release();
+    if (!ok) LOG_ERROR("[sound] voice command rejected: queue full (%d)\n", SOUND_VOICE_CMD_CAP);
+    return ok;
+}
+
+unsigned int sound_voice_request_play(const char* path, float gain, float pitch, float pan,
+                                      bool loop, unsigned int fade_in_ms) {
+    if (!path || !path[0] || strlen(path) >= SOUND_MUSIC_PATH_MAX || !voice_params_ok(gain, pitch, pan)) {
+        LOG_ERROR("[sound] voice play rejected: invalid path or params (gain %f pitch %f pan %f)\n",
+                  (double)gain, (double)pitch, (double)pan);
+        return 0;
+    }
+    Voice_Cmd cmd = {0};
+    cmd.kind = VCMD_PLAY;
+    cmd.id = atomic_fetch_add(&voice_next_id, 1);
+    if (cmd.id == 0) cmd.id = atomic_fetch_add(&voice_next_id, 1);  // 回绕跳过 0
+    strncpy(cmd.path, path, SOUND_MUSIC_PATH_MAX);
+    cmd.gain = gain; cmd.pitch = pitch; cmd.pan = pan; cmd.loop = loop; cmd.fade_ms = fade_in_ms;
+    return voice_enqueue(&cmd) ? cmd.id : 0;
+}
+
+bool sound_voice_request_set(unsigned int id, float gain, float pitch, float pan) {
+    if (id == 0 || !voice_params_ok(gain, pitch, pan)) return false;
+    Voice_Cmd cmd = {0};
+    cmd.kind = VCMD_SET; cmd.id = id; cmd.gain = gain; cmd.pitch = pitch; cmd.pan = pan;
+    return voice_enqueue(&cmd);
+}
+
+bool sound_voice_request_stop(unsigned int id, unsigned int fade_out_ms) {
+    if (id == 0) return false;
+    Voice_Cmd cmd = {0};
+    cmd.kind = VCMD_STOP; cmd.id = id; cmd.fade_ms = fade_out_ms;
+    return voice_enqueue(&cmd);
+}
+
+void sound_voice_request_stop_all(void) {
+    voice_lock_acquire();
+    vox.stop_all = true;
+    voice_lock_release();
+}
+
+int sound_voice_take_results(Sound_Voice_Result* out, int cap) {
+    int n;
+    voice_lock_acquire();
+    n = vox.result_count < cap ? vox.result_count : cap;
+    if (n > 0) {
+        memcpy(out, vox.results, (size_t)n * sizeof(Sound_Voice_Result));
+        memmove(vox.results, vox.results + n, (size_t)(vox.result_count - n) * sizeof(Sound_Voice_Result));
+        vox.result_count -= n;
+    }
+    vox.stats.results_pending = (unsigned int)vox.result_count;
+    voice_lock_release();
+    return n;
+}
+
+Sound_Voice_Stats sound_voice_get_stats(void) {
+    voice_lock_acquire();
+    Sound_Voice_Stats s = vox.stats;
+    voice_lock_release();
+    return s;
+}
+
+// 主线程：写一条结果并累计（锁内）
+static void voice_result(unsigned int id, int kind, int code, const char* context) {
+    voice_lock_acquire();
+    if (vox.result_count < SOUND_VOICE_RESULT_CAP) {
+        Sound_Voice_Result* r = &vox.results[vox.result_count++];
+        r->id = id; r->kind = kind; r->code = code;
+        snprintf(r->context, SOUND_MUSIC_ERRCTX_MAX, "%s", context ? context : "");
+    } else {
+        vox.stats.results_overflow++;
+    }
+    switch (kind) {
+        case SOUND_VOICE_STARTED: vox.stats.started_total++; break;
+        case SOUND_VOICE_ENDED: vox.stats.ended_total++; break;
+        case SOUND_VOICE_STOPPED: vox.stats.stopped_total++; break;
+        case SOUND_VOICE_DROPPED: vox.stats.dropped_total++; break;
+        case SOUND_VOICE_FAILED: vox.stats.failed_total++; break;
+    }
+    vox.stats.results_pending = (unsigned int)vox.result_count;
+    voice_lock_release();
+    if (kind == SOUND_VOICE_FAILED)
+        LOG_ERROR("[sound] voice %u failed at %s: %s (%d)\n", id, context,
+                  code == SOUND_MA_CACHE_FULL ? "sample cache full" : ma_result_description((ma_result)code), code);
+    if (vox.stats.results_overflow) LOG_ERROR("[sound] voice result ring overflow (%u)\n", vox.stats.results_overflow);
+}
+
+static unsigned int voice_sample_bytes_total(void) {
+    unsigned int b = 0;
+    for (int i = 0; i < SOUND_SAMPLE_CAP; i++) if (vox.samples[i].used) b += vox.samples[i].bytes;
+    return b;
+}
+
+// 零引用样本按最久未用淘汰，直到总量 ≤ 预算或无可淘汰
+static void voice_sample_evict(void) {
+    while (voice_sample_bytes_total() > SOUND_SAMPLE_BUDGET_BYTES) {
+        int victim = -1;
+        for (int i = 0; i < SOUND_SAMPLE_CAP; i++) {
+            Voice_Sample* sm = &vox.samples[i];
+            if (!sm->used || sm->refs > 0) continue;
+            if (victim < 0 || sm->last_used < vox.samples[victim].last_used) victim = i;
+        }
+        if (victim < 0) return;
+        LOG_INFO("[sound] voice sample evicted: %s\n", vox.samples[victim].path);
+        ma_sound_uninit(&vox.samples[victim].sound);
+        vox.samples[victim].used = false;
+    }
+}
+
+// 主线程：取样本（命中或整段解码），失败返回 -1 并写 code/context
+static int voice_sample_acquire(const char* path, int* code, const char** context) {
+    int free_slot = -1;
+    for (int i = 0; i < SOUND_SAMPLE_CAP; i++) {
+        if (vox.samples[i].used && strcmp(vox.samples[i].path, path) == 0) {
+            vox.samples[i].last_used = ++vox.use_clock;
+            return i;
+        }
+        if (!vox.samples[i].used && free_slot < 0) free_slot = i;
+    }
+    if (free_slot < 0) { *code = SOUND_MA_CACHE_FULL; *context = "Voice_SampleCacheFull"; return -1; }
+    Voice_Sample* sm = &vox.samples[free_slot];
+    ma_result r = ma_sound_init_from_file(&state.engine, path, MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                          NULL, NULL, &sm->sound);
+    if (r != MA_SUCCESS) { *code = (int)r; *context = "Voice_InitFromFile"; return -1; }
+    ma_uint64 frames = 0; ma_uint32 ch = 0;
+    ma_sound_get_length_in_pcm_frames(&sm->sound, &frames);
+    ma_sound_get_data_format(&sm->sound, NULL, &ch, NULL, NULL, 0);
+    sm->bytes = (unsigned int)(frames * (ch ? ch : 1) * sizeof(float));
+    strncpy(sm->path, path, SOUND_MUSIC_PATH_MAX);
+    sm->refs = 0; sm->used = true; sm->last_used = ++vox.use_clock;
+    LOG_INFO("[sound] voice sample cached: %s (%u bytes)\n", path, sm->bytes);
+    voice_sample_evict();
+    return free_slot;
+}
+
+static void voice_release_slot(Voice_Slot* v) {
+    ma_sound_uninit(&v->sound);
+    vox.samples[v->sample].refs--;
+    v->active = false; v->stopping = false;
+    vox.active--;
+}
+
+static Voice_Slot* voice_find(unsigned int id) {
+    for (int i = 0; i < SOUND_VOICE_MAX; i++) if (vox.slots[i].active && vox.slots[i].id == id) return &vox.slots[i];
+    return NULL;
+}
+
+static void voice_main_thread_tick(void) {
+    ma_uint64 now_ms = ma_engine_get_time_in_milliseconds(&state.engine);
+    // 1) 回收：自然播完 → ended；淡出到期 → stopped（先回收再接纳）
+    for (int i = 0; i < SOUND_VOICE_MAX; i++) {
+        Voice_Slot* v = &vox.slots[i];
+        if (!v->active) continue;
+        if (v->stopping && now_ms >= v->stop_at_ms) {
+            unsigned int id = v->id; voice_release_slot(v); voice_result(id, SOUND_VOICE_STOPPED, 0, "");
+        } else if (!v->stopping && ma_sound_at_end(&v->sound)) {
+            unsigned int id = v->id; voice_release_slot(v); voice_result(id, SOUND_VOICE_ENDED, 0, "");
+        }
+    }
+    // 2) 取走命令与 stop_all
+    static Voice_Cmd batch[SOUND_VOICE_CMD_CAP];
+    int n; bool stop_all;
+    voice_lock_acquire();
+    n = vox.pending_count;
+    if (n > 0) memcpy(batch, vox.pending, (size_t)n * sizeof(Voice_Cmd));
+    vox.pending_count = 0;
+    stop_all = vox.stop_all; vox.stop_all = false;
+    vox.stats.pending_cmds = 0;
+    voice_lock_release();
+    if (stop_all) {
+        for (int i = 0; i < SOUND_VOICE_MAX; i++) {
+            Voice_Slot* v = &vox.slots[i];
+            if (!v->active) continue;
+            unsigned int id = v->id; voice_release_slot(v); voice_result(id, SOUND_VOICE_STOPPED, 0, "stop_all");
+        }
+        // 同批待播命令：未起播即终态
+        for (int i = 0; i < n; i++) if (batch[i].kind == VCMD_PLAY) voice_result(batch[i].id, SOUND_VOICE_DROPPED, 0, "stop_all");
+        n = 0;
+    }
+    // 同批内先播后停：记下本批被 stop 的 id，起播前已被停者直接 dropped
+    for (int i = 0; i < n; i++) {
+        Voice_Cmd* c = &batch[i];
+        if (c->kind == VCMD_PLAY) {
+            bool stopped_before_start = false;
+            for (int k = i + 1; k < n; k++) if (batch[k].kind == VCMD_STOP && batch[k].id == c->id && batch[k].fade_ms == 0) { stopped_before_start = true; break; }
+            if (stopped_before_start) { voice_result(c->id, SOUND_VOICE_DROPPED, 0, "stopped_before_start"); continue; }
+            if (vox.active >= SOUND_VOICE_MAX) { voice_result(c->id, SOUND_VOICE_DROPPED, 0, "voice_limit"); continue; }
+            int code = 0; const char* ctx = "";
+            int si = voice_sample_acquire(c->path, &code, &ctx);
+            if (si < 0) { voice_result(c->id, SOUND_VOICE_FAILED, code, ctx); continue; }
+            Voice_Slot* v = NULL;
+            for (int k = 0; k < SOUND_VOICE_MAX; k++) if (!vox.slots[k].active) { v = &vox.slots[k]; break; }
+            ma_result r = ma_sound_init_copy(&state.engine, &vox.samples[si].sound, MA_SOUND_FLAG_NO_SPATIALIZATION, NULL, &v->sound);
+            if (r != MA_SUCCESS) { voice_result(c->id, SOUND_VOICE_FAILED, (int)r, "Voice_InitCopy"); continue; }
+            ma_sound_set_volume(&v->sound, c->gain);
+            ma_sound_set_pitch(&v->sound, c->pitch);
+            ma_sound_set_pan(&v->sound, c->pan);
+            ma_sound_set_looping(&v->sound, c->loop ? MA_TRUE : MA_FALSE);
+            if (c->fade_ms > 0) ma_sound_set_fade_in_milliseconds(&v->sound, 0.0f, 1.0f, c->fade_ms);
+            r = ma_sound_start(&v->sound);
+            if (r != MA_SUCCESS) { ma_sound_uninit(&v->sound); voice_result(c->id, SOUND_VOICE_FAILED, (int)r, "Voice_Start"); continue; }
+            v->id = c->id; v->sample = si; v->active = true; v->stopping = false;
+            vox.samples[si].refs++;
+            vox.active++;
+            voice_result(c->id, SOUND_VOICE_STARTED, 0, "");
+        } else if (c->kind == VCMD_SET) {
+            Voice_Slot* v = voice_find(c->id);
+            if (!v || v->stopping) continue;
+            ma_sound_set_volume(&v->sound, c->gain);
+            ma_sound_set_pitch(&v->sound, c->pitch);
+            ma_sound_set_pan(&v->sound, c->pan);
+        } else if (c->kind == VCMD_STOP) {
+            Voice_Slot* v = voice_find(c->id);
+            if (!v || v->stopping) continue;
+            if (c->fade_ms == 0) {
+                unsigned int id = v->id; voice_release_slot(v); voice_result(id, SOUND_VOICE_STOPPED, 0, "");
+            } else {
+                ma_sound_set_fade_in_milliseconds(&v->sound, -1.0f, 0.0f, c->fade_ms);
+                v->stopping = true;
+                v->stop_at_ms = now_ms + c->fade_ms;
+            }
+        }
+    }
+    voice_lock_acquire();
+    vox.stats.active_voices = vox.active;
+    int sc = 0; for (int i = 0; i < SOUND_SAMPLE_CAP; i++) if (vox.samples[i].used) sc++;
+    vox.stats.sample_count = sc;
+    vox.stats.sample_bytes = voice_sample_bytes_total();
+    voice_lock_release();
+}
+
+// 主线程退出收尾：先停声道（引用样本），再释放样本
+static void voice_release_all(void) {
+    for (int i = 0; i < SOUND_VOICE_MAX; i++) {
+        if (!vox.slots[i].active) continue;
+        unsigned int id = vox.slots[i].id; voice_release_slot(&vox.slots[i]); voice_result(id, SOUND_VOICE_STOPPED, 0, "shutdown");
+    }
+    for (int i = 0; i < SOUND_SAMPLE_CAP; i++) {
+        if (!vox.samples[i].used) continue;
+        ma_sound_uninit(&vox.samples[i].sound);
+        vox.samples[i].used = false;
+    }
+    LOG_INFO("[sound] voices released (started %u ended %u stopped %u dropped %u failed %u overflow %u)\n",
+             vox.stats.started_total, vox.stats.ended_total, vox.stats.stopped_total,
+             vox.stats.dropped_total, vox.stats.failed_total, vox.stats.results_overflow);
+}
+
+// ---------------------------------------------------------------------------
 // 生命周期。初始化失败即 fatal（Fail-Fast：基础设施损坏 exit(1)），不允许
 // 假 initialized=true 继续。
 
@@ -499,12 +812,14 @@ void sound_update(Vec2 listener_pos, float master_volume) {
 
     music_main_thread_tick();
     cue_main_thread_tick();
+    voice_main_thread_tick();
 }
 
 void sound_shutdown(void) {
     if (!state.initialized) return;
     music_release_current();
     cue_release_all();
+    voice_release_all();
     music_lock_acquire();
     music.status.state = SOUND_MUSIC_IDLE;
     music.pending_cmd = 0;

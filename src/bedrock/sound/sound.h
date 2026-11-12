@@ -78,6 +78,56 @@ Sound_Cue_Request_Result sound_cue_request_play(const char* path, float volume);
 
 Sound_Cue_Status sound_cue_get_status(void);
 
+// ---------------------------------------------------------------------------
+// 声道（voice）：带 id 的单次/循环样本实例。与音乐同一设备、同一"任意线程请求/
+// 主线程 sound_update 消费"模型。增益/声像/音高由调用方算好下发（不用后端空间化）。
+// id 在请求时原子分配并立即返回（0 = 同步拒绝：参数无效或信箱满）；之后的
+// set/stop 按 id 寻址，id 不复用，旧 id 不会操作到新声道。
+// 每个 id 恰好产生一条终态结果（ended/stopped/dropped/failed），起播成功另有 started。
+
+#define SOUND_VOICE_MAX 48              // 原生声道硬上限
+#define SOUND_VOICE_CMD_CAP 256         // 单帧待消费命令上限
+#define SOUND_VOICE_RESULT_CAP 1024     // 未取走结果上限（满不覆盖，计 overflow）
+#define SOUND_SAMPLE_CAP 128            // 常驻样本条目上限
+#define SOUND_SAMPLE_BUDGET_BYTES (64u * 1024u * 1024u) // 零引用样本超预算即淘汰
+
+typedef enum {
+    SOUND_VOICE_STARTED = 1,
+    SOUND_VOICE_ENDED = 2,    // 自然播完
+    SOUND_VOICE_STOPPED = 3,  // stop/stop_all（含淡出完成）
+    SOUND_VOICE_DROPPED = 4,  // 声道满、或起播前已被 stop
+    SOUND_VOICE_FAILED = 5,   // 解码/后端失败，见 code/context
+} Sound_Voice_Result_Kind;
+
+typedef struct {
+    unsigned int id;
+    int kind;                 // Sound_Voice_Result_Kind
+    int code;                 // 后端错误码（FAILED）或 0
+    char context[SOUND_MUSIC_ERRCTX_MAX];
+} Sound_Voice_Result;
+
+typedef struct {
+    int active_voices;
+    int pending_cmds;
+    int sample_count;
+    unsigned int sample_bytes;
+    unsigned int results_pending;
+    unsigned int results_overflow;   // 结果环满未能写入的终态数（应恒 0）
+    unsigned int started_total, ended_total, stopped_total, dropped_total, failed_total;
+} Sound_Voice_Stats;
+
+// gain ∈ [0,1]，pitch ∈ (0,4]，pan ∈ [-1,1]，fade_in_ms ≥ 0。返回 id 或 0（拒绝）。
+unsigned int sound_voice_request_play(const char* path, float gain, float pitch, float pan,
+                                      bool loop, unsigned int fade_in_ms);
+// 已终态或未知 id：主线程消费时忽略（不产生新结果）。返回 false = 参数无效/信箱满。
+bool sound_voice_request_set(unsigned int id, float gain, float pitch, float pan);
+bool sound_voice_request_stop(unsigned int id, unsigned int fade_out_ms);
+// 立即停止全部在播/待播声道（独立控制位，信箱满也生效）；每个 id 各得一条 stopped/dropped。
+void sound_voice_request_stop_all(void);
+// 取走至多 cap 条结果，返回条数。
+int sound_voice_take_results(Sound_Voice_Result* out, int cap);
+Sound_Voice_Stats sound_voice_get_stats(void);
+
 // 主线程退出收尾：停音乐、释放 Studio/Core。仅 engine cleanup 调用。
 void sound_shutdown(void);
 
