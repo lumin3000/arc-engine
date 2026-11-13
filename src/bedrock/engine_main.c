@@ -99,6 +99,8 @@ static void engine_on_init(void) {
 
   _game_state.zoom_level = g_cfg.zoom_level > 0 ? g_cfg.zoom_level : 2.0f;
   _game_state.desired_zoom_level = _game_state.zoom_level;
+  _game_state.zoom_min = MIN_ZOOM_LEVEL;
+  _game_state.zoom_max = MAX_ZOOM_LEVEL;
 
   _game_state.cam_pos[0] = g_cfg.camera_initial_pos[0];
   _game_state.cam_pos[1] = g_cfg.camera_initial_pos[1];
@@ -239,9 +241,11 @@ static void engine_on_frame(void) {
                       ctx.gs->cam_rot[2]);
 
   if (!g_cfg.disable_default_camera_controls && !atomic_load(&camera_controls_blocked)) {
-    // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)
-    if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= ZOOM_IN_MULTIPLIER;
-    if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= ZOOM_OUT_MULTIPLIER;
+    // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)。
+    // 按时间而非按帧: 60fps 下与旧每帧倍率一致, 其他帧率下按住时长决定缩放量。
+    float key_dt = 60.0f * ctx.delta_t;
+    if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= powf(ZOOM_IN_MULTIPLIER, key_dt);
+    if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= powf(ZOOM_OUT_MULTIPLIER, key_dt);
 
     float scroll = input_state->scroll_y;
     if (scroll != 0.0f && !atomic_load(&camera_wheel_blocked)) {
@@ -249,19 +253,28 @@ static void engine_on_frame(void) {
       ctx.gs->desired_zoom_level *= (1.0f + zoom_delta);
     }
 
-    if (ctx.gs->desired_zoom_level < MIN_ZOOM_LEVEL)
-      ctx.gs->desired_zoom_level = MIN_ZOOM_LEVEL;
-    if (ctx.gs->desired_zoom_level > MAX_ZOOM_LEVEL)
-      ctx.gs->desired_zoom_level = MAX_ZOOM_LEVEL;
+    if (ctx.gs->desired_zoom_level < ctx.gs->zoom_min)
+      ctx.gs->desired_zoom_level = ctx.gs->zoom_min;
+    if (ctx.gs->desired_zoom_level > ctx.gs->zoom_max)
+      ctx.gs->desired_zoom_level = ctx.gs->zoom_max;
 
-    float zoom_diff =
-        (ctx.gs->desired_zoom_level - ctx.gs->zoom_level) * ZOOM_TIGHTNESS;
-    ctx.gs->zoom_level += zoom_diff;
+    // 平滑走 60Hz 固定步 (RW Verse/Gen.cs FixedTimeStepUpdate: buffer+=min(dt,1),
+    // n=floor(buffer/step), buffer-=n*step; CameraDriver 缩放平滑同法), 帧率无关。
+    // dt 已被 MIN_FRAME_TIME 封顶, 单帧最多补 3 步; 屏蔽期不累加不步进。
+    static float zoom_step_buffer = 0.0f;
+    const float zoom_step = 1.0f / 60.0f;
+    zoom_step_buffer += ctx.delta_t;
+    int zoom_steps = (int)floorf(zoom_step_buffer / zoom_step);
+    zoom_step_buffer -= zoom_steps * zoom_step;
+    for (int i = 0; i < zoom_steps; i++) {
+      ctx.gs->zoom_level +=
+          (ctx.gs->desired_zoom_level - ctx.gs->zoom_level) * ZOOM_TIGHTNESS;
+    }
 
-    if (ctx.gs->zoom_level < MIN_ZOOM_LEVEL)
-      ctx.gs->zoom_level = MIN_ZOOM_LEVEL;
-    if (ctx.gs->zoom_level > MAX_ZOOM_LEVEL)
-      ctx.gs->zoom_level = MAX_ZOOM_LEVEL;
+    if (ctx.gs->zoom_level < ctx.gs->zoom_min)
+      ctx.gs->zoom_level = ctx.gs->zoom_min;
+    if (ctx.gs->zoom_level > ctx.gs->zoom_max)
+      ctx.gs->zoom_level = ctx.gs->zoom_max;
   }
 
   char stdin_buf[1024];

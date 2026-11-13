@@ -18,6 +18,15 @@
 
 引擎核心只包含通用 `shader_utils.glsl` 和消费者提供的 `user_fragment.glsl`。消费者的专用函数库应由自己的片段 `@include`，并在自己的构建规则中列出依赖、复制到 shader staging 目录；不得让引擎核心无条件引用某个消费者才有的文件。
 
+## 相机缩放范围（2026-11-12）
+
+`coord` 提供运行时缩放范围接口。`Game_State.zoom_min/zoom_max` 初值 `MIN_ZOOM_LEVEL`/`MAX_ZOOM_LEVEL`（0.03/200），`engine_main.c` 全部缩放夹取读运行时值，默认行为不变。
+
+- `coord.set_camera_zoom_range(min, max)`：两参须为有限数且 `0 < min <= max`，否则 `JS_ThrowRangeError`；`argc < 2` 为 TypeError。设定后立即把 `zoom_level` 与 `desired_zoom_level` 各自夹进新范围（越界取边界值）。
+- `coord.get_camera_zoom_range()`：返回 `{min, max}`；`ctx.gs` 未就绪抛 InternalError。
+- `coord.set_camera_zoom(z)`：`z` 非有限数或越出当前 `[zoom_min, zoom_max]` → `JS_ThrowRangeError`（Fail-Fast）；调用方负责先夹。游戏侧 `game_bindings.c` 的同名实现注册在后覆盖引擎版，两处校验一致。
+- 缩放平滑改 60Hz 固定步（RW `Verse/Gen.cs` `FixedTimeStepUpdate` 同法）：帧 dt（已被 `MIN_FRAME_TIME` 封顶）累加进 buffer，每整步执行一次 `zoom += (desired-zoom)*ZOOM_TIGHTNESS`，相机控制被屏蔽时不累加不步进；到位时间与帧率无关。键盘 `-`/`=` 缩放改按 `60*dt` 折算倍率，按住时长决定缩放量。
+
 ## 验证记录（2026-09-10）
 
 两个现有原生消费者使用同一引擎工作目录，clean 后 make 均退出0。主消费者8项金图图差通过；多视图冷读档、编成预览和实际图集物品图标均运行验证。旧诊断场景既存的素材缺失不属于本接口的通过范围，具体记录在消费者计划中。

@@ -309,10 +309,61 @@ static JSValue js_coord_set_camera_zoom(JSContext *js_ctx,
   if (JS_ToFloat64(js_ctx, &z, argv[0]) < 0)
     return JS_EXCEPTION;
   if (ctx.gs) {
+    if (!isfinite(z) || z < (double)ctx.gs->zoom_min ||
+        z > (double)ctx.gs->zoom_max)
+      return JS_ThrowRangeError(js_ctx,
+                                "set_camera_zoom value outside current zoom range");
     ctx.gs->zoom_level = (float)z;
     ctx.gs->desired_zoom_level = (float)z;
   }
   return JS_UNDEFINED;
+}
+
+static JSValue js_coord_set_camera_zoom_range(JSContext *js_ctx,
+                                              JSValueConst this_val, int argc,
+                                              JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 2)
+    return JS_ThrowTypeError(js_ctx,
+                             "set_camera_zoom_range requires 2 arguments (min, max)");
+  double lo, hi;
+  if (JS_ToFloat64(js_ctx, &lo, argv[0]) < 0)
+    return JS_EXCEPTION;
+  if (JS_ToFloat64(js_ctx, &hi, argv[1]) < 0)
+    return JS_EXCEPTION;
+  if (!isfinite(lo) || !isfinite(hi) || lo <= 0.0 || lo > hi)
+    return JS_ThrowRangeError(js_ctx,
+                              "set_camera_zoom_range requires finite 0 < min <= max");
+  if (ctx.gs) {
+    ctx.gs->zoom_min = (float)lo;
+    ctx.gs->zoom_max = (float)hi;
+    if (ctx.gs->zoom_level < lo)
+      ctx.gs->zoom_level = (float)lo;
+    else if (ctx.gs->zoom_level > hi)
+      ctx.gs->zoom_level = (float)hi;
+    if (ctx.gs->desired_zoom_level < lo)
+      ctx.gs->desired_zoom_level = (float)lo;
+    else if (ctx.gs->desired_zoom_level > hi)
+      ctx.gs->desired_zoom_level = (float)hi;
+  }
+  return JS_UNDEFINED;
+}
+
+static JSValue js_coord_get_camera_zoom_range(JSContext *js_ctx,
+                                              JSValueConst this_val, int argc,
+                                              JSValueConst *argv) {
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  if (!ctx.gs)
+    return JS_ThrowInternalError(js_ctx,
+                                 "get_camera_zoom_range: game state not ready");
+  JSValue ret = JS_NewObject(js_ctx);
+  JS_SetPropertyStr(js_ctx, ret, "min",
+                    JS_NewFloat64(js_ctx, (double)ctx.gs->zoom_min));
+  JS_SetPropertyStr(js_ctx, ret, "max",
+                    JS_NewFloat64(js_ctx, (double)ctx.gs->zoom_max));
+  return ret;
 }
 
 static JSValue js_coord_get_camera_zoom(JSContext *js_ctx,
@@ -444,6 +495,14 @@ int js_init_engine_module(JSContext *js_ctx) {
   JS_SetPropertyStr(
       js_ctx, coord_obj, "get_camera_zoom",
       JS_NewCFunction(js_ctx, js_coord_get_camera_zoom, "get_camera_zoom", 0));
+  JS_SetPropertyStr(
+      js_ctx, coord_obj, "set_camera_zoom_range",
+      JS_NewCFunction(js_ctx, js_coord_set_camera_zoom_range,
+                      "set_camera_zoom_range", 2));
+  JS_SetPropertyStr(
+      js_ctx, coord_obj, "get_camera_zoom_range",
+      JS_NewCFunction(js_ctx, js_coord_get_camera_zoom_range,
+                      "get_camera_zoom_range", 0));
 
   JS_SetPropertyStr(js_ctx, global, "coord", coord_obj);
 

@@ -19,6 +19,12 @@ typedef struct {
     Vec3     cam_vel;
     float    zoom_level;
     float    desired_zoom_level;
+    // Runtime zoom clamp range (defaults MIN_ZOOM_LEVEL/MAX_ZOOM_LEVEL).
+    // Consumers narrow it via coord.set_camera_zoom_range; all zoom
+    // clamps in engine_main.c read these instead of the compile-time
+    // constants so tests can keep the wide range.
+    float    zoom_min;
+    float    zoom_max;
 } Game_State;
 
 typedef struct {
