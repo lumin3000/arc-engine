@@ -239,6 +239,52 @@ void camera_world_to_screen(Camera *cam, const Vec3 world, Vec3 screen) {
   }
 }
 
+void camera_screen_to_world_ground(Camera *cam, float sx, float sy,
+                                   float win_w, float win_h, float *out_x,
+                                   float *out_z) {
+  if (out_x) *out_x = 0.0f;
+  if (out_z) *out_z = 0.0f;
+  if (!cam || !out_x || !out_z || win_w <= 1.0f || win_h <= 1.0f)
+    return;
+
+  float ndc_x = (sx / (win_w * 0.5f)) - 1.0f;
+  float ndc_y = (sy / (win_h * 0.5f)) - 1.0f;
+  ndc_y *= -1.0f;
+
+  const Matrix4 *vp = camera_get_vp_matrix(cam);
+  Matrix4 vp_inv;
+  matrix4_inverse(*vp, vp_inv);
+
+  float v_near[4] = {ndc_x, ndc_y, -1.0f, 1.0f};
+  float w_near[4];
+  matrix4_mul_vec4(vp_inv, v_near, w_near);
+  if (w_near[3] != 0.0f) {
+    w_near[0] /= w_near[3];
+    w_near[1] /= w_near[3];
+    w_near[2] /= w_near[3];
+  }
+
+  float v_far[4] = {ndc_x, ndc_y, 1.0f, 1.0f};
+  float w_far[4];
+  matrix4_mul_vec4(vp_inv, v_far, w_far);
+  if (w_far[3] != 0.0f) {
+    w_far[0] /= w_far[3];
+    w_far[1] /= w_far[3];
+    w_far[2] /= w_far[3];
+  }
+
+  Vec3 ro = {w_near[0], w_near[1], w_near[2]};
+  Vec3 rd = {w_far[0] - w_near[0], w_far[1] - w_near[1], w_far[2] - w_near[2]};
+
+  float t = 0.0f;
+  if (fabsf(rd[1]) > 1e-6f) {
+    t = -ro[1] / rd[1];
+  }
+
+  *out_x = ro[0] + t * rd[0];
+  *out_z = ro[2] + t * rd[2];
+}
+
 void camera_screen_to_world(Camera *cam, const Vec3 screen, Vec3 world) {
   if (!cam || !screen || !world)
     return;

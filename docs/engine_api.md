@@ -27,6 +27,12 @@
 - `coord.set_camera_zoom(z)`：`z` 非有限数或越出当前 `[zoom_min, zoom_max]` → `JS_ThrowRangeError`（Fail-Fast）；调用方负责先夹。游戏侧 `game_bindings.c` 的同名实现注册在后覆盖引擎版，两处校验一致。
 - 缩放平滑改 60Hz 固定步（RW `Verse/Gen.cs` `FixedTimeStepUpdate` 同法）：帧 dt（已被 `MIN_FRAME_TIME` 封顶）累加进 buffer，每整步执行一次 `zoom += (desired-zoom)*ZOOM_TIGHTNESS`，相机控制被屏蔽时不累加不步进；到位时间与帧率无关。键盘 `-`/`=` 缩放改按 `60*dt` 折算倍率，按住时长决定缩放量。
 
+### 朝鼠标缩放（2026-11-12，frame_cap_camera_zoom 役3）
+
+- `coord.set_zoom_to_cursor(on)`：参数须为严格布尔，否则 `JS_ThrowTypeError`；写 `Game_State.zoom_to_cursor`（初值 0=关），`ctx.gs` 未就绪时静默不写。对齐 RW `Verse/CameraDriver.cs` `ZoomToMouse`。
+- 开启且本帧 `zoom_level` 实际变化、且 `camera_wheel_blocked` 未置位时（相机 controls 被屏蔽时整块本就不执行），引擎在固定步/夹取之后做锚定：用当前（旧）ortho 经 `camera_screen_to_world_ground` 求光标处地面世界点 P0，临时 `camera_set_ortho_size` 为新 ortho（置 `matrices_dirty`，取 VP 即重算）求 P1，`cam_pos.x/z += P0-P1`（只动 x/z，y 不动），随后恢复旧 ortho——下一帧开头按新 zoom 重设，本帧渲染取景一致；`cam_pos` 经 `ctx.gs` 下一帧 `camera_set_position` 生效，消费者侧 JS 平移/界内夹取照常在其后执行。
+- `camera_screen_to_world_ground(cam, sx, sy, win_w, win_h, *out_x, *out_z)`：屏幕像素→y=0 地面世界点的内部 helper，`coord.screen_to_world` 绑定与锚定路径共用同一反投影数学（NDC→VP 逆矩阵→近/远射线→y=0 平面交点）。
+
 ## 验证记录（2026-09-10）
 
 两个现有原生消费者使用同一引擎工作目录，clean 后 make 均退出0。主消费者8项金图图差通过；多视图冷读档、编成预览和实际图集物品图标均运行验证。旧诊断场景既存的素材缺失不属于本接口的通过范围，具体记录在消费者计划中。

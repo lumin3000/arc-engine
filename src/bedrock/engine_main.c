@@ -101,6 +101,7 @@ static void engine_on_init(void) {
   _game_state.desired_zoom_level = _game_state.zoom_level;
   _game_state.zoom_min = MIN_ZOOM_LEVEL;
   _game_state.zoom_max = MAX_ZOOM_LEVEL;
+  _game_state.zoom_to_cursor = 0;
 
   _game_state.cam_pos[0] = g_cfg.camera_initial_pos[0];
   _game_state.cam_pos[1] = g_cfg.camera_initial_pos[1];
@@ -243,6 +244,7 @@ static void engine_on_frame(void) {
   if (!g_cfg.disable_default_camera_controls && !atomic_load(&camera_controls_blocked)) {
     // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)。
     // 按时间而非按帧: 60fps 下与旧每帧倍率一致, 其他帧率下按住时长决定缩放量。
+    const float zoom_before = ctx.gs->zoom_level;
     float key_dt = 60.0f * ctx.delta_t;
     if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= powf(ZOOM_IN_MULTIPLIER, key_dt);
     if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= powf(ZOOM_OUT_MULTIPLIER, key_dt);
@@ -275,6 +277,30 @@ static void engine_on_frame(void) {
       ctx.gs->zoom_level = ctx.gs->zoom_min;
     if (ctx.gs->zoom_level > ctx.gs->zoom_max)
       ctx.gs->zoom_level = ctx.gs->zoom_max;
+
+    // 朝鼠标缩放 (RW Verse/CameraDriver.cs ZoomToMouse: 改前取鼠标世界点
+    // P0、改后取 P1, cam_pos += P0-P1)。仅本帧 zoom_level 实际变化且光标
+    // 不在被屏蔽 UI 区 (wheel_blocked: 侧栏/界面) 时锚定; 相机 controls
+    // 被屏蔽时整块不执行。旧 ortho 求 P0、新 ortho 求 P1 (camera_set_ortho_
+    // size 置 matrices_dirty, 下次取 VP 即重算, camera.c:128-133/175-195);
+    // 用完恢复旧 ortho — 下一帧开头按新 zoom 重设, 本帧渲染保持旧取景一致。
+    // cam_pos 经 ctx.gs 下一帧 camera_set_position 生效 (引擎移动在 JS
+    // 相机界内夹取之前, 游戏侧夹取照常)。
+    if (ctx.gs->zoom_to_cursor && ctx.gs->zoom_level != zoom_before
+        && !atomic_load(&camera_wheel_blocked)) {
+      Camera *cam = camera_get_main();
+      float p0x = 0.0f, p0z = 0.0f, p1x = 0.0f, p1z = 0.0f;
+      camera_screen_to_world_ground(cam, input_state->mouse_x,
+                                    input_state->mouse_y, (float)window_w,
+                                    (float)window_h, &p0x, &p0z);
+      camera_set_ortho_size(cam, base_ortho / ctx.gs->zoom_level);
+      camera_screen_to_world_ground(cam, input_state->mouse_x,
+                                    input_state->mouse_y, (float)window_w,
+                                    (float)window_h, &p1x, &p1z);
+      ctx.gs->cam_pos[0] += p0x - p1x;
+      ctx.gs->cam_pos[2] += p0z - p1z;
+      camera_set_ortho_size(cam, base_ortho / zoom_before);
+    }
   }
 
   char stdin_buf[1024];

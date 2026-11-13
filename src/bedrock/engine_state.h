@@ -25,6 +25,10 @@ typedef struct {
     // constants so tests can keep the wide range.
     float    zoom_min;
     float    zoom_max;
+    // Mouse-anchored zoom (RW CameraDriver.cs ZoomToMouse): when set and the
+    // zoom value actually changed this frame, cam_pos shifts so the world
+    // point under the cursor stays fixed. Default off.
+    int      zoom_to_cursor;
 } Game_State;
 
 typedef struct {

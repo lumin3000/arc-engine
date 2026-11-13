@@ -127,47 +127,14 @@ static JSValue js_coord_screen_to_world(JSContext *js_ctx,
     return ret;
   }
 
-  float ndc_x = ((float)screen_x / ((float)window_w * 0.5f)) - 1.0f;
-  float ndc_y = ((float)screen_y / ((float)window_h * 0.5f)) - 1.0f;
-  ndc_y *= -1.0f;
-
-  Camera *cam = camera_get_main();
-  const Matrix4 *vp = camera_get_vp_matrix(cam);
-  Matrix4 vp_inv;
-  matrix4_inverse(*vp, vp_inv);
-
-  float v_near[4] = {ndc_x, ndc_y, -1.0f, 1.0f};
-  float w_near[4];
-  matrix4_mul_vec4(vp_inv, v_near, w_near);
-  if (w_near[3] != 0.0f) {
-    w_near[0] /= w_near[3];
-    w_near[1] /= w_near[3];
-    w_near[2] /= w_near[3];
-  }
-
-  float v_far[4] = {ndc_x, ndc_y, 1.0f, 1.0f};
-  float w_far[4];
-  matrix4_mul_vec4(vp_inv, v_far, w_far);
-  if (w_far[3] != 0.0f) {
-    w_far[0] /= w_far[3];
-    w_far[1] /= w_far[3];
-    w_far[2] /= w_far[3];
-  }
-
-  Vec3 ro = {w_near[0], w_near[1], w_near[2]};
-  Vec3 rd = {w_far[0] - w_near[0], w_far[1] - w_near[1], w_far[2] - w_near[2]};
-
-  float t = 0.0f;
-  if (fabsf(rd[1]) > 1e-6f) {
-    t = -ro[1] / rd[1];
-  }
-
-  Vec3 world = {ro[0] + t * rd[0], 0.0f, ro[2] + t * rd[2]};
+  float wx = 0.0f, wz = 0.0f;
+  camera_screen_to_world_ground(camera_get_main(), (float)screen_x,
+                                (float)screen_y, (float)window_w,
+                                (float)window_h, &wx, &wz);
 
   JSValue ret = JS_NewObject(js_ctx);
-  JS_SetPropertyStr(js_ctx, ret, "x", JS_NewFloat64(js_ctx, world[0]));
-  JS_SetPropertyStr(js_ctx, ret, "y",
-                    JS_NewFloat64(js_ctx, world[2]));
+  JS_SetPropertyStr(js_ctx, ret, "x", JS_NewFloat64(js_ctx, wx));
+  JS_SetPropertyStr(js_ctx, ret, "y", JS_NewFloat64(js_ctx, wz));
   return ret;
 }
 
@@ -353,6 +320,18 @@ static JSValue js_coord_set_camera_zoom_range(JSContext *js_ctx,
   return JS_UNDEFINED;
 }
 
+static JSValue js_coord_set_zoom_to_cursor(JSContext *js_ctx,
+                                           JSValueConst this_val, int argc,
+                                           JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 1 || !JS_IsBool(argv[0]))
+    return JS_ThrowTypeError(js_ctx,
+                             "set_zoom_to_cursor requires bool");
+  if (ctx.gs)
+    ctx.gs->zoom_to_cursor = JS_ToBool(js_ctx, argv[0]) ? 1 : 0;
+  return JS_UNDEFINED;
+}
+
 static JSValue js_coord_get_camera_zoom_range(JSContext *js_ctx,
                                               JSValueConst this_val, int argc,
                                               JSValueConst *argv) {
@@ -507,6 +486,10 @@ int js_init_engine_module(JSContext *js_ctx) {
       js_ctx, coord_obj, "get_camera_zoom_range",
       JS_NewCFunction(js_ctx, js_coord_get_camera_zoom_range,
                       "get_camera_zoom_range", 0));
+  JS_SetPropertyStr(
+      js_ctx, coord_obj, "set_zoom_to_cursor",
+      JS_NewCFunction(js_ctx, js_coord_set_zoom_to_cursor,
+                      "set_zoom_to_cursor", 1));
 
   JS_SetPropertyStr(js_ctx, global, "coord", coord_obj);
 

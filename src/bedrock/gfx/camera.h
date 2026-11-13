@@ -54,6 +54,13 @@ void camera_world_to_screen(Camera *cam, const Vec3 world, Vec3 screen);
 
 void camera_screen_to_world(Camera *cam, const Vec3 screen, Vec3 world);
 
+// Screen-pixel → ground-plane (y=0) world point. Shared by the
+// coord.screen_to_world binding and the mouse-anchored zoom path so both
+// use identical unprojection math.
+void camera_screen_to_world_ground(Camera *cam, float sx, float sy,
+                                   float win_w, float win_h, float *out_x,
+                                   float *out_z);
+
 Camera *camera_get_main(void);
 
 void camera_main_init(void);
