@@ -47,11 +47,13 @@ typedef struct {
     // Pixel-style games leave at default.
     float camera_pan_speed;
 
-    // Frame-rate cap in fps, applied at frame end (sleep + short busy
-    // wait; skipped entirely when the frame already exceeded the target
-    // period). 0 = no cap, which is the default and preserves pre-change
-    // behaviour. The ARC_FRAME_CAP env var overrides this at startup
-    // (invalid values are fatal); see engine_main.c.
+    // Frame-rate cap in fps, enforced at the JS frame-issue gate:
+    // js_runtime_render issues a render-service "frame" request at most
+    // once per 1/cap seconds (engine_frame_rate_allow); engine frame
+    // callbacks themselves are never throttled. 0 = no cap, which is the
+    // default and preserves pre-change behaviour. The ARC_FRAME_CAP env
+    // var overrides this at startup (invalid values are fatal); see
+    // engine_main.c.
     int frame_cap_fps;
 
     // Optional: override paths for jtask bootstrap and the main JS entry.
@@ -149,7 +151,7 @@ void engine_set_camera_wheel_blocked(bool blocked);
 // Frame-rate cap: setting = Engine_Config.frame_cap_fps plus runtime
 // updates via engine_set_frame_cap_fps; env_override = ARC_FRAME_CAP value
 // (-1 when unset, which wins over setting when >= 0); effective is what the
-// frame pacer actually uses.
+// frame-issue gate (engine_frame_rate_allow) actually uses.
 void engine_set_frame_cap_fps(int fps);
 void engine_get_frame_cap(int *setting, int *effective, int *env_override);
 
