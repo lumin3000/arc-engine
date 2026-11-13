@@ -91,6 +91,8 @@ static double monotonic_seconds(void) {
 // 钉在 cap。引擎帧回调本身不降速 — 输入/相机/音频照常跑满, cap<=0 恒放行
 // (零开销零行为变化)。__EMSCRIPTEN__ 同样生效: rAF 只管唤醒, 签发仍受限。
 static double s_next_frame_issue = 0.0;
+static double s_frame_beat_time = 0.0;
+static double s_frame_beat_interval = 0.0;
 static int s_last_frame_cap = -1;
 
 bool engine_frame_rate_allow(void) {
@@ -100,11 +102,14 @@ bool engine_frame_rate_allow(void) {
     s_last_frame_cap = cap;
   }
   if (cap <= 0) return true;
-  double now = monotonic_seconds();
+  // Work performed by this beat must not move the pacing decision: varying
+  // render duration otherwise turns a 60Hz cap into skipped display beats.
+  double now = s_frame_beat_time;
   double interval = 1.0 / (double)cap;
-  // Keep phase across early/late display callbacks; never accumulate a burst
-  // after a stall. The allowance is bounded for caps above 100 Hz as well.
-  double tolerance = fmin(0.001, interval * 0.1);
+  // Release on the nearest display beat, rather than falling a whole beat
+  // behind when a callback arrives slightly early. Bound the allowance by
+  // half the cap interval as well; missed deadlines never accumulate a burst.
+  double tolerance = 0.5 * fmin(s_frame_beat_interval, interval);
   if (now + tolerance < s_next_frame_issue)
     return false;
   if (s_next_frame_issue == 0.0 || now - s_next_frame_issue > interval)
@@ -261,6 +266,9 @@ static void engine_host_event(const sapp_event *event) {
 }
 
 static void engine_on_frame(void) {
+  const double beat_time = monotonic_seconds();
+  s_frame_beat_interval = s_frame_beat_time > 0.0 ? beat_time - s_frame_beat_time : 0.0;
+  s_frame_beat_time = beat_time;
 #ifdef __EMSCRIPTEN__
   if (g_browser_quit_pending) {
     js_runtime_shutdown();
