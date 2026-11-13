@@ -52,11 +52,11 @@ static int g_render_ctx_modules_initialized = 0;
 
 /* Host owns the outbound queue. Worker result publication uses atomics. */
 static atomic_uint g_host_generation;
-static atomic_uint g_frame_pending;
+static atomic_uint g_frame_acked;
 static atomic_uint g_frame_beats;
 static atomic_int g_host_failed;
-static unsigned g_next_frame;
-static unsigned g_gpu_submissions;
+static atomic_uint g_next_frame;
+static atomic_uint g_gpu_submissions;
 static int g_stopping;
 static unsigned g_out_count;
 struct host_message { struct message *message; struct host_message *next; };
@@ -73,17 +73,21 @@ static int host_enqueue(struct message *message) {
   ++g_out_count;
   return 0;
 }
-static void host_flush(void) {
+// Returns 1 when the queue head stays queued on a busy result (caller
+// should stop this flush round); 0 when progress was made — a message
+// was sent, a failed one was dropped, or the queue is empty.
+static int host_flush(void) {
   /* One attempt per host turn; busy retains the entire message. */
-  if (!g_out_head) return;
+  if (!g_out_head) return 0;
   struct host_message *node = g_out_head;
   int result = jtask_send_message(node->message->to, node->message);
-  if (result == 1) return;
+  if (result == 1) return 1;
   if (result < 0) { message_delete(node->message); atomic_store(&g_host_failed, 1); }
   g_out_head = node->next;
   if (!g_out_head) g_out_tail = NULL;
   free(node);
   --g_out_count;
+  return 0;
 }
 
 static uint64_t g_js_frame_start_us = 0;
@@ -527,10 +531,15 @@ static JSValue js_message_frame_result(JSContext *ctx, JSValueConst self,
       JS_ToUint32(ctx, &frame, argv[1]) < 0)
     return JS_ThrowTypeError(ctx, "frame_result requires (generation, frame, success)");
   if (generation != atomic_load(&g_host_generation)) return JS_FALSE;
-  if (!frame || atomic_load(&g_frame_pending) != frame)
+  // One completed frame may await its receipt while its successor is queued.
+  // Reject duplicates, skipped receipts and frames that were never issued.
+  if (!frame || frame != atomic_load(&g_frame_acked) + 1 ||
+      frame > atomic_load(&g_next_frame)) {
+    atomic_store(&g_host_failed, 1);
     return JS_ThrowInternalError(ctx, "unexpected frame receipt");
+  }
   if (!JS_ToBool(ctx, argv[2])) atomic_store(&g_host_failed, 1);
-  atomic_store(&g_frame_pending, 0);
+  atomic_store(&g_frame_acked, frame);
   return JS_TRUE;
 }
 /* All GPU work, including after-frame resource release, closes in this call. */
@@ -683,7 +692,7 @@ int js_runtime_init(void) {
   g_render_thread = pthread_self();
 #endif
   if (atomic_fetch_add(&g_host_generation, 1) == UINT32_MAX) abort();
-  atomic_store(&g_frame_pending, 0);
+  atomic_store(&g_frame_acked, 0);
   atomic_store(&g_host_failed, 0);
   atomic_store(&g_render_service_ready, 0);
   g_next_frame = g_gpu_submissions = 0;
@@ -800,7 +809,7 @@ void js_runtime_shutdown(void) {
   }
   g_out_tail = NULL;
   g_out_count = 0;
-  atomic_store(&g_frame_pending, 0);
+  atomic_store(&g_frame_acked, 0);
   g_start_service_id.id = g_render_service_id.id = 0;
   g_loader_service_id.id = g_game_service_id.id = 0;
   g_render_ctx_modules_initialized = g_mod_scripts_loaded = 0;
@@ -884,8 +893,16 @@ bool js_runtime_render(void) {
     js_runtime_shutdown();
     return g_gpu_submissions != before;
   }
+  // At most two frames may be unacknowledged (one completed, one queued).
+  // Issue the next frame when the pipeline is idle
+  // (acked == issued) or when this beat's poll just executed the one
+  // outstanding frame (executed && acked + 1 == issued). If the worker
+  // never acknowledges, neither condition holds and issuance stalls.
+  const bool executed = g_gpu_submissions != before;
+  const unsigned acked = atomic_load(&g_frame_acked);
   if (atomic_load(&g_render_service_ready) && !atomic_load(&g_host_failed) &&
-      !atomic_load(&g_frame_pending) && !g_out_head &&
+      !g_out_head &&
+      (acked == g_next_frame || (executed && acked + 1 == g_next_frame)) &&
       engine_frame_rate_allow()) {
     if (++g_next_frame == 0) abort();
     JSValue args[3] = {JS_NewString(g_context, "frame"),
@@ -900,7 +917,12 @@ bool js_runtime_render(void) {
     struct message *msg = message_new(&m);
     if (!msg) free(data);
     if (host_enqueue(msg) < 0) atomic_store(&g_host_failed, 1);
-    else atomic_store(&g_frame_pending, g_next_frame);
+    else {
+      // Send in the same beat: the queue head may be an earlier stdin
+      // message, so keep flushing until the frame request goes out or a
+      // busy result retains it.
+      while (g_out_head && host_flush() == 0) {}
+    }
   }
   return g_gpu_submissions != before;
 }
