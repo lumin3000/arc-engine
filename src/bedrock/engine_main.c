@@ -235,6 +235,7 @@ static void engine_on_init(void) {
   LOG_INFO("[engine] init done\n");
 }
 
+static int g_exit_code;
 #ifdef __EMSCRIPTEN__
 static bool g_browser_quit_pending;
 static void browser_finish_shutdown(void *unused) {
@@ -243,7 +244,7 @@ static void browser_finish_shutdown(void *unused) {
   EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl = emscripten_webgl_get_current_context();
   if (gl) emscripten_webgl_destroy_context(gl);
   LOG_INFO("[Lifecycle] host cleanup complete; exiting browser runtime\n");
-  emscripten_force_exit(0);
+  emscripten_force_exit(g_exit_code);
 }
 #endif
 static void engine_host_event(const sapp_event *event) {
@@ -397,6 +398,10 @@ static void engine_on_frame(void) {
   if (g_cfg.on_frame) g_cfg.on_frame(ctx.delta_t);
 
   if (js_runtime_render()) reset_input_state(input_state);
+  if (js_runtime_has_failed()) {
+    g_exit_code = 1;
+    sapp_request_quit();
+  }
 }
 
 static void engine_on_cleanup(void) {
@@ -572,6 +577,7 @@ Arc_Engine *arc_engine_create(const Engine_Config *cfg, int argc, char **argv) {
 }
 
 int arc_engine_run(Arc_Engine *eng) {
+  g_exit_code = 0;
   if (!eng || !eng->initialized) {
     fprintf(stderr, "[arc_engine_run] engine not created\n");
     return 1;
@@ -621,7 +627,7 @@ int arc_engine_run(Arc_Engine *eng) {
 #ifdef __EMSCRIPTEN__
   emscripten_exit_with_live_runtime();
 #endif
-  return 0;
+  return g_exit_code;
 }
 
 JSContext *arc_engine_js_context(Arc_Engine *eng) {

@@ -80,7 +80,7 @@ static int host_flush(void) {
   /* One attempt per host turn; busy retains the entire message. */
   if (!g_out_head) return 0;
   struct host_message *node = g_out_head;
-  int result = jtask_send_message(node->message->to, node->message);
+  int result = jtask_post_message(node->message->to, node->message);
   if (result == 1) return 1;
   if (result < 0) { message_delete(node->message); atomic_store(&g_host_failed, 1); }
   g_out_head = node->next;
@@ -930,4 +930,8 @@ bool js_runtime_render(void) {
 bool js_runtime_is_ready(void) {
   return g_initialized && atomic_load(&g_render_service_ready) &&
     !atomic_load(&g_host_failed) && !g_stopping;
+}
+
+bool js_runtime_has_failed(void) {
+  return atomic_load(&g_host_failed) != 0;
 }

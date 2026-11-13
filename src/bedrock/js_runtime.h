@@ -18,6 +18,7 @@ void js_runtime_assert_render_thread(void);
 void js_runtime_handle_external_command(const char *cmd);
 
 bool js_runtime_is_ready(void);
+bool js_runtime_has_failed(void);
 
 extern const char *g_run_mode;
 
