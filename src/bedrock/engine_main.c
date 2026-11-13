@@ -408,6 +408,7 @@ static void engine_on_frame(void) {
   if (js_runtime_render()) reset_input_state(input_state);
   if (js_runtime_has_failed()) {
     g_exit_code = 1;
+    sapp_set_exit_code(g_exit_code);
     sapp_request_quit();
   }
 }

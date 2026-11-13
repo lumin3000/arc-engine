@@ -2,6 +2,22 @@
 
 本文记录当前新增的渲染接口，不是所有绑定的完整清单。
 
+## Host protocol failure exit
+
+Protocol failure requests normal host shutdown after setting a nonzero exit code.
+The compiled vendored `external/sokol/c/sokol_app.h` contains a local
+`sapp_set_exit_code(int)` extension for macOS: Cocoa never returns from
+`sapp_run`, so its termination callback preserves the status before discarding
+Sokol state and exits nonzero **after** application and host cleanup. Normal
+Cocoa exit remains unchanged. Returning hosts use `arc_engine_run`'s return
+value; the browser uses its existing deferred shutdown callback.
+
+2026-11-13 native validation: malformed frame receipt exited 1, normal host
+quit exited 0; both joined workers and released runtime/audio resources.
+Native consumer builds and the browser build passed; Windows execution was
+not available. The separate upstream root `external/sokol/sokol_app.h` is not
+the header used by these builds and has not received this local extension.
+
 ## 帧末资源提交
 
 `RenderFrameCallbacks.registerAfter(callback, name)` 注册物理绘制帧的收尾函数。`render_frame` 在常规绘制回调、分阶段回调之后，且提交到 C 绘制端之前调用；分阶段因阻塞提前结束时也调用。参数为当前帧的 `dt`。

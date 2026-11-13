@@ -2160,6 +2160,9 @@ SOKOL_APP_API_DECL void* sapp_userdata(void);
 SOKOL_APP_API_DECL sapp_desc sapp_query_desc(void);
 /* initiate a "soft quit" (sends SAPP_EVENTTYPE_QUIT_REQUESTED) */
 SOKOL_APP_API_DECL void sapp_request_quit(void);
+/* Local extension: preserve failure status on macOS, where sapp_run never
+   returns. Returning hosts must still return their application exit code. */
+SOKOL_APP_API_DECL void sapp_set_exit_code(int code);
 /* cancel a pending quit (when SAPP_EVENTTYPE_QUIT_REQUESTED has been received) */
 SOKOL_APP_API_DECL void sapp_cancel_quit(void);
 /* initiate a "hard quit" (quit application without sending SAPP_EVENTTYPE_QUIT_REQUESTED) */
@@ -3262,6 +3265,7 @@ typedef struct {
     bool cleanup_called;
     bool quit_requested;
     bool quit_ordered;
+    int exit_code;
     bool event_consumed;
     bool html5_ask_leave_site;
     bool onscreen_keyboard_shown;
@@ -5664,8 +5668,14 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
 - (void)applicationWillTerminate:(NSNotification*)notification {
     _SOKOL_UNUSED(notification);
     _sapp_call_cleanup();
+    const int exit_code = _sapp.exit_code;
     _sapp_macos_discard_state();
     _sapp_discard_state();
+    /* Cocoa otherwise terminates with 0 and never returns to sapp_run's caller.
+       Preserve the normal Cocoa exit; failures exit after host cleanup. */
+    if (exit_code != 0) {
+        exit(exit_code);
+    }
 }
 @end
 
@@ -13669,6 +13679,10 @@ SOKOL_APP_API_DECL void sapp_unbind_mouse_cursor_image(sapp_mouse_cursor cursor)
 
 SOKOL_API_IMPL void sapp_request_quit(void) {
     _sapp.quit_requested = true;
+}
+
+SOKOL_API_IMPL void sapp_set_exit_code(int code) {
+    _sapp.exit_code = code;
 }
 
 SOKOL_API_IMPL void sapp_cancel_quit(void) {
