@@ -35,7 +35,7 @@
 
 ## 帧率上限（2026-11-12，frame_cap_camera_zoom 役5）
 
-- `Engine_Config.frame_cap_fps`（int，默认 0=不限）：帧末限帧——已超目标周期（`1/cap`）则不等；否则先 `nanosleep`/`Sleep` 到目标前 ~1ms，尾段忙等对齐 `frame_start + 1/cap`（`monotonic_seconds` = `clock_gettime(CLOCK_MONOTONIC)`）。0 保持改动前行为；`__EMSCRIPTEN__` 下 pacing 整体跳过（rAF 已限速）。帧率低于 cap 时帧工作超时即不等，不追帧。
+- `Engine_Config.frame_cap_fps`（int，默认 0=不限）：JS 渲染帧签发限速——`js_runtime_render` 每引擎帧至多向 render service 签发一个 `frame` 请求，签发间隔不少于 `1/cap`（`engine_frame_rate_allow`，时基 `clock_gettime(CLOCK_MONOTONIC)`）。引擎帧回调本身不降速：输入/相机/音频照常跑满，cap 只压呈现帧率；签发被跳过的引擎帧下一帧重试，自然量化到引擎帧周期。0 保持改动前行为；`__EMSCRIPTEN__` 同样生效（rAF 只管唤醒）。实测语义：帧工作已超 `1/cap` 时不追帧，实际帧率=工作帧率；帧工作低于 cap 时呈现帧率被钉在 cap。
 - 环境变量 `ARC_FRAME_CAP=N`：启动时解析，存在即覆盖 config；须为非负整数（`strtol` 全串校验，0=不限），非法值 `fprintf(stderr)+exit(1)` fatal。cap 低于 sim 所需帧率时 tick 照常按真实 dt 跑（`MIN_FRAME_TIME` 封顶），只是帧率被压低。
 - `game.set_frame_cap(fps)`：整数 ≥0（`isfinite && v==floor(v) && 0<=v<=1000000`），否则 `JS_ThrowRangeError`；`argc<1` TypeError。只改 setting。
 - `game.get_frame_cap()` → `{setting, effective, env_override}`：setting=配置+运行时值；env_override=ARC_FRAME_CAP 值，未设置为 `null`；effective=env 在场时跟随 env 否则 setting。

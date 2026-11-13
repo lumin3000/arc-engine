@@ -153,6 +153,12 @@ void engine_set_camera_wheel_blocked(bool blocked);
 void engine_set_frame_cap_fps(int fps);
 void engine_get_frame_cap(int *setting, int *effective, int *env_override);
 
+// Frame-issue gate used by js_runtime_render: returns true (and stamps the
+// issue time) when the effective cap allows another JS render frame. cap<=0
+// always returns true. This is where the cap actually bites — the engine frame
+// callback itself is never throttled.
+bool engine_frame_rate_allow(void);
+
 // Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
 // lives in engine_state.h. Not intended as game-facing API.
 

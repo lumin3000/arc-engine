@@ -86,34 +86,21 @@ static double monotonic_seconds(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-// 帧末限帧 (RW 风格): 帧工作已超目标周期则不等 (避免与高刷屏拍频干涉);
-// 否则先睡到目标前 ~1ms, 尾段忙等对齐到 frame_start + 1/cap。
-// __EMSCRIPTEN__ 无真实 sleep/rAF 已限速, 直接跳过。
-static void engine_pace_frame(double frame_start) {
-#ifdef __EMSCRIPTEN__
-  (void)frame_start;
-  return;
-#else
+// JS 帧签发限速 (帧率上限真正作用点): js_runtime_render 每个引擎帧至多向
+// render service 签发一个 "frame" 请求; 在此按 1/cap 间隔放行, 把 JS 渲染帧率
+// 钉在 cap。引擎帧回调本身不降速 — 输入/相机/音频照常跑满, cap<=0 恒放行
+// (零开销零行为变化)。__EMSCRIPTEN__ 同样生效: rAF 只管唤醒, 签发仍受限。
+static double s_last_frame_issue = 0.0;
+
+bool engine_frame_rate_allow(void) {
   int cap = frame_cap_effective();
-  if (cap <= 0) return;
-  const double target = 1.0 / (double)cap;
-  double remaining = target - (monotonic_seconds() - frame_start);
-  if (remaining <= 0.0) return;
-  const double SLEEP_MARGIN = 0.001;
-  double sleep_for = remaining - SLEEP_MARGIN;
-  if (sleep_for > 0.0) {
-#if defined(_WIN32)
-    Sleep((DWORD)(sleep_for * 1000.0));
-#else
-    struct timespec ts;
-    ts.tv_sec = (time_t)sleep_for;
-    ts.tv_nsec = (long)((sleep_for - (double)ts.tv_sec) * 1e9);
-    nanosleep(&ts, NULL);
-#endif
-  }
-  const double deadline = frame_start + target;
-  while (monotonic_seconds() < deadline) { /* spin */ }
-#endif
+  if (cap <= 0) return true;
+  double now = monotonic_seconds();
+  double interval = 1.0 / (double)cap;
+  if (s_last_frame_issue > 0.0 && now - s_last_frame_issue < interval)
+    return false;
+  s_last_frame_issue = now;
+  return true;
 }
 
 int window_w = DEFAULT_WINDOW_WIDTH;
@@ -262,7 +249,6 @@ static void engine_host_event(const sapp_event *event) {
 }
 
 static void engine_on_frame(void) {
-  const double frame_t0 = monotonic_seconds();   // 帧率上限 pacing 基准
 #ifdef __EMSCRIPTEN__
   if (g_browser_quit_pending) {
     js_runtime_shutdown();
@@ -398,8 +384,6 @@ static void engine_on_frame(void) {
   if (g_cfg.on_frame) g_cfg.on_frame(ctx.delta_t);
 
   if (js_runtime_render()) reset_input_state(input_state);
-
-  engine_pace_frame(frame_t0);   // 帧末限帧 (cap<=0 直接返回)
 }
 
 static void engine_on_cleanup(void) {

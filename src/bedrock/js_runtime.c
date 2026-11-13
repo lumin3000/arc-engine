@@ -1,6 +1,7 @@
 
 #include "js_runtime.h"
 #include "js_runtime_internal.h"
+#include "engine_main.h"
 #include "engine_state.h"
 #include "../log.h"
 #include "jtask.h"
@@ -876,7 +877,8 @@ bool js_runtime_render(void) {
     return g_gpu_submissions != before;
   }
   if (atomic_load(&g_render_service_ready) && !atomic_load(&g_host_failed) &&
-      !atomic_load(&g_frame_pending) && !g_out_head) {
+      !atomic_load(&g_frame_pending) && !g_out_head &&
+      engine_frame_rate_allow()) {
     if (++g_next_frame == 0) abort();
     JSValue args[3] = {JS_NewString(g_context, "frame"),
       JS_NewUint32(g_context, atomic_load(&g_host_generation)),
