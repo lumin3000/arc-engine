@@ -309,12 +309,14 @@ static JSValue js_coord_set_camera_zoom(JSContext *js_ctx,
   if (JS_ToFloat64(js_ctx, &z, argv[0]) < 0)
     return JS_EXCEPTION;
   if (ctx.gs) {
-    if (!isfinite(z) || z < (double)ctx.gs->zoom_min ||
-        z > (double)ctx.gs->zoom_max)
+    // float 边界比较: zoom_min 存 float, 直接拿 double z 比会把边界值(如 0.2)
+    // 误判为越界 (0.2f->double = 0.20000000298)。
+    float zf = (float)z;
+    if (!isfinite(z) || zf < ctx.gs->zoom_min || zf > ctx.gs->zoom_max)
       return JS_ThrowRangeError(js_ctx,
                                 "set_camera_zoom value outside current zoom range");
-    ctx.gs->zoom_level = (float)z;
-    ctx.gs->desired_zoom_level = (float)z;
+    ctx.gs->zoom_level = zf;
+    ctx.gs->desired_zoom_level = zf;
   }
   return JS_UNDEFINED;
 }
@@ -335,16 +337,18 @@ static JSValue js_coord_set_camera_zoom_range(JSContext *js_ctx,
     return JS_ThrowRangeError(js_ctx,
                               "set_camera_zoom_range requires finite 0 < min <= max");
   if (ctx.gs) {
-    ctx.gs->zoom_min = (float)lo;
-    ctx.gs->zoom_max = (float)hi;
-    if (ctx.gs->zoom_level < lo)
-      ctx.gs->zoom_level = (float)lo;
-    else if (ctx.gs->zoom_level > hi)
-      ctx.gs->zoom_level = (float)hi;
-    if (ctx.gs->desired_zoom_level < lo)
-      ctx.gs->desired_zoom_level = (float)lo;
-    else if (ctx.gs->desired_zoom_level > hi)
-      ctx.gs->desired_zoom_level = (float)hi;
+    // float 边界比较, 与 set_camera_zoom 一致, 避免 double/float 精度差。
+    float flo = (float)lo, fhi = (float)hi;
+    ctx.gs->zoom_min = flo;
+    ctx.gs->zoom_max = fhi;
+    if (ctx.gs->zoom_level < flo)
+      ctx.gs->zoom_level = flo;
+    else if (ctx.gs->zoom_level > fhi)
+      ctx.gs->zoom_level = fhi;
+    if (ctx.gs->desired_zoom_level < flo)
+      ctx.gs->desired_zoom_level = flo;
+    else if (ctx.gs->desired_zoom_level > fhi)
+      ctx.gs->desired_zoom_level = fhi;
   }
   return JS_UNDEFINED;
 }
