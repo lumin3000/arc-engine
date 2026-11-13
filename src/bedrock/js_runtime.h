@@ -3,6 +3,7 @@
 
 #include "quickjs.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 int js_runtime_init(void);
 
@@ -22,6 +23,10 @@ extern const char *g_run_mode;
 
 int  js_runtime_get_error_count(void);
 void js_runtime_reset_error_count(void);
+
+// Frame-pipeline counters since js_runtime_init: beats = js_runtime_render
+// calls (one per engine frame), frames = completed render_frame submissions.
+void js_runtime_frame_counters(uint64_t *beats, uint64_t *frames);
 
 // Accessor for the primary JSContext. Returns NULL before js_runtime_init()
 // completes.

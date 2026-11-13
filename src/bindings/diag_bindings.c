@@ -15,6 +15,7 @@
 #include "../bedrock/gfx/render_diagnostics.h"
 #include "../bedrock/gfx/render.h"
 #include "../bedrock/gfx/material.h"
+#include "../bedrock/js_runtime.h"
 #include "../../external/sokol/c/sokol_gfx.h"
 #include <stdio.h>
 
@@ -121,6 +122,24 @@ static JSValue js_diag_num_draw(JSContext *ctx, JSValueConst this_val,
   (void)argv;
   sg_stats stats = sg_query_stats();
   return JS_NewInt32(ctx, (int32_t)stats.prev_frame.num_draw);
+}
+
+// diag.frameStats() -> { beats, frames }: beats = js_runtime_render 调用次数
+// (每引擎帧一拍), frames = 已完成的 render_frame 提交数; frames/beats 即帧
+// 握手占用率, 供判卷与探针读出。
+static JSValue js_diag_frame_stats(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv) {
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  uint64_t beats = 0, frames = 0;
+  js_runtime_frame_counters(&beats, &frames);
+  JSValue obj = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, obj, "beats",
+                    JS_NewFloat64(ctx, (double)beats));
+  JS_SetPropertyStr(ctx, obj, "frames",
+                    JS_NewFloat64(ctx, (double)frames));
+  return obj;
 }
 
 // diag.getStats() -> {entryCount, isEnabled}
@@ -255,6 +274,8 @@ int js_init_diag_module(JSContext *ctx) {
                     JS_NewCFunction(ctx, js_diag_clear_filters, "clearFilters", 0));
   JS_SetPropertyStr(ctx, obj, "getStats",
                     JS_NewCFunction(ctx, js_diag_get_stats, "getStats", 0));
+  JS_SetPropertyStr(ctx, obj, "frameStats",
+                    JS_NewCFunction(ctx, js_diag_frame_stats, "frameStats", 0));
   JS_SetPropertyStr(ctx, obj, "numDraw",
                     JS_NewCFunction(ctx, js_diag_num_draw, "numDraw", 0));
   JS_SetPropertyStr(ctx, obj, "dcBreakdown",

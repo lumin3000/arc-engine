@@ -53,6 +53,7 @@ static int g_render_ctx_modules_initialized = 0;
 /* Host owns the outbound queue. Worker result publication uses atomics. */
 static atomic_uint g_host_generation;
 static atomic_uint g_frame_pending;
+static atomic_uint g_frame_beats;
 static atomic_int g_host_failed;
 static unsigned g_next_frame;
 static unsigned g_gpu_submissions;
@@ -140,6 +141,11 @@ static void arc_js_error_handler(const char *msg, const char *stack) {
 
 int js_runtime_get_error_count(void) {
   return g_js_error_count;
+}
+
+void js_runtime_frame_counters(uint64_t *beats, uint64_t *frames) {
+  if (beats) *beats = atomic_load(&g_frame_beats);
+  if (frames) *frames = g_gpu_submissions;
 }
 
 void js_runtime_reset_error_count(void) {
@@ -681,6 +687,7 @@ int js_runtime_init(void) {
   atomic_store(&g_host_failed, 0);
   atomic_store(&g_render_service_ready, 0);
   g_next_frame = g_gpu_submissions = 0;
+  atomic_store(&g_frame_beats, 0);
   g_stopping = 0;
   atomic_store(&g_js_error_count, 0);
   g_runtime = JS_NewRuntime();
@@ -859,6 +866,7 @@ void js_runtime_handle_external_command(const char *cmd) {
 bool js_runtime_render(void) {
   js_runtime_assert_render_thread();
   if (!g_initialized || !g_context) return false;
+  atomic_fetch_add(&g_frame_beats, 1);
   if (g_stopping) { js_runtime_shutdown(); return false; }
   if (atomic_load(&g_host_failed)) {
     LOG_ERROR("[JSRuntime] host protocol failed; stopping session\n");
