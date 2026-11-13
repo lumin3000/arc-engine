@@ -13,6 +13,7 @@
 #include "js_runtime_internal.h"
 #include "sound/sound.h"
 #include "stdin_reader.h"
+#include "platform.h"
 #include "utils/utils.h"
 #include "../config.h"
 #include "../types.h"
@@ -55,6 +56,64 @@ void engine_set_camera_controls_blocked(bool blocked) {
 
 void engine_set_camera_wheel_blocked(bool blocked) {
   atomic_store(&camera_wheel_blocked, blocked);
+}
+
+// ---------------------------------------------------------------------------
+// Frame-rate cap (RW-style pacing). setting = Engine_Config.frame_cap_fps +
+// runtime engine_set_frame_cap_fps; env = ARC_FRAME_CAP (-1 unset, wins over
+// setting when >= 0); effective is what the frame pacer uses. 0 = uncapped.
+
+static int s_frame_cap_setting = 0;
+static int s_frame_cap_env = -1;
+
+static int frame_cap_effective(void) {
+  return s_frame_cap_env >= 0 ? s_frame_cap_env : s_frame_cap_setting;
+}
+
+void engine_set_frame_cap_fps(int fps) {
+  s_frame_cap_setting = fps;
+}
+
+void engine_get_frame_cap(int *setting, int *effective, int *env_override) {
+  if (setting) *setting = s_frame_cap_setting;
+  if (effective) *effective = frame_cap_effective();
+  if (env_override) *env_override = s_frame_cap_env;
+}
+
+static double monotonic_seconds(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+// 帧末限帧 (RW 风格): 帧工作已超目标周期则不等 (避免与高刷屏拍频干涉);
+// 否则先睡到目标前 ~1ms, 尾段忙等对齐到 frame_start + 1/cap。
+// __EMSCRIPTEN__ 无真实 sleep/rAF 已限速, 直接跳过。
+static void engine_pace_frame(double frame_start) {
+#ifdef __EMSCRIPTEN__
+  (void)frame_start;
+  return;
+#else
+  int cap = frame_cap_effective();
+  if (cap <= 0) return;
+  const double target = 1.0 / (double)cap;
+  double remaining = target - (monotonic_seconds() - frame_start);
+  if (remaining <= 0.0) return;
+  const double SLEEP_MARGIN = 0.001;
+  double sleep_for = remaining - SLEEP_MARGIN;
+  if (sleep_for > 0.0) {
+#if defined(_WIN32)
+    Sleep((DWORD)(sleep_for * 1000.0));
+#else
+    struct timespec ts;
+    ts.tv_sec = (time_t)sleep_for;
+    ts.tv_nsec = (long)((sleep_for - (double)ts.tv_sec) * 1e9);
+    nanosleep(&ts, NULL);
+#endif
+  }
+  const double deadline = frame_start + target;
+  while (monotonic_seconds() < deadline) { /* spin */ }
+#endif
 }
 
 int window_w = DEFAULT_WINDOW_WIDTH;
@@ -102,6 +161,30 @@ static void engine_on_init(void) {
   _game_state.zoom_min = MIN_ZOOM_LEVEL;
   _game_state.zoom_max = MAX_ZOOM_LEVEL;
   _game_state.zoom_to_cursor = 0;
+
+  // 帧率上限: Engine_Config.frame_cap_fps 为配置值; ARC_FRAME_CAP 环境变量
+  // 存在即覆盖 (非负整数, 非法值 fatal — 配置错误不容忍); 0=不限。
+  s_frame_cap_setting = g_cfg.frame_cap_fps > 0 ? g_cfg.frame_cap_fps : 0;
+  s_frame_cap_env = -1;
+  const char *fc_env = getenv("ARC_FRAME_CAP");
+  if (fc_env != NULL) {
+    char *end = NULL;
+    long v = strtol(fc_env, &end, 10);
+    if (end == fc_env || *end != '\0' || v < 0 || v > 1000000) {
+      fprintf(stderr,
+              "[engine] FATAL: ARC_FRAME_CAP must be a nonnegative integer "
+              "(got '%s')\n",
+              fc_env);
+      exit(1);
+    }
+    s_frame_cap_env = (int)v;
+  }
+  {
+    int eff = frame_cap_effective();
+    LOG_INFO("[engine] frame_cap: effective=%d source=%s\n", eff,
+             s_frame_cap_env >= 0 ? "env ARC_FRAME_CAP"
+                 : s_frame_cap_setting > 0 ? "config" : "none");
+  }
 
   _game_state.cam_pos[0] = g_cfg.camera_initial_pos[0];
   _game_state.cam_pos[1] = g_cfg.camera_initial_pos[1];
@@ -179,6 +262,7 @@ static void engine_host_event(const sapp_event *event) {
 }
 
 static void engine_on_frame(void) {
+  const double frame_t0 = monotonic_seconds();   // 帧率上限 pacing 基准
 #ifdef __EMSCRIPTEN__
   if (g_browser_quit_pending) {
     js_runtime_shutdown();
@@ -314,6 +398,8 @@ static void engine_on_frame(void) {
   if (g_cfg.on_frame) g_cfg.on_frame(ctx.delta_t);
 
   if (js_runtime_render()) reset_input_state(input_state);
+
+  engine_pace_frame(frame_t0);   // 帧末限帧 (cap<=0 直接返回)
 }
 
 static void engine_on_cleanup(void) {

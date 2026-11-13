@@ -439,6 +439,46 @@ static JSValue js_game_get_volume(JSContext *ctx, JSValueConst this_val,
   return JS_NewFloat64(ctx, (double)g_master_volume);
 }
 
+// game.set_frame_cap(fps) — 帧率上限, 整数 >=0 (0=不限), 否则 RangeError。
+// 只改 setting; ARC_FRAME_CAP env 在场时 effective 仍跟随 env (见
+// engine_get_frame_cap)。
+static JSValue js_game_set_frame_cap(JSContext *js_ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  (void)this_val;
+  if (argc < 1)
+    return JS_ThrowTypeError(js_ctx, "set_frame_cap requires 1 argument (fps)");
+  double v;
+  if (JS_ToFloat64(js_ctx, &v, argv[0]) < 0)
+    return JS_EXCEPTION;
+  if (!isfinite(v) || v < 0.0 || v != floor(v) || v > 1000000.0)
+    return JS_ThrowRangeError(
+        js_ctx, "set_frame_cap requires an integer fps >= 0 (0 = uncapped)");
+  engine_set_frame_cap_fps((int)v);
+  return JS_UNDEFINED;
+}
+
+// game.get_frame_cap() -> {setting, effective, env_override}
+// env_override 为 null 表示 ARC_FRAME_CAP 未设置。
+static JSValue js_game_get_frame_cap(JSContext *js_ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  int setting = 0, effective = 0, env_override = -1;
+  engine_get_frame_cap(&setting, &effective, &env_override);
+  JSValue ret = JS_NewObject(js_ctx);
+  JS_SetPropertyStr(js_ctx, ret, "setting",
+                    JS_NewInt32(js_ctx, setting));
+  JS_SetPropertyStr(js_ctx, ret, "effective",
+                    JS_NewInt32(js_ctx, effective));
+  if (env_override >= 0)
+    JS_SetPropertyStr(js_ctx, ret, "env_override",
+                      JS_NewInt32(js_ctx, env_override));
+  else
+    JS_SetPropertyStr(js_ctx, ret, "env_override", JS_NULL);
+  return ret;
+}
+
 int js_init_engine_module(JSContext *js_ctx) {
   JSValue global = JS_GetGlobalObject(js_ctx);
 
@@ -517,6 +557,10 @@ int js_init_engine_module(JSContext *js_ctx) {
                     JS_NewCFunction(js_ctx, js_game_set_volume, "set_volume", 1));
   JS_SetPropertyStr(js_ctx, game_obj, "get_volume",
                     JS_NewCFunction(js_ctx, js_game_get_volume, "get_volume", 0));
+  JS_SetPropertyStr(js_ctx, game_obj, "set_frame_cap",
+                    JS_NewCFunction(js_ctx, js_game_set_frame_cap, "set_frame_cap", 1));
+  JS_SetPropertyStr(js_ctx, game_obj, "get_frame_cap",
+                    JS_NewCFunction(js_ctx, js_game_get_frame_cap, "get_frame_cap", 0));
 
   JS_FreeValue(js_ctx, global);
 

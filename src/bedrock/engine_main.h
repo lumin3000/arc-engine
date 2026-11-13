@@ -47,6 +47,13 @@ typedef struct {
     // Pixel-style games leave at default.
     float camera_pan_speed;
 
+    // Frame-rate cap in fps, applied at frame end (sleep + short busy
+    // wait; skipped entirely when the frame already exceeded the target
+    // period). 0 = no cap, which is the default and preserves pre-change
+    // behaviour. The ARC_FRAME_CAP env var overrides this at startup
+    // (invalid values are fatal); see engine_main.c.
+    int frame_cap_fps;
+
     // Optional: override paths for jtask bootstrap and the main JS entry.
     // Useful for consumers that bundle arc-engine as a submodule, where
     // the default "external/jtask/..." is not where jtask actually lives.
@@ -138,6 +145,13 @@ void engine_set_camera_controls_blocked(bool blocked);
 // Block only the built-in scroll-wheel zoom (keyboard pan/zoom untouched) —
 // for pointer-over-UI regions with their own wheel handling (scroll lists).
 void engine_set_camera_wheel_blocked(bool blocked);
+
+// Frame-rate cap: setting = Engine_Config.frame_cap_fps plus runtime
+// updates via engine_set_frame_cap_fps; env_override = ARC_FRAME_CAP value
+// (-1 when unset, which wins over setting when >= 0); effective is what the
+// frame pacer actually uses.
+void engine_set_frame_cap_fps(int fps);
+void engine_get_frame_cap(int *setting, int *effective, int *env_override);
 
 // Internal engine state (window_w / window_h / ctx / argv / g_master_volume)
 // lives in engine_state.h. Not intended as game-facing API.
