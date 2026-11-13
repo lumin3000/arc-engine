@@ -64,6 +64,7 @@ void add_input(Input* dest, const Input* src) {
     dest->mouse_y = src->mouse_y;
     dest->scroll_x += src->scroll_x;
     dest->scroll_y += src->scroll_y;
+    dest->camera_scroll_y += src->camera_scroll_y;
 
     for (int i = 0; i < MAX_KEYCODES; i++) {
         dest->keys[i] |= src->keys[i];
@@ -126,6 +127,7 @@ void input_queue_scroll(float dx, float dy) {
 void input_apply_queued_scroll(Input* input) {
     input->scroll_x += _queued_scroll_x;
     input->scroll_y += _queued_scroll_y;
+    input->camera_scroll_y += _queued_scroll_y;
     _queued_scroll_x = 0.0f;
     _queued_scroll_y = 0.0f;
 }
@@ -170,8 +172,9 @@ void event_callback(const sapp_event* event) {
             break;
 
         case SAPP_EVENTTYPE_MOUSE_SCROLL:
-            input->scroll_x = event->scroll_x;
-            input->scroll_y = event->scroll_y;
+            input->scroll_x += event->scroll_x;
+            input->scroll_y += event->scroll_y;
+            input->camera_scroll_y += event->scroll_y;
             break;
 
         case SAPP_EVENTTYPE_MOUSE_MOVE:

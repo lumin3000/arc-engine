@@ -147,6 +147,8 @@ typedef struct {
     uint8_t keys[MAX_KEYCODES];
     float mouse_x, mouse_y;
     float scroll_x, scroll_y;
+    /* Camera consumes once per host beat; UI retains scroll until a JS frame. */
+    float camera_scroll_y;
 
     char text_input[TEXT_INPUT_BUFFER_SIZE];
     int text_input_len;

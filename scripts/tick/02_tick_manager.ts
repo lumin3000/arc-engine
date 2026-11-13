@@ -1,4 +1,5 @@
-
+// Timing deviation from RW 1.7 Verse/TickManager.cs:322-359: accumulate actual
+// elapsed time even near a tick interval; retain its per-frame work limits.
 // 消费者可在全局挂 tick 后置钩子数组（引擎只读），参数为本 tick 的模拟刻
 declare global {
     var __engine_pre_session_post_tick_hooks__: ((ticksSimulation: number) => void)[] | undefined;
@@ -9,12 +10,14 @@ type EngineTickable = Parameters<TickBucket["register"]>[0];
 type EngineTickMap = NonNullable<EngineTickable["map"]>;
 
 class TickScheduler {
+    declare _discardedTimeSeconds: number;
     declare _ticksSimInt: number; declare _realTimeToTickThrough: number; declare _curSimSpeed: number; declare prePauseSimSpeed: number; declare _tickBucketEvery: TickBucket; declare _tickBucketSparse: TickBucket; declare _tickBucketSlow: TickBucket; declare _ticksThisFrame: number; declare _lastTickTimeMs: number; declare _maps: EngineTickMap[]; declare _normalSpeedHoldUntil: number;
     constructor() {
 
         this._ticksSimInt = 0;
 
         this._realTimeToTickThrough = 0;
+        this._discardedTimeSeconds = 0;
 
         this._curSimSpeed = SimSpeed.Normal;
 
@@ -177,11 +180,7 @@ class TickScheduler {
 
         const curTimePerTick = this._curTimePerTick;
 
-        if (Math.abs(deltaTimeSeconds - curTimePerTick) < curTimePerTick * 0.1) {
-            this._realTimeToTickThrough += curTimePerTick;
-        } else {
-            this._realTimeToTickThrough += deltaTimeSeconds;
-        }
+        this._realTimeToTickThrough += deltaTimeSeconds;
 
         const tickSpeedFactor = this.tickSpeedFactor;
 
@@ -209,7 +208,7 @@ class TickScheduler {
         }
 
         if (this._realTimeToTickThrough > 0) {
-
+            this._discardedTimeSeconds += this._realTimeToTickThrough;
             this._realTimeToTickThrough = 0;
         }
 

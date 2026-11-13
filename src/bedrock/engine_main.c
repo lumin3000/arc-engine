@@ -90,16 +90,27 @@ static double monotonic_seconds(void) {
 // render service 签发一个 "frame" 请求; 在此按 1/cap 间隔放行, 把 JS 渲染帧率
 // 钉在 cap。引擎帧回调本身不降速 — 输入/相机/音频照常跑满, cap<=0 恒放行
 // (零开销零行为变化)。__EMSCRIPTEN__ 同样生效: rAF 只管唤醒, 签发仍受限。
-static double s_last_frame_issue = 0.0;
+static double s_next_frame_issue = 0.0;
+static int s_last_frame_cap = -1;
 
 bool engine_frame_rate_allow(void) {
   int cap = frame_cap_effective();
+  if (cap != s_last_frame_cap) {
+    s_next_frame_issue = 0.0;
+    s_last_frame_cap = cap;
+  }
   if (cap <= 0) return true;
   double now = monotonic_seconds();
   double interval = 1.0 / (double)cap;
-  if (s_last_frame_issue > 0.0 && now - s_last_frame_issue < interval)
+  // Keep phase across early/late display callbacks; never accumulate a burst
+  // after a stall. The allowance is bounded for caps above 100 Hz as well.
+  double tolerance = fmin(0.001, interval * 0.1);
+  if (now + tolerance < s_next_frame_issue)
     return false;
-  s_last_frame_issue = now;
+  if (s_next_frame_issue == 0.0 || now - s_next_frame_issue > interval)
+    s_next_frame_issue = now + interval;
+  else
+    s_next_frame_issue += interval;
   return true;
 }
 
@@ -279,6 +290,8 @@ static void engine_on_frame(void) {
 
   input_state = &_actual_input_state;
   input_apply_queued_scroll(input_state);   // 注入滚轮与 OS 滚轮同时序 (早于下方相机缩放读取)
+  const float camera_scroll = input_state->camera_scroll_y;
+  input_state->camera_scroll_y = 0.0f;
   if (key_pressed(KEY_ENTER) && key_down(KEY_LEFT_ALT)) {
     sapp_toggle_fullscreen();
   }
@@ -319,7 +332,7 @@ static void engine_on_frame(void) {
     if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= powf(ZOOM_IN_MULTIPLIER, key_dt);
     if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= powf(ZOOM_OUT_MULTIPLIER, key_dt);
 
-    float scroll = input_state->scroll_y;
+    float scroll = camera_scroll;
     if (scroll != 0.0f && !atomic_load(&camera_wheel_blocked)) {
       float zoom_delta = scroll * SCROLL_ZOOM_RATE * ZOOM_SPEED / 35.0f;
       ctx.gs->desired_zoom_level *= (1.0f + zoom_delta);
