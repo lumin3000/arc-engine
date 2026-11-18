@@ -187,7 +187,7 @@ typedef struct {
 
 typedef struct {
     uint32_t start[SPLAT_LOD_LEVELS], count[SPLAT_LOD_LEVELS];   // splat ranges per level
-    float lo[3], hi[3];      // bounds, grown by the largest splat extent of any level
+    float lo[SPLAT_LOD_LEVELS][3], hi[SPLAT_LOD_LEVELS][3];      // per-level bounds, grown by that level's largest extent
 } Splat_Chunk_Range;
 
 struct Splat_Chunks {
@@ -412,6 +412,10 @@ void splat_upload(const Splat_Cloud *c, const float V[16]) {
         memcpy(sorted + (size_t)i * SPLAT_FLOATS, c->data + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
     free(items);
     if (S.count) sg_destroy_buffer(S.instances);
+    // a single cloud replaces any chunk world
+    free(S.chunks);
+    S.chunks = NULL;
+    S.chunk_n = 0;
     S.instances = sg_make_buffer(&(sg_buffer_desc){
         .usage = {.vertex_buffer = true, .immutable = true},
         .data = {.ptr = sorted, .size = bytes},
@@ -602,9 +606,10 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
     for (int c = 0; c < used; c++) {
         const int k = order[c].idx;
         Splat_Chunk_Range *r = &S.chunks[c];
-        for (int a = 0; a < 3; a++) { r->lo[a] = 1e30f; r->hi[a] = -1e30f; }
-        float ext = 0;
         for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
+            float *lo = r->lo[l], *hi = r->hi[l];
+            for (int a = 0; a < 3; a++) { lo[a] = 1e30f; hi[a] = -1e30f; }
+            float ext = 0;
             const float *src = lev[k * SPLAT_LOD_LEVELS + l];
             const uint32_t cnt = lev_n[k * SPLAT_LOD_LEVELS + l];
             if (cnt > items_cap) {
@@ -618,19 +623,19 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
                 items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
                 items[i].idx = i;
                 for (int a = 0; a < 3; a++) {
-                    if (d[a] < r->lo[a]) r->lo[a] = d[a];
-                    if (d[a] > r->hi[a]) r->hi[a] = d[a];
+                    if (d[a] < lo[a]) lo[a] = d[a];
+                    if (d[a] > hi[a]) hi[a] = d[a];
                 }
                 const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
                 if (e > ext) ext = e;
             }
+            for (int a = 0; a < 3; a++) { lo[a] -= ext; hi[a] += ext; }
             qsort(items, cnt, sizeof(Sort_Item), cmp_key);
             for (uint32_t i = 0; i < cnt; i++)
                 memcpy(all + (size_t)(at + i) * SPLAT_FLOATS, src + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
             at += cnt;
             free(lev[k * SPLAT_LOD_LEVELS + l]);
         }
-        for (int a = 0; a < 3; a++) { r->lo[a] -= ext; r->hi[a] += ext; }
         ch->data[k] = NULL;
     }
     free(lev);
@@ -797,7 +802,7 @@ static void draw_splats(const Splat_Target *t) {
             uint64_t sd = 0;
             for (int c = 0; c < S.chunk_n; c++) {
                 const Splat_Chunk_Range *r = &S.chunks[c];
-                if (!r->count[lvl] || !box_visible(r->lo, r->hi, v->view, focal, cx, cy, t->w, t->h)) continue;
+                if (!r->count[lvl] || !box_visible(r->lo[lvl], r->hi[lvl], v->view, focal, cx, cy, t->w, t->h)) continue;
                 sg_apply_bindings(&(sg_bindings){
                     .vertex_buffers[0] = S.instances,
                     .vertex_buffer_offsets[0] = (int)((size_t)r->start[lvl] * SPLAT_FLOATS * 4),
