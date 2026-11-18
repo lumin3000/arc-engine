@@ -892,6 +892,11 @@ void core_render_frame_end(void) {
                                    .size = index_offset * sizeof(uint32_t)});
     }
 
+    {
+      void (*pre)(void) = arc_engine_state()->pre_pass_render_hook;
+      if (pre) pre();
+    }
+
     sg_begin_pass(&(sg_pass){.action = render_state.pass_action,
                              .swapchain = sglue_swapchain()});
 

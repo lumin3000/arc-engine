@@ -228,6 +228,7 @@ static void engine_on_init(void) {
   arc_engine_state()->js_main_bindings_registrar = g_cfg.register_main_js_bindings;
   arc_engine_state()->js_render_bindings_registrar = g_cfg.register_render_js_bindings;
   arc_engine_state()->post_mesh_render_hook = g_cfg.on_post_mesh_render;
+  arc_engine_state()->pre_pass_render_hook = g_cfg.on_pre_pass_render;
   if (g_cfg.on_register_js_bindings) {
     js_runtime_set_game_bindings_registrar(g_cfg.on_register_js_bindings);
   }

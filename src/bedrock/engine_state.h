@@ -78,6 +78,10 @@ typedef struct {
     // with custom render paths (skinned animation etc.) install a hook
     // here via Engine_Config.on_post_mesh_render. NULL = no-op.
     void (*post_mesh_render_hook)(void);
+
+    // Per-frame hook invoked before the swapchain pass begins, for
+    // offscreen passes. Set via Engine_Config.on_pre_pass_render.
+    void (*pre_pass_render_hook)(void);
 } Arc_Engine_State;
 
 // Returns the singleton. Never NULL. Storage is in engine_main.c.
