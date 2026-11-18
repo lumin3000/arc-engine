@@ -1,3 +1,6 @@
+// Portions follow ink-studio by siliconjungle (MIT, Copyright (c) 2026 siliconjungle; full
+// notice in LICENSE.ink-studio next to this file): the splat data layout, the orthographic
+// projection and falloff of cli/render.js.
 // splat.h — Gaussian splat clouds: loading (.splat v1), GPU upload, offscreen
 // rendering into an art-pixel grid with a palette resolve, and compositing.
 //

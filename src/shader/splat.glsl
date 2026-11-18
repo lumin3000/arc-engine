@@ -1,3 +1,6 @@
+// Portions are ported from ink-studio by siliconjungle (MIT, Copyright (c) 2026 siliconjungle;
+// full notice in src/bedrock/splat/LICENSE.ink-studio): the palette resolve is src/pixel-look.js
+// PixelLook.glsl, the projection and falloff follow cli/render.js.
 // splat.glsl — Gaussian splat rendering and palette pixel resolve.
 //
 // Programs:
