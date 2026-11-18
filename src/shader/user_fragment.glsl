@@ -56,6 +56,15 @@ void main() {
 		if (tex_col.a < 0.5) discard;
 	} else if (tex_index == 3) {
 		tex_col = texture(sampler2D(tex0, default_sampler), atlas_uv);
+	} else if (tex_index == 4) {
+		// Engine-provided views (graphics.c binds VIEW_flow_map / VIEW_ripple_tex /
+		// VIEW_noise_tex unconditionally), so the stub must reference them or
+		// sokol-shdc drops them from reflection and the engine fails to compile.
+		tex_col = texture(sampler2D(flow_map, default_sampler), uv);
+	} else if (tex_index == 5) {
+		tex_col = texture(sampler2D(ripple_tex, default_sampler), uv);
+	} else if (tex_index == 6) {
+		tex_col = texture(sampler2D(noise_tex, default_sampler), uv);
 	}
 
 	col_out = tex_col;
