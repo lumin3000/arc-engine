@@ -125,10 +125,19 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
     // snap the target onto the art-pixel lattice of the view plane
     const double tx = (double)target[0] * xx + (double)target[1] * xy + (double)target[2] * xz;
     const double ty = (double)target[0] * yx + (double)target[1] * yy + (double)target[2] * yz;
-    const double nx = floor(tx / art_world + 0.5), ny = floor(ty / art_world + 0.5);
-    const double ddx = nx * art_world - tx, ddy = ny * art_world - ty;
+    // the lattice is offset by an irregular fraction of an art pixel so that pixel centres do not
+    // fall on the round world positions sculpted solids are sampled on (those ties flip under
+    // float rounding when the view moves)
+    const double lat_off = 0.375;
+    const double nx = floor(tx / art_world - lat_off + 0.5), ny = floor(ty / art_world - lat_off + 0.5);
+    const double ddx = (nx + lat_off) * art_world - tx, ddy = (ny + lat_off) * art_world - ty;
     const double T[3] = {target[0] + xx * ddx + yx * ddy, target[1] + xy * ddx + yy * ddy, target[2] + xz * ddx + yz * ddy};
     const double e[3] = {T[0] + eye_d * zx, T[1] + eye_d * zy, T[2] + eye_d * zz};
+    // the depth row: panning along the view plane must not change it, so take it from the
+    // quantised depth of the target rather than from the snapped eye (rounding would move
+    // pixels across the resolve's depth thresholds)
+    const double tz = (double)target[0] * zx + (double)target[1] * zy + (double)target[2] * zz;
+    const double tzq = floor(tz * 1024.0 + 0.5) / 1024.0;
     Splat_View v = {0};
     const float m[16] = {
         xx, yx, zx, 0,
@@ -136,7 +145,7 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
         xz, yz, zz, 0,
         (float)-(xx * e[0] + xy * e[1] + xz * e[2]),
         (float)-(yx * e[0] + yy * e[1] + yz * e[2]),
-        (float)-(zx * e[0] + zy * e[1] + zz * e[2]),
+        (float)-(tzq + eye_d),
         1,
     };
     memcpy(v.view, m, sizeof(m));
@@ -352,8 +361,14 @@ static void draw_splats(const Splat_Target *t) {
     const Splat_View *v = &S.view;
     vs_splat_params_t p;
     memcpy(p.view.v, v->view, sizeof(p.view.v));
-    p.cam = (Splat_Vec4){{v->ortho_half_h, (float)t->w / (float)t->h, (float)t->w, (float)t->h}};
-    p.dep = (Splat_Vec4){{v->eye_dist, v->radius, (float)t->h / 2.0f / v->ortho_half_h, v->near_dist}};
+    // screen position = focal * (axis . world) + C, with C carrying the view translation
+    // (same as cli/render.js: ((p.x / (oh * asp)) * 0.5 + 0.5) * W, since W / (2 oh asp) = focal)
+    const double focal = (double)t->h / 2.0 / (double)v->ortho_half_h;
+    const float cx = (float)(focal * (double)v->view[12] + (double)t->w / 2.0);
+    const float cy = (float)(focal * (double)v->view[13] + (double)t->h / 2.0);
+    p.cam = (Splat_Vec4){{cx, cy, (float)t->w, (float)t->h}};
+    p.dep = (Splat_Vec4){{v->eye_dist, v->radius, (float)focal, v->near_dist}};
+    fs_splat_params_t fp = {.frag = {{cx, cy, (float)t->h, sg_query_features().origin_top_left ? 1.0f : 0.0f}}};
     float *bg = S.pal[0];
     sg_begin_pass(&(sg_pass){
         .action = {
@@ -366,6 +381,7 @@ static void draw_splats(const Splat_Target *t) {
     sg_apply_pipeline(S.splat_pip);
     sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
     sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
+    sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
     sg_draw(0, 4, (int)S.count);
     sg_end_pass();
 }

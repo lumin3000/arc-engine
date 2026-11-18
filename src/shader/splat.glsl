@@ -18,28 +18,34 @@
 
 @vs vs_splat
 layout(binding=0) uniform vs_splat_params {
-    mat4 view;      // world -> view (column-major)
-    vec4 cam;       // x = ortho half-height, y = aspect, z = target width px, w = target height px
-    vec4 dep;       // x = eye distance, y = world radius, z = focal px, w = near
+    mat4 view;      // world -> view (column-major); only its rotation rows are used for x/y
+    vec4 cam;       // x = screen offset Cx, y = screen offset Cy (target px), z = target width px, w = target height px
+    vec4 dep;       // x = eye distance, y = depth radius, z = focal px, w = near
 };
 
 in vec4 a_pos;   // x y z density
 in vec4 a_cov0;  // c00 c01 c02 packed rgb
 in vec4 a_cov1;  // c11 c12 c22 kind
 
-out vec2 v_off;
-out vec3 v_conic;
-out vec4 v_col;
-out float v_dn;
+// Everything the fragment stage needs is constant per splat (flat): the fragment's offset from
+// the centre is formed from gl_FragCoord there, so a view moved by whole pixels reproduces
+// every fragment bit for bit.
+flat out vec2 v_rel;    // splat centre minus the screen offset, target px (y-up)
+flat out vec3 v_conic;
+flat out vec4 v_col;
+flat out float v_dn;
 
 void main() {
     int corner = gl_VertexIndex;
     vec2 sgn = vec2((corner & 1) != 0 ? 1.0 : -1.0, (corner & 2) != 0 ? 1.0 : -1.0);
-    vec4 p = view * vec4(a_pos.xyz, 1.0);
+    vec3 xa = vec3(view[0][0], view[1][0], view[2][0]);
+    vec3 ya = vec3(view[0][1], view[1][1], view[2][1]);
+    vec3 za = vec3(view[0][2], view[1][2], view[2][2]);
+    float pz = dot(za, a_pos.xyz) + view[3][2];
     float al = a_pos.w;
     float focal = dep.z;
-    vec3 a = focal * vec3(view[0][0], view[1][0], view[2][0]);
-    vec3 b = focal * vec3(view[0][1], view[1][1], view[2][1]);
+    vec3 a = focal * xa;
+    vec3 b = focal * ya;
     float c00 = a_cov0.x, c01 = a_cov0.y, c02 = a_cov0.z;
     float c11 = a_cov1.x, c12 = a_cov1.y, c22 = a_cov1.z;
     vec3 u = vec3(c00 * a.x + c01 * a.y + c02 * a.z, c01 * a.x + c11 * a.y + c12 * a.z, c02 * a.x + c12 * a.y + c22 * a.z);
@@ -48,34 +54,41 @@ void main() {
     float B = dot(b, u);
     float C = dot(b, w) + 0.15;
     float det = A * C - B * B;
-    if (al <= 0.0 || p.z > -dep.w || det <= 0.0) {
+    if (al <= 0.0 || pz > -dep.w || det <= 0.0) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        v_off = vec2(0.0); v_conic = vec3(0.0); v_col = vec4(0.0); v_dn = 1.0;
+        v_rel = vec2(0.0); v_conic = vec3(0.0); v_col = vec4(0.0); v_dn = 1.0;
         return;
     }
     vec2 ext = vec2(min(3.0 * sqrt(A), 2048.0), min(3.0 * sqrt(C), 2048.0));
-    vec2 s = vec2((p.x / (cam.x * cam.y)) * 0.5 + 0.5, (p.y / cam.x) * 0.5 + 0.5) * cam.zw;
-    vec2 off = sgn * ext;
-    vec2 ndc = (s + off) / cam.zw * 2.0 - 1.0;
+    vec2 rel = focal * vec2(dot(xa, a_pos.xyz), dot(ya, a_pos.xyz));
+    // the quad is a little larger than 3 sigma so its edge never decides a fragment: the
+    // exp() cut in the fragment stage does
+    vec2 corner_px = rel + cam.xy + sgn * (ext * 1.05 + 1.0);
+    vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
     gl_Position = vec4(ndc, 0.5, 1.0);
-    v_off = off;
+    v_rel = rel;
     v_conic = vec3(C / det, -B / det, A / det);
     float pk = a_cov0.w;
     v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, al);
-    v_dn = clamp((-p.z - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+    v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
 }
 @end
 
 @fs fs_splat
-in vec2 v_off;
-in vec3 v_conic;
-in vec4 v_col;
-in float v_dn;
+layout(binding=1) uniform fs_splat_params {
+    vec4 frag;      // x = screen offset Cx, y = Cy, z = target height px, w = 1 if storage origin is top-left
+};
+flat in vec2 v_rel;
+flat in vec3 v_conic;
+flat in vec4 v_col;
+flat in float v_dn;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 
 void main() {
-    float dx = v_off.x, dy = v_off.y;
+    vec2 fc = vec2(gl_FragCoord.x, frag.w > 0.5 ? frag.z - gl_FragCoord.y : gl_FragCoord.y);
+    vec2 d = (fc - frag.xy) - v_rel;
+    float dx = d.x, dy = d.y;
     float pw = -0.5 * (v_conic.x * dx * dx + v_conic.z * dy * dy) - v_conic.y * dx * dy;
     if (pw > 0.0 || pw < -4.5) discard;
     float al = v_col.a;
