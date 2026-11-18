@@ -172,9 +172,16 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
 typedef struct {
     int w, h;
     sg_image color, depth;           // depth: normalised depth in .r (second colour target)
-    sg_view color_att, depth_att;
+    sg_image zbuf;                   // hardware depth
+    sg_view color_att, depth_att, zbuf_att;
     sg_view color_tex, depth_tex;
 } Splat_Target;
+
+typedef struct {
+    sg_buffer buf;
+    uint32_t count;
+    int bone_n;
+} Splat_Skin_Model;
 
 static struct {
     bool ready;
@@ -192,6 +199,16 @@ static struct {
     sg_view art_att, art_tex;
     int art_w, art_h;
     int last_scale;
+    sg_shader skin_shd;
+    sg_pipeline skin_pip;
+    sg_image bone_img;
+    sg_view bone_tex;
+    float *bone_data;              // SPLAT_MAX_SKIN_INSTANCES x (SPLAT_MAX_BONES * 12)
+    Splat_Skin_Model models[16];
+    int model_n;
+    int inst_model[SPLAT_MAX_SKIN_INSTANCES];
+    int inst_n;
+    float scene_radius;
 } S;
 
 static void target_destroy(Splat_Target *t) {
@@ -200,8 +217,10 @@ static void target_destroy(Splat_Target *t) {
     sg_destroy_view(t->depth_att);
     sg_destroy_view(t->color_tex);
     sg_destroy_view(t->depth_tex);
+    sg_destroy_view(t->zbuf_att);
     sg_destroy_image(t->color);
     sg_destroy_image(t->depth);
+    sg_destroy_image(t->zbuf);
     memset(t, 0, sizeof(*t));
 }
 
@@ -226,6 +245,15 @@ static void target_make(Splat_Target *t, int w, int h, const char *label) {
     t->depth_att = sg_make_view(&(sg_view_desc){.color_attachment = {.image = t->depth}});
     t->color_tex = sg_make_view(&(sg_view_desc){.texture = {.image = t->color}});
     t->depth_tex = sg_make_view(&(sg_view_desc){.texture = {.image = t->depth}});
+    t->zbuf = sg_make_image(&(sg_image_desc){
+        .usage = {.depth_stencil_attachment = true},
+        .width = w,
+        .height = h,
+        .pixel_format = SG_PIXELFORMAT_DEPTH,
+        .sample_count = 1,
+        .label = label,
+    });
+    t->zbuf_att = sg_make_view(&(sg_view_desc){.depth_stencil_attachment = {.image = t->zbuf}});
 }
 
 static void ensure_targets(int aw, int ah) {
@@ -268,7 +296,9 @@ void splat_init(void) {
             },
         },
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
-        .depth = {.pixel_format = SG_PIXELFORMAT_NONE},
+        // back-to-front order already resolves the static cloud; the depth test only keeps
+        // what is drawn later (skinned instances) behind what stands in front of it
+        .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
         .color_count = 2,
         .colors = {
             [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
@@ -277,6 +307,37 @@ void splat_init(void) {
         .sample_count = 1,
         .label = "splat-pipeline",
     });
+    S.skin_shd = sg_make_shader(splat_skin_shader_desc(sg_query_backend()));
+    S.skin_pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = S.skin_shd,
+        .layout = {
+            .buffers[0] = {.stride = SPLAT_FLOATS * 4, .step_func = SG_VERTEXSTEP_PER_INSTANCE},
+            .attrs = {
+                [ATTR_splat_skin_a_pos] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 0},
+                [ATTR_splat_skin_a_cov0] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 16},
+                [ATTR_splat_skin_a_cov1] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 32},
+                [ATTR_splat_skin_a_bone] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 48},
+            },
+        },
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
+        .color_count = 2,
+        .colors = {
+            [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
+            [1] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
+        },
+        .sample_count = 1,
+        .label = "splat-skin-pipeline",
+    });
+    S.bone_img = sg_make_image(&(sg_image_desc){
+        .usage = {.stream_update = true},
+        .width = SPLAT_MAX_BONES * 3,
+        .height = SPLAT_MAX_SKIN_INSTANCES,
+        .pixel_format = SG_PIXELFORMAT_RGBA32F,
+        .label = "splat-bones",
+    });
+    S.bone_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.bone_img}});
+    S.bone_data = calloc((size_t)SPLAT_MAX_SKIN_INSTANCES * SPLAT_MAX_BONES * 12, sizeof(float));
     S.resolve_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.resolve_shd,
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
@@ -337,7 +398,66 @@ void splat_upload(const Splat_Cloud *c, const float V[16]) {
     });
     free(sorted);
     S.count = c->count;
+    S.scene_radius = c->radius;
     splat_set_palette(c->pal, (int)c->pal_n);
+}
+
+int splat_skin_add_model(const Splat_Cloud *c) {
+    if (!S.ready) SPLAT_FATAL("[splat] splat_skin_add_model before splat_init\n");
+    if (S.model_n >= (int)(sizeof(S.models) / sizeof(S.models[0]))) SPLAT_FATAL("[splat] too many skinned models\n");
+    if (c->bone_n == 0 || c->bone_n > SPLAT_MAX_BONES) SPLAT_FATAL("[splat] skinned model needs 1..%d bones, has %u\n", SPLAT_MAX_BONES, c->bone_n);
+    for (uint32_t i = 0; i < c->count; i++) {
+        const float *d = c->data + (size_t)i * SPLAT_FLOATS;
+        if ((int)lroundf(d[11]) != 12) SPLAT_FATAL("[splat] skinned model splat %u is kind %d, not 12\n", i, (int)lroundf(d[11]));
+        if (d[12] < 0 || d[12] >= (float)c->bone_n || d[13] < 0 || d[13] >= (float)c->bone_n)
+            SPLAT_FATAL("[splat] skinned model splat %u has bone %g/%g of %u\n", i, d[12], d[13], c->bone_n);
+    }
+    Splat_Skin_Model *m = &S.models[S.model_n];
+    m->buf = sg_make_buffer(&(sg_buffer_desc){
+        .usage = {.vertex_buffer = true, .immutable = true},
+        .data = {.ptr = c->data, .size = (size_t)c->count * SPLAT_FLOATS * 4},
+        .label = "splat-skin-model",
+    });
+    m->count = c->count;
+    m->bone_n = (int)c->bone_n;
+    if (S.pal_n == 0) splat_set_palette(c->pal, (int)c->pal_n);
+    if (c->radius > S.scene_radius) S.scene_radius = c->radius;
+    return S.model_n++;
+}
+
+int splat_skin_add_instance(int model) {
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    if (S.inst_n >= SPLAT_MAX_SKIN_INSTANCES) SPLAT_FATAL("[splat] more than %d skinned instances\n", SPLAT_MAX_SKIN_INSTANCES);
+    S.inst_model[S.inst_n] = model;
+    return S.inst_n++;
+}
+
+void splat_skin_set_bones(int instance, const float *bones, int bone_n) {
+    if (instance < 0 || instance >= S.inst_n) SPLAT_FATAL("[splat] bad skinned instance %d\n", instance);
+    if (bone_n != S.models[S.inst_model[instance]].bone_n) SPLAT_FATAL("[splat] instance %d: %d bones given, model has %d\n", instance, bone_n, S.models[S.inst_model[instance]].bone_n);
+    float *row = S.bone_data + (size_t)instance * SPLAT_MAX_BONES * 12;
+    for (int b = 0; b < bone_n; b++) {
+        const float *m = bones + b * 12;
+        float *t = row + b * 12;  // three texels: [r00 r01 r02 tx] [r10 r11 r12 ty] [r20 r21 r22 tz]
+        t[0] = m[0]; t[1] = m[1]; t[2] = m[2]; t[3] = m[9];
+        t[4] = m[3]; t[5] = m[4]; t[6] = m[5]; t[7] = m[10];
+        t[8] = m[6]; t[9] = m[7]; t[10] = m[8]; t[11] = m[11];
+    }
+}
+
+void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]) {
+    const float c = cosf(yaw), s = sinf(yaw);
+    // P = rotation about +y by yaw (maps +x to (c, 0, -s)), then translation pos
+    const float P[9] = {c, 0, s, 0, 1, 0, -s, 0, c};
+    for (int b = 0; b < bone_n; b++) {
+        const float *m = frame + b * 12;
+        float *o = out + b * 12;
+        for (int r = 0; r < 3; r++) {
+            for (int k = 0; k < 3; k++)
+                o[r * 3 + k] = P[r * 3] * m[k] + P[r * 3 + 1] * m[3 + k] + P[r * 3 + 2] * m[6 + k];
+            o[9 + r] = P[r * 3] * m[9] + P[r * 3 + 1] * m[10] + P[r * 3 + 2] * m[11] + pos[r];
+        }
+    }
 }
 
 void splat_set_palette(const uint32_t *pal, int n) {
@@ -368,6 +488,8 @@ static void draw_splats(const Splat_Target *t) {
     const float cy = (float)(focal * (double)v->view[13] + (double)t->h / 2.0);
     p.cam = (Splat_Vec4){{cx, cy, (float)t->w, (float)t->h}};
     p.dep = (Splat_Vec4){{v->eye_dist, v->radius, (float)focal, v->near_dist}};
+    const float zrad = S.scene_radius > v->radius ? S.scene_radius : v->radius;
+    p.zr = (Splat_Vec4){{v->eye_dist - zrad - 1.0f, 1.0f / (2.0f * zrad + 2.0f), 0, 0}};
     fs_splat_params_t fp = {.frag = {{cx, cy, (float)t->h, sg_query_features().origin_top_left ? 1.0f : 0.0f}}};
     float *bg = S.pal[0];
     sg_begin_pass(&(sg_pass){
@@ -375,20 +497,45 @@ static void draw_splats(const Splat_Target *t) {
             .colors[0] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {bg[0], bg[1], bg[2], 0.0f}},
             .colors[1] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {1.0f, 0.0f, 0.0f, 0.0f}},
         },
-        .attachments = {.colors = {t->color_att, t->depth_att}},
+        .attachments = {.colors = {t->color_att, t->depth_att}, .depth_stencil = t->zbuf_att},
         .label = "splat-pass",
     });
-    sg_apply_pipeline(S.splat_pip);
-    sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
-    sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
-    sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
-    sg_draw(0, 4, (int)S.count);
+    if (S.count) {
+        fp.mode = (Splat_Vec4){{v->static_cut ? 1.0f : 0.0f, 0, 0, 0}};
+        sg_apply_pipeline(S.splat_pip);
+        sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
+        sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
+        sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
+        sg_draw(0, 4, (int)S.count);
+    }
+    if (S.inst_n) {
+        fp.mode = (Splat_Vec4){{1, 0, 0, 0}};
+        sg_apply_pipeline(S.skin_pip);
+        for (int i = 0; i < S.inst_n; i++) {
+            const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
+            p.zr.v[2] = (float)i;
+            sg_apply_bindings(&(sg_bindings){
+                .vertex_buffers[0] = m->buf,
+                .views[VIEW_bone_tex] = S.bone_tex,
+                .samplers[SMP_bone_smp] = S.nearest,
+            });
+            sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
+            sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
+            sg_draw(0, 4, (int)m->count);
+        }
+    }
     sg_end_pass();
 }
 
 void splat_render_offscreen(void) {
-    if (!S.ready || !S.have_view || S.count == 0) return;
+    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0)) return;
     ensure_targets(S.view.art_w, S.view.art_h);
+    if (S.inst_n) {
+        sg_update_image(S.bone_img, &(sg_image_data){.mip_levels[0] = {
+            .ptr = S.bone_data,
+            .size = (size_t)SPLAT_MAX_SKIN_INSTANCES * SPLAT_MAX_BONES * 12 * sizeof(float),
+        }});
+    }
     draw_splats(&S.samples);
     draw_splats(&S.native);
 
@@ -422,7 +569,7 @@ void splat_render_offscreen(void) {
 }
 
 void splat_composite(Splat_Show show) {
-    if (!S.ready || !S.have_view || S.count == 0 || S.art_w == 0) return;
+    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0) || S.art_w == 0) return;
     sg_view tex = S.art_tex;
     int tw = S.art_w, th = S.art_h;
     if (show == SPLAT_SHOW_NATIVE) {
@@ -448,5 +595,8 @@ void splat_composite(Splat_Show show) {
 }
 
 Splat_Stats splat_stats(void) {
-    return (Splat_Stats){.splats = S.count, .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
+    uint32_t sk = 0;
+    for (int i = 0; i < S.inst_n; i++) sk += S.models[S.inst_model[i]].count;
+    return (Splat_Stats){.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
+                         .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
 }

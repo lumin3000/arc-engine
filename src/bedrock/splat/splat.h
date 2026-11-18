@@ -50,6 +50,7 @@ typedef struct Splat_View {
     float outline_step; // world depth step that draws a contour when outline is on
     int phase_x, phase_y; // ordered-dither phase of art pixel (0,0), so the pattern stays on the world
     int scale;          // composite scale in physical px per art px; 0 = largest integer fit
+    int static_cut;     // 1 = draw the static cloud with the opaque cut too (diagnostics)
 } Splat_View;
 
 typedef enum {
@@ -60,6 +61,8 @@ typedef enum {
 
 typedef struct Splat_Stats {
     uint32_t splats;
+    uint32_t skinned_splats;  // drawn per frame (instances x model splats)
+    int skin_instances;
     int art_w, art_h;
     int scale;          // composite scale (physical px per target px)
 } Splat_Stats;
@@ -74,6 +77,17 @@ void splat_set_view(const Splat_View *v);
 void splat_render_offscreen(void);
 void splat_composite(Splat_Show show);
 Splat_Stats splat_stats(void);
+
+// Skinned clouds (every splat kind 12, carried by bones): uploaded at rest; each instance has
+// its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
+// depth test and an opaque cut after the static cloud.
+#define SPLAT_MAX_BONES 64
+#define SPLAT_MAX_SKIN_INSTANCES 256
+int splat_skin_add_model(const Splat_Cloud *c);
+int splat_skin_add_instance(int model);
+void splat_skin_set_bones(int instance, const float *bones, int bone_n);
+// out = (rotation yaw about +y, then translation) applied after each bone of frame `frame`
+void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]);
 
 // Builds a Splat_View from a cloud's embedded reference camera. Fatal if none.
 Splat_View splat_view_from_cloud_camera(const Splat_Cloud *c);

@@ -16,11 +16,51 @@
 @ctype mat4 Splat_Mat4
 @ctype vec4 Splat_Vec4
 
+@block splat_project
+// Projects one splat (world position, density, covariance, packed colour) into the target and
+// fills the flat outputs. Uniforms: view, cam, dep, zr (declared by the including stage).
+void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c02, float c11, float c12, float c22, float pk) {
+    vec2 sgn = vec2((corner & 1) != 0 ? 1.0 : -1.0, (corner & 2) != 0 ? 1.0 : -1.0);
+    vec3 xa = vec3(view[0][0], view[1][0], view[2][0]);
+    vec3 ya = vec3(view[0][1], view[1][1], view[2][1]);
+    vec3 za = vec3(view[0][2], view[1][2], view[2][2]);
+    float pz = dot(za, pos) + view[3][2];
+    float focal = dep.z;
+    vec3 a = focal * xa;
+    vec3 b = focal * ya;
+    vec3 u = vec3(c00 * a.x + c01 * a.y + c02 * a.z, c01 * a.x + c11 * a.y + c12 * a.z, c02 * a.x + c12 * a.y + c22 * a.z);
+    vec3 w = vec3(c00 * b.x + c01 * b.y + c02 * b.z, c01 * b.x + c11 * b.y + c12 * b.z, c02 * b.x + c12 * b.y + c22 * b.z);
+    float A = dot(a, u) + 0.15;
+    float B = dot(b, u);
+    float C = dot(b, w) + 0.15;
+    float det = A * C - B * B;
+    if (al <= 0.0 || pz > -dep.w || det <= 0.0) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        v_rel = vec2(0.0); v_conic = vec3(0.0); v_col = vec4(0.0); v_dn = 1.0;
+        return;
+    }
+    vec2 ext = vec2(min(3.0 * sqrt(A), 2048.0), min(3.0 * sqrt(C), 2048.0));
+    vec2 rel = focal * vec2(dot(xa, pos), dot(ya, pos));
+    // the quad is a little larger than 3 sigma so its edge never decides a fragment: the
+    // exp() cut in the fragment stage does
+    vec2 corner_px = rel + cam.xy + sgn * (ext * 1.05 + 1.0);
+    vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
+    // hardware depth: farther = larger, over the whole scene depth range
+    float zd = clamp((-pz - zr.x) * zr.y, 0.0, 1.0);
+    gl_Position = vec4(ndc, zd, 1.0);
+    v_rel = rel;
+    v_conic = vec3(C / det, -B / det, A / det);
+    v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, al);
+    v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+}
+@end
+
 @vs vs_splat
 layout(binding=0) uniform vs_splat_params {
     mat4 view;      // world -> view (column-major); only its rotation rows are used for x/y
     vec4 cam;       // x = screen offset Cx, y = screen offset Cy (target px), z = target width px, w = target height px
     vec4 dep;       // x = eye distance, y = depth radius, z = focal px, w = near
+    vec4 zr;        // x = hardware depth near (view distance), y = 1 / depth range
 };
 
 in vec4 a_pos;   // x y z density
@@ -35,48 +75,67 @@ flat out vec3 v_conic;
 flat out vec4 v_col;
 flat out float v_dn;
 
+@include_block splat_project
+
 void main() {
-    int corner = gl_VertexIndex;
-    vec2 sgn = vec2((corner & 1) != 0 ? 1.0 : -1.0, (corner & 2) != 0 ? 1.0 : -1.0);
-    vec3 xa = vec3(view[0][0], view[1][0], view[2][0]);
-    vec3 ya = vec3(view[0][1], view[1][1], view[2][1]);
-    vec3 za = vec3(view[0][2], view[1][2], view[2][2]);
-    float pz = dot(za, a_pos.xyz) + view[3][2];
-    float al = a_pos.w;
-    float focal = dep.z;
-    vec3 a = focal * xa;
-    vec3 b = focal * ya;
-    float c00 = a_cov0.x, c01 = a_cov0.y, c02 = a_cov0.z;
-    float c11 = a_cov1.x, c12 = a_cov1.y, c22 = a_cov1.z;
-    vec3 u = vec3(c00 * a.x + c01 * a.y + c02 * a.z, c01 * a.x + c11 * a.y + c12 * a.z, c02 * a.x + c12 * a.y + c22 * a.z);
-    vec3 w = vec3(c00 * b.x + c01 * b.y + c02 * b.z, c01 * b.x + c11 * b.y + c12 * b.z, c02 * b.x + c12 * b.y + c22 * b.z);
-    float A = dot(a, u) + 0.15;
-    float B = dot(b, u);
-    float C = dot(b, w) + 0.15;
-    float det = A * C - B * B;
-    if (al <= 0.0 || pz > -dep.w || det <= 0.0) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        v_rel = vec2(0.0); v_conic = vec3(0.0); v_col = vec4(0.0); v_dn = 1.0;
-        return;
+    splat_project(gl_VertexIndex, a_pos.xyz, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
+}
+@end
+
+@vs vs_splat_skin
+layout(binding=0) uniform vs_splat_params {
+    mat4 view;
+    vec4 cam;
+    vec4 dep;
+    vec4 zr;        // z = bone texture row of this instance
+};
+@image_sample_type bone_tex unfilterable_float
+layout(binding=0) uniform texture2D bone_tex;
+@sampler_type bone_smp nonfiltering
+layout(binding=0) uniform sampler bone_smp;
+
+in vec4 a_pos;   // x y z density (rest pose)
+in vec4 a_cov0;  // c00 c01 c02 packed rgb
+in vec4 a_cov1;  // c11 c12 c22 kind
+in vec4 a_bone;  // bone, second bone, second bone share, unused
+
+flat out vec2 v_rel;
+flat out vec3 v_conic;
+flat out vec4 v_col;
+flat out float v_dn;
+
+@include_block splat_project
+
+// bone b of this instance: rows of [R | t]
+void bone_rows(int b, out vec4 r0, out vec4 r1, out vec4 r2) {
+    int row = int(zr.z);
+    r0 = texelFetch(sampler2D(bone_tex, bone_smp), ivec2(b * 3, row), 0);
+    r1 = texelFetch(sampler2D(bone_tex, bone_smp), ivec2(b * 3 + 1, row), 0);
+    r2 = texelFetch(sampler2D(bone_tex, bone_smp), ivec2(b * 3 + 2, row), 0);
+}
+
+void main() {
+    vec4 r0, r1, r2;
+    bone_rows(int(a_bone.x), r0, r1, r2);
+    vec4 p = vec4(a_pos.xyz, 1.0);
+    vec3 x = vec3(dot(r0, p), dot(r1, p), dot(r2, p));
+    if (a_bone.z > 0.0) {
+        vec4 s0, s1, s2;
+        bone_rows(int(a_bone.y), s0, s1, s2);
+        x += (vec3(dot(s0, p), dot(s1, p), dot(s2, p)) - x) * a_bone.z;
     }
-    vec2 ext = vec2(min(3.0 * sqrt(A), 2048.0), min(3.0 * sqrt(C), 2048.0));
-    vec2 rel = focal * vec2(dot(xa, a_pos.xyz), dot(ya, a_pos.xyz));
-    // the quad is a little larger than 3 sigma so its edge never decides a fragment: the
-    // exp() cut in the fragment stage does
-    vec2 corner_px = rel + cam.xy + sgn * (ext * 1.05 + 1.0);
-    vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
-    gl_Position = vec4(ndc, 0.5, 1.0);
-    v_rel = rel;
-    v_conic = vec3(C / det, -B / det, A / det);
-    float pk = a_cov0.w;
-    v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, al);
-    v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+    // shape follows the first bone: R S R^T (as K.bones.posed)
+    mat3 S = mat3(a_cov0.x, a_cov0.y, a_cov0.z, a_cov0.y, a_cov1.x, a_cov1.y, a_cov0.z, a_cov1.y, a_cov1.z);
+    mat3 R = transpose(mat3(r0.xyz, r1.xyz, r2.xyz));
+    mat3 Sp = R * S * transpose(R);
+    splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w);
 }
 @end
 
 @fs fs_splat
 layout(binding=1) uniform fs_splat_params {
     vec4 frag;      // x = screen offset Cx, y = Cy, z = target height px, w = 1 if storage origin is top-left
+    vec4 mode;      // x = 1: opaque cut (alpha >= 0.5 drawn whole, the rest dropped), for splats drawn out of order
 };
 flat in vec2 v_rel;
 flat in vec3 v_conic;
@@ -97,12 +156,17 @@ void main() {
     bool solid = al >= 1.0;
     if (solid) a = 0.99 * smoothstep(0.38, 0.62, gg);
     if (a < 0.004) discard;
+    if (mode.x > 0.5) {
+        if (a < 0.5) discard;
+        a = 1.0;
+    }
     frag_color = vec4(min(v_col.rgb, vec3(1.0)), a);
     frag_depth = vec4(v_dn, 0.0, 0.0, solid ? a : 0.0);
 }
 @end
 
 @program splat vs_splat fs_splat
+@program splat_skin vs_splat_skin fs_splat
 
 @vs vs_quad
 layout(binding=0) uniform vs_quad_params {
