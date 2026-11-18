@@ -46,7 +46,10 @@ typedef struct Splat_View {
     float near_dist;
     int art_w, art_h;   // art grid; samples target is 2x
     float dither;
-    float outline;      // 0 = body-coloured contour, 1 = background-coloured (dark) contour
+    float outline;      // 0 = reference look; 1 = dark contour on silhouettes and depth steps
+    float outline_step; // world depth step that draws a contour when outline is on
+    int phase_x, phase_y; // ordered-dither phase of art pixel (0,0), so the pattern stays on the world
+    int scale;          // composite scale in physical px per art px; 0 = largest integer fit
 } Splat_View;
 
 typedef enum {
@@ -74,5 +77,12 @@ Splat_Stats splat_stats(void);
 
 // Builds a Splat_View from a cloud's embedded reference camera. Fatal if none.
 Splat_View splat_view_from_cloud_camera(const Splat_Cloud *c);
+
+// Orthographic view looking at `target` from yaw/pitch (radians, as ink-studio's
+// viewMatrix), with `art_world` world units per art pixel and an art grid of
+// art_w x art_h. The target is snapped to the art-pixel lattice of the view plane
+// so panning moves the picture by whole art pixels; the dither phase follows.
+Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float art_world, int art_w, int art_h,
+                            float radius, float dither);
 
 #endif

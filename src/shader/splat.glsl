@@ -122,6 +122,7 @@ layout(binding=1) uniform fs_resolve_params {
     vec4 pal[48];
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
+    vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised)
 };
 @image_sample_type u_scene unfilterable_float
 layout(binding=0) uniform texture2D u_scene;
@@ -174,7 +175,8 @@ void main() {
         if (solid[i]) coverage += 0.25;
     }
     vec3 native = texelFetch(sampler2D(u_native, u_smp), stor(p, size.y), 0).rgb;
-    float noise = ((bayer((p.x & 3) + ((p.y & 3) << 2)) + 0.5) / 16.0 - 0.5) * opts.y;
+    ivec2 dp = p + ivec2(phase.xy);
+    float noise = ((bayer((dp.x & 3) + ((dp.y & 3) << 2)) + 0.5) / 16.0 - 0.5) * opts.y;
     vec3 c = pixelMapped(pixelNearest(clamp(native + noise, 0.0, 1.0), false));
     int best = -1, score = 0;
     for (int i = 0; i < 4; i++) {
@@ -193,6 +195,12 @@ void main() {
             vec3 edge = mix(body, tone, 0.65);
             edge = mix(edge, pixelMapped(0), opts.w);
             c = mix(pixelMapped(0), edge, coverage);
+        } else if (opts.w > 0.0) {
+            // dark contour where this pixel stands in front of a sharp step back
+            float d0 = pixelDepth(p);
+            float dn = max(max(pixelDepth(p - ivec2(1, 0)), pixelDepth(p + ivec2(1, 0))),
+                           max(pixelDepth(p - ivec2(0, 1)), pixelDepth(p + ivec2(0, 1))));
+            if (dn - d0 > phase.z) c = mix(c, pixelMapped(0), opts.w);
         }
     }
     frag_color = vec4(c, 1.0);

@@ -106,6 +106,57 @@ Splat_View splat_view_from_cloud_camera(const Splat_Cloud *c) {
     return v;
 }
 
+Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float art_world, int art_w, int art_h,
+                            float radius, float dither) {
+    if (art_world <= 0.0f || art_w <= 0 || art_h <= 0) SPLAT_FATAL("[splat] bad ortho view parameters\n");
+    const float fov = 38.0f * 3.14159265358979f / 180.0f;
+    const float oh = 0.5f * art_world * (float)art_h;
+    const float dist = oh / tanf(fov / 2.0f);
+    const float eye_d = dist + 2.0f * radius + 4.0f;
+    const float cp = cosf(pitch), sp = sinf(pitch);
+    // axes exactly as cli/render.js viewMatrix
+    float zx = cp * sinf(yaw), zy = sp, zz = cp * cosf(yaw);
+    const float zl = sqrtf(zx * zx + zy * zy + zz * zz);
+    zx /= zl; zy /= zl; zz /= zl;
+    float xx = zz, xz = -zx;
+    const float xy = 0.0f, xl = sqrtf(xx * xx + xz * xz);
+    xx /= xl; xz /= xl;
+    const float yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    // snap the target onto the art-pixel lattice of the view plane
+    const double tx = (double)target[0] * xx + (double)target[1] * xy + (double)target[2] * xz;
+    const double ty = (double)target[0] * yx + (double)target[1] * yy + (double)target[2] * yz;
+    const double nx = floor(tx / art_world + 0.5), ny = floor(ty / art_world + 0.5);
+    const double ddx = nx * art_world - tx, ddy = ny * art_world - ty;
+    const double T[3] = {target[0] + xx * ddx + yx * ddy, target[1] + xy * ddx + yy * ddy, target[2] + xz * ddx + yz * ddy};
+    const double e[3] = {T[0] + eye_d * zx, T[1] + eye_d * zy, T[2] + eye_d * zz};
+    Splat_View v = {0};
+    const float m[16] = {
+        xx, yx, zx, 0,
+        xy, yy, zy, 0,
+        xz, yz, zz, 0,
+        (float)-(xx * e[0] + xy * e[1] + xz * e[2]),
+        (float)-(yx * e[0] + yy * e[1] + yz * e[2]),
+        (float)-(zx * e[0] + zy * e[1] + zz * e[2]),
+        1,
+    };
+    memcpy(v.view, m, sizeof(m));
+    v.ortho_half_h = oh;
+    v.eye_dist = eye_d;
+    // depth is normalised around the target over the visible depth range (8-bit target),
+    // never beyond the scene radius
+    v.radius = fminf(radius, 2.0f * oh + 8.0f);
+    v.near_dist = fmaxf(0.4f, 0.15f * dist);
+    v.outline_step = 0.35f;
+    v.art_w = art_w;
+    v.art_h = art_h;
+    v.dither = dither;
+    // art pixel (0,0) (lower-left, y-up) sits at lattice index (nx - art_w/2, ny - art_h/2)
+    const long px0 = (long)nx - art_w / 2, py0 = (long)ny - art_h / 2;
+    v.phase_x = (int)(((px0 % 4) + 4) % 4);
+    v.phase_y = (int)(((py0 % 4) + 4) % 4);
+    return v;
+}
+
 // ---------------------------------------------------------------------------
 // GPU state
 
@@ -331,6 +382,8 @@ void splat_render_offscreen(void) {
     memcpy(rp.pal, S.pal, sizeof(float) * 4 * (size_t)S.pal_n);
     rp.opts = (Splat_Vec4){{(float)S.pal_n, S.view.dither, flip, S.view.outline}};
     rp.size = (Splat_Vec4){{(float)S.art_w, (float)S.art_h, (float)S.samples.w, (float)S.samples.h}};
+    rp.phase = (Splat_Vec4){{(float)S.view.phase_x, (float)S.view.phase_y,
+                             S.view.outline_step / (2.0f * S.view.radius), 0}};
     vs_quad_params_t qp = {.quad = {{flip, 0, 0, 0}}};
     sg_begin_pass(&(sg_pass){
         .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
@@ -365,6 +418,7 @@ void splat_composite(Splat_Show show) {
     }
     const int sw = sapp_width(), sh = sapp_height();
     int k = sw / tw < sh / th ? sw / tw : sh / th;
+    if (S.view.scale > 0) k = show == SPLAT_SHOW_SAMPLES ? S.view.scale / 2 : S.view.scale;
     if (k < 1) k = 1;
     S.last_scale = k;
     // the pass's storage origin decides how a target is read back onto the screen
