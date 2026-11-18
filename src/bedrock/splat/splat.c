@@ -103,6 +103,7 @@ Splat_View splat_view_from_cloud_camera(const Splat_Cloud *c) {
     v.art_h = (int)c->cam[13];
     v.radius = c->radius;
     v.outline = 0.0f;
+    v.lod_force = -1;
     return v;
 }
 
@@ -156,6 +157,7 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
     v.radius = fminf(radius, 2.0f * oh + 8.0f);
     v.near_dist = fmaxf(0.4f, 0.15f * dist);
     v.outline_step = 0.35f;
+    v.lod_force = -1;
     v.art_w = art_w;
     v.art_h = art_h;
     v.dither = dither;
@@ -184,8 +186,8 @@ typedef struct {
 } Splat_Skin_Model;
 
 typedef struct {
-    uint32_t start, count;   // splat range in the instance buffer
-    float lo[3], hi[3];      // bounds, grown by the largest splat extent
+    uint32_t start[SPLAT_LOD_LEVELS], count[SPLAT_LOD_LEVELS];   // splat ranges per level
+    float lo[3], hi[3];      // bounds, grown by the largest splat extent of any level
 } Splat_Chunk_Range;
 
 struct Splat_Chunks {
@@ -224,8 +226,9 @@ static struct {
     float scene_radius;
     Splat_Chunk_Range *chunks;    // NULL: the static cloud is one range
     int chunk_n;
-    int chunks_drawn, skin_drawn;
+    int chunks_drawn, skin_drawn, lod_level;
     uint64_t splats_drawn;
+    uint64_t lod_splats[SPLAT_LOD_LEVELS];
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
 } S;
 
@@ -469,6 +472,86 @@ static int cmp_chunk(const void *a, const void *b) {
     return ka < kb ? -1 : ka > kb ? 1 : ((const Chunk_Order *)a)->idx - ((const Chunk_Order *)b)->idx;
 }
 
+// LOD merge: splats grouped by grid cell; each group becomes one moment-matched splat.
+// The in-plane spread of a cell full of small splats is about cell^2 / 12 per axis, which leaves
+// gaps once the solid cut keeps only the core (exp(pw) > 0.5, i.e. r < 1.18 sigma); the spread
+// is widened by LOD_INFLATE so merged neighbours close up again.
+#define LOD_INFLATE 4.0f
+
+typedef struct {
+    uint64_t key;
+    uint32_t idx;
+} Cell_Item;
+
+static int cmp_cell(const void *a, const void *b) {
+    uint64_t ka = ((const Cell_Item *)a)->key, kb = ((const Cell_Item *)b)->key;
+    return ka < kb ? -1 : ka > kb;
+}
+
+// merges `src` (n rows) on cells of `cell`, writes rows to `dst` (capacity n), returns count
+static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) {
+    Cell_Item *it = malloc(sizeof(Cell_Item) * n);
+    for (uint32_t i = 0; i < n; i++) {
+        const float *d = src + (size_t)i * SPLAT_FLOATS;
+        const int64_t cx = (int64_t)floorf(d[0] / cell) + (1 << 20), cy = (int64_t)floorf(d[1] / cell) + (1 << 20),
+                      cz = (int64_t)floorf(d[2] / cell) + (1 << 20);
+        it[i].key = ((uint64_t)cx << 42) | ((uint64_t)cy << 21) | (uint64_t)cz;
+        it[i].idx = i;
+    }
+    qsort(it, n, sizeof(Cell_Item), cmp_cell);
+    uint32_t out = 0;
+    for (uint32_t a = 0; a < n;) {
+        uint32_t b = a;
+        while (b < n && it[b].key == it[a].key) b++;
+        double w = 0, m[3] = {0, 0, 0}, col[3] = {0, 0, 0}, al = 0;
+        for (uint32_t k = a; k < b; k++) {
+            const float *d = src + (size_t)it[k].idx * SPLAT_FLOATS;
+            const double wk = 1.0;
+            w += wk;
+            for (int q = 0; q < 3; q++) m[q] += wk * d[q];
+            const uint32_t pk = (uint32_t)d[7];
+            col[0] += wk * (pk % 256);
+            col[1] += wk * ((pk / 256) % 256);
+            col[2] += wk * (pk / 65536);
+            if (d[3] > al) al = d[3];
+        }
+        for (int q = 0; q < 3; q++) m[q] /= w;
+        double c[6] = {0, 0, 0, 0, 0, 0};  // c00 c01 c02 c11 c12 c22
+        for (uint32_t k = a; k < b; k++) {
+            const float *d = src + (size_t)it[k].idx * SPLAT_FLOATS;
+            const double dx = d[0] - m[0], dy = d[1] - m[1], dz = d[2] - m[2];
+            c[0] += d[4] + dx * dx;
+            c[1] += d[5] + dx * dy;
+            c[2] += d[6] + dx * dz;
+            c[3] += d[8] + dy * dy;
+            c[4] += d[9] + dy * dz;
+            c[5] += d[10] + dz * dz;
+        }
+        float *o = dst + (size_t)out * SPLAT_FLOATS;
+        memset(o, 0, SPLAT_FLOATS * sizeof(float));
+        o[0] = (float)m[0];
+        o[1] = (float)m[1];
+        o[2] = (float)m[2];
+        o[3] = (float)al;
+        // the cell's own extent bounds the spread a single member contributes
+        const double base = (double)cell * cell / 12.0;
+        const double f = LOD_INFLATE / w;
+        o[4] = (float)(c[0] * f + (b - a == 1 ? base : 0));
+        o[5] = (float)(c[1] * f);
+        o[6] = (float)(c[2] * f);
+        o[8] = (float)(c[3] * f + (b - a == 1 ? base : 0));
+        o[9] = (float)(c[4] * f);
+        o[10] = (float)(c[5] * f + (b - a == 1 ? base : 0));
+        const uint32_t r = (uint32_t)lround(col[0] / w), g = (uint32_t)lround(col[1] / w), bl = (uint32_t)lround(col[2] / w);
+        o[7] = (float)(r + g * 256 + bl * 65536);
+        o[11] = 0;
+        out++;
+        a = b;
+    }
+    free(it);
+    return out;
+}
+
 void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pal, int pal_n, float radius) {
     if (!S.ready) SPLAT_FATAL("[splat] splat_chunks_upload before splat_init\n");
     if (ch->total == 0) SPLAT_FATAL("[splat] empty chunk world\n");
@@ -484,7 +567,30 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
         used++;
     }
     qsort(order, (size_t)used, sizeof(Chunk_Order), cmp_chunk);
-    const size_t bytes = (size_t)ch->total * SPLAT_FLOATS * 4;
+    // level sizes first (merging is deterministic, so it runs once here and once below)
+    float **lev = calloc((size_t)n * SPLAT_LOD_LEVELS, sizeof(float *));
+    uint32_t *lev_n = calloc((size_t)n * SPLAT_LOD_LEVELS, sizeof(uint32_t));
+    uint64_t total = 0;
+    memset(S.lod_splats, 0, sizeof(S.lod_splats));
+    for (int c = 0; c < used; c++) {
+        const int k = order[c].idx;
+        lev[k * SPLAT_LOD_LEVELS] = ch->data[k];
+        lev_n[k * SPLAT_LOD_LEVELS] = ch->count[k];
+        for (int l = 1; l < SPLAT_LOD_LEVELS; l++) {
+            const float *src = lev[k * SPLAT_LOD_LEVELS + l - 1];
+            const uint32_t sn = lev_n[k * SPLAT_LOD_LEVELS + l - 1];
+            float *dst = malloc((size_t)sn * SPLAT_FLOATS * sizeof(float));
+            const uint32_t dn = lod_merge(src, sn, SPLAT_LOD_CELL0 * (float)(1 << (l - 1)), dst);
+            lev[k * SPLAT_LOD_LEVELS + l] = realloc(dst, (size_t)dn * SPLAT_FLOATS * sizeof(float));
+            lev_n[k * SPLAT_LOD_LEVELS + l] = dn;
+        }
+        for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
+            total += lev_n[k * SPLAT_LOD_LEVELS + l];
+            S.lod_splats[l] += lev_n[k * SPLAT_LOD_LEVELS + l];
+        }
+    }
+    if (total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats with levels exceed one 2 GB buffer\n", (unsigned long long)total);
+    const size_t bytes = (size_t)total * SPLAT_FLOATS * 4;
     float *all = malloc(bytes);
     if (!all) SPLAT_FATAL("[splat] out of memory for %zu bytes\n", bytes);
     free(S.chunks);
@@ -495,35 +601,40 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
     uint32_t items_cap = 0;
     for (int c = 0; c < used; c++) {
         const int k = order[c].idx;
-        const uint32_t cnt = ch->count[k];
-        if (cnt > items_cap) {
-            items_cap = cnt;
-            items = realloc(items, sizeof(Sort_Item) * cnt);
-        }
         Splat_Chunk_Range *r = &S.chunks[c];
-        r->start = at;
-        r->count = cnt;
         for (int a = 0; a < 3; a++) { r->lo[a] = 1e30f; r->hi[a] = -1e30f; }
         float ext = 0;
-        for (uint32_t i = 0; i < cnt; i++) {
-            const float *d = ch->data[k] + (size_t)i * SPLAT_FLOATS;
-            items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
-            items[i].idx = i;
-            for (int a = 0; a < 3; a++) {
-                if (d[a] < r->lo[a]) r->lo[a] = d[a];
-                if (d[a] > r->hi[a]) r->hi[a] = d[a];
+        for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
+            const float *src = lev[k * SPLAT_LOD_LEVELS + l];
+            const uint32_t cnt = lev_n[k * SPLAT_LOD_LEVELS + l];
+            if (cnt > items_cap) {
+                items_cap = cnt;
+                items = realloc(items, sizeof(Sort_Item) * cnt);
             }
-            const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
-            if (e > ext) ext = e;
+            r->start[l] = at;
+            r->count[l] = cnt;
+            for (uint32_t i = 0; i < cnt; i++) {
+                const float *d = src + (size_t)i * SPLAT_FLOATS;
+                items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
+                items[i].idx = i;
+                for (int a = 0; a < 3; a++) {
+                    if (d[a] < r->lo[a]) r->lo[a] = d[a];
+                    if (d[a] > r->hi[a]) r->hi[a] = d[a];
+                }
+                const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
+                if (e > ext) ext = e;
+            }
+            qsort(items, cnt, sizeof(Sort_Item), cmp_key);
+            for (uint32_t i = 0; i < cnt; i++)
+                memcpy(all + (size_t)(at + i) * SPLAT_FLOATS, src + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
+            at += cnt;
+            free(lev[k * SPLAT_LOD_LEVELS + l]);
         }
         for (int a = 0; a < 3; a++) { r->lo[a] -= ext; r->hi[a] += ext; }
-        qsort(items, cnt, sizeof(Sort_Item), cmp_key);
-        for (uint32_t i = 0; i < cnt; i++)
-            memcpy(all + (size_t)(at + i) * SPLAT_FLOATS, ch->data[k] + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
-        at += cnt;
-        free(ch->data[k]);
         ch->data[k] = NULL;
     }
+    free(lev);
+    free(lev_n);
     free(items);
     free(order);
     if (S.count) sg_destroy_buffer(S.instances);
@@ -536,7 +647,10 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
     S.count = (uint32_t)ch->total;
     S.scene_radius = radius;
     splat_set_palette(pal, pal_n);
-    LOG_INFO("[splat] uploaded %llu splats in %d chunks (%.1f MB)\n", (unsigned long long)ch->total, used, (double)bytes / 1048576.0);
+    LOG_INFO("[splat] uploaded %llu splats in %d chunks with %d levels: %llu rows (%.1f MB); per level %llu %llu %llu %llu %llu %llu\n",
+             (unsigned long long)ch->total, used, SPLAT_LOD_LEVELS, (unsigned long long)total, (double)bytes / 1048576.0,
+             (unsigned long long)S.lod_splats[0], (unsigned long long)S.lod_splats[1], (unsigned long long)S.lod_splats[2],
+             (unsigned long long)S.lod_splats[3], (unsigned long long)S.lod_splats[4], (unsigned long long)S.lod_splats[5]);
     free(ch->data);
     free(ch->count);
     free(ch->cap);
@@ -672,18 +786,25 @@ static void draw_splats(const Splat_Target *t) {
             sg_draw(0, 4, (int)S.count);
             S.splats_drawn = S.count;
         } else {
+            // coarsest level whose merge cell is no larger than one pixel of this target
+            const float px_world = (float)(1.0 / focal);
+            int lvl = 0;
+            for (int l = 1; l < SPLAT_LOD_LEVELS; l++)
+                if (SPLAT_LOD_CELL0 * (float)(1 << (l - 1)) <= px_world) lvl = l;
+            if (v->lod_force >= 0) lvl = v->lod_force < SPLAT_LOD_LEVELS ? v->lod_force : SPLAT_LOD_LEVELS - 1;
+            S.lod_level = lvl;
             int drawn = 0;
             uint64_t sd = 0;
             for (int c = 0; c < S.chunk_n; c++) {
                 const Splat_Chunk_Range *r = &S.chunks[c];
-                if (!box_visible(r->lo, r->hi, v->view, focal, cx, cy, t->w, t->h)) continue;
+                if (!r->count[lvl] || !box_visible(r->lo, r->hi, v->view, focal, cx, cy, t->w, t->h)) continue;
                 sg_apply_bindings(&(sg_bindings){
                     .vertex_buffers[0] = S.instances,
-                    .vertex_buffer_offsets[0] = (int)((size_t)r->start * SPLAT_FLOATS * 4),
+                    .vertex_buffer_offsets[0] = (int)((size_t)r->start[lvl] * SPLAT_FLOATS * 4),
                 });
-                sg_draw(0, 4, (int)r->count);
+                sg_draw(0, 4, (int)r->count[lvl]);
                 drawn++;
-                sd += r->count;
+                sd += r->count[lvl];
             }
             S.chunks_drawn = drawn;
             S.splats_drawn = sd;
@@ -788,5 +909,6 @@ Splat_Stats splat_stats(void) {
     for (int i = 0; i < S.inst_n; i++) sk += S.models[S.inst_model[i]].count;
     return (Splat_Stats){.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
                          .chunks = S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
-                         .skin_drawn = S.skin_drawn, .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
+                         .skin_drawn = S.skin_drawn, .lod_level = S.lod_level,
+                         .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
 }

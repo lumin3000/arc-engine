@@ -51,6 +51,7 @@ typedef struct Splat_View {
     int phase_x, phase_y; // ordered-dither phase of art pixel (0,0), so the pattern stays on the world
     int scale;          // composite scale in physical px per art px; 0 = largest integer fit
     int static_cut;     // 1 = draw the static cloud with the opaque cut too (diagnostics)
+    int lod_force;      // chunk worlds: -1 = pick the level from the art-pixel size, else that level
 } Splat_View;
 
 typedef enum {
@@ -66,6 +67,7 @@ typedef struct Splat_Stats {
     int chunks, chunks_drawn;       // static chunks in the world / drawn last frame
     uint64_t splats_drawn;          // static splats submitted last frame (per pass)
     int skin_drawn;                 // skinned instances drawn last frame
+    int lod_level;                  // chunk level drawn last frame (last pass)
     int art_w, art_h;
     int scale;          // composite scale (physical px per target px)
 } Splat_Stats;
@@ -86,6 +88,11 @@ Splat_Stats splat_stats(void);
 // direction, orders the chunks back to front, uploads one buffer and frees the CPU copy.
 // Each frame only chunks whose bounds reach the view are drawn.
 typedef struct Splat_Chunks Splat_Chunks;
+// Levels of detail: level 0 is the placed splats; level l >= 1 merges them on a grid of cell
+// SPLAT_LOD_CELL0 * 2^(l-1) (moment-matched: mean, covariance with spread, mean colour). A
+// frame draws the coarsest level whose cell is no larger than one samples pixel.
+#define SPLAT_LOD_LEVELS 6
+#define SPLAT_LOD_CELL0 0.25f
 Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int nz);
 void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float offset[3]);
 uint64_t splat_chunks_count(const Splat_Chunks *ch);
