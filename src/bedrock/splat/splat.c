@@ -183,6 +183,19 @@ typedef struct {
     int bone_n;
 } Splat_Skin_Model;
 
+typedef struct {
+    uint32_t start, count;   // splat range in the instance buffer
+    float lo[3], hi[3];      // bounds, grown by the largest splat extent
+} Splat_Chunk_Range;
+
+struct Splat_Chunks {
+    float size, x0, z0;
+    int nx, nz;
+    float **data;            // per chunk splat rows
+    uint32_t *count, *cap;
+    uint64_t total;
+};
+
 static struct {
     bool ready;
     sg_shader splat_shd, resolve_shd, blit_shd;
@@ -209,6 +222,11 @@ static struct {
     int inst_model[SPLAT_MAX_SKIN_INSTANCES];
     int inst_n;
     float scene_radius;
+    Splat_Chunk_Range *chunks;    // NULL: the static cloud is one range
+    int chunk_n;
+    int chunks_drawn, skin_drawn;
+    uint64_t splats_drawn;
+    float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
 } S;
 
 static void target_destroy(Splat_Target *t) {
@@ -402,6 +420,142 @@ void splat_upload(const Splat_Cloud *c, const float V[16]) {
     splat_set_palette(c->pal, (int)c->pal_n);
 }
 
+Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int nz) {
+    if (chunk_size <= 0 || nx <= 0 || nz <= 0) SPLAT_FATAL("[splat] bad chunk grid\n");
+    Splat_Chunks *ch = calloc(1, sizeof(*ch));
+    ch->size = chunk_size;
+    ch->x0 = x0;
+    ch->z0 = z0;
+    ch->nx = nx;
+    ch->nz = nz;
+    ch->data = calloc((size_t)nx * nz, sizeof(float *));
+    ch->count = calloc((size_t)nx * nz, sizeof(uint32_t));
+    ch->cap = calloc((size_t)nx * nz, sizeof(uint32_t));
+    return ch;
+}
+
+void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float off[3]) {
+    if (proto->bone_n) SPLAT_FATAL("[splat] skinned cloud cannot be placed into static chunks\n");
+    for (uint32_t i = 0; i < proto->count; i++) {
+        const float *d = proto->data + (size_t)i * SPLAT_FLOATS;
+        const float x = d[0] + off[0], z = d[2] + off[2];
+        int cx = (int)floorf((x - ch->x0) / ch->size), cz = (int)floorf((z - ch->z0) / ch->size);
+        if (cx < 0 || cz < 0 || cx >= ch->nx || cz >= ch->nz) SPLAT_FATAL("[splat] splat at %.2f,%.2f outside the chunk grid\n", x, z);
+        const int k = cz * ch->nx + cx;
+        if (ch->count[k] == ch->cap[k]) {
+            ch->cap[k] = ch->cap[k] ? ch->cap[k] * 2 : 4096;
+            ch->data[k] = realloc(ch->data[k], (size_t)ch->cap[k] * SPLAT_FLOATS * sizeof(float));
+            if (!ch->data[k]) SPLAT_FATAL("[splat] out of memory growing chunk %d\n", k);
+        }
+        float *o = ch->data[k] + (size_t)ch->count[k] * SPLAT_FLOATS;
+        memcpy(o, d, SPLAT_FLOATS * sizeof(float));
+        o[0] = x;
+        o[1] = d[1] + off[1];
+        o[2] = z;
+        ch->count[k]++;
+    }
+    ch->total += proto->count;
+}
+
+uint64_t splat_chunks_count(const Splat_Chunks *ch) { return ch->total; }
+
+typedef struct {
+    float key;
+    int idx;
+} Chunk_Order;
+
+static int cmp_chunk(const void *a, const void *b) {
+    float ka = ((const Chunk_Order *)a)->key, kb = ((const Chunk_Order *)b)->key;
+    return ka < kb ? -1 : ka > kb ? 1 : ((const Chunk_Order *)a)->idx - ((const Chunk_Order *)b)->idx;
+}
+
+void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pal, int pal_n, float radius) {
+    if (!S.ready) SPLAT_FATAL("[splat] splat_chunks_upload before splat_init\n");
+    if (ch->total == 0) SPLAT_FATAL("[splat] empty chunk world\n");
+    if (ch->total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats exceed one 2 GB buffer\n", (unsigned long long)ch->total);
+    const int n = ch->nx * ch->nz;
+    Chunk_Order *order = malloc(sizeof(Chunk_Order) * (size_t)n);
+    int used = 0;
+    for (int k = 0; k < n; k++) {
+        if (!ch->count[k]) continue;
+        const float cx = ch->x0 + ((float)(k % ch->nx) + 0.5f) * ch->size, cz = ch->z0 + ((float)(k / ch->nx) + 0.5f) * ch->size;
+        order[used].key = V[2] * cx + V[10] * cz + V[14];
+        order[used].idx = k;
+        used++;
+    }
+    qsort(order, (size_t)used, sizeof(Chunk_Order), cmp_chunk);
+    const size_t bytes = (size_t)ch->total * SPLAT_FLOATS * 4;
+    float *all = malloc(bytes);
+    if (!all) SPLAT_FATAL("[splat] out of memory for %zu bytes\n", bytes);
+    free(S.chunks);
+    S.chunks = calloc((size_t)used, sizeof(Splat_Chunk_Range));
+    S.chunk_n = used;
+    uint32_t at = 0;
+    Sort_Item *items = NULL;
+    uint32_t items_cap = 0;
+    for (int c = 0; c < used; c++) {
+        const int k = order[c].idx;
+        const uint32_t cnt = ch->count[k];
+        if (cnt > items_cap) {
+            items_cap = cnt;
+            items = realloc(items, sizeof(Sort_Item) * cnt);
+        }
+        Splat_Chunk_Range *r = &S.chunks[c];
+        r->start = at;
+        r->count = cnt;
+        for (int a = 0; a < 3; a++) { r->lo[a] = 1e30f; r->hi[a] = -1e30f; }
+        float ext = 0;
+        for (uint32_t i = 0; i < cnt; i++) {
+            const float *d = ch->data[k] + (size_t)i * SPLAT_FLOATS;
+            items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
+            items[i].idx = i;
+            for (int a = 0; a < 3; a++) {
+                if (d[a] < r->lo[a]) r->lo[a] = d[a];
+                if (d[a] > r->hi[a]) r->hi[a] = d[a];
+            }
+            const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
+            if (e > ext) ext = e;
+        }
+        for (int a = 0; a < 3; a++) { r->lo[a] -= ext; r->hi[a] += ext; }
+        qsort(items, cnt, sizeof(Sort_Item), cmp_key);
+        for (uint32_t i = 0; i < cnt; i++)
+            memcpy(all + (size_t)(at + i) * SPLAT_FLOATS, ch->data[k] + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
+        at += cnt;
+        free(ch->data[k]);
+        ch->data[k] = NULL;
+    }
+    free(items);
+    free(order);
+    if (S.count) sg_destroy_buffer(S.instances);
+    S.instances = sg_make_buffer(&(sg_buffer_desc){
+        .usage = {.vertex_buffer = true, .immutable = true},
+        .data = {.ptr = all, .size = bytes},
+        .label = "splat-chunks",
+    });
+    free(all);
+    S.count = (uint32_t)ch->total;
+    S.scene_radius = radius;
+    splat_set_palette(pal, pal_n);
+    LOG_INFO("[splat] uploaded %llu splats in %d chunks (%.1f MB)\n", (unsigned long long)ch->total, used, (double)bytes / 1048576.0);
+    free(ch->data);
+    free(ch->count);
+    free(ch->cap);
+    free(ch);
+}
+
+// does a world-space box reach the target? (orthographic projection with the pass's view)
+static bool box_visible(const float lo[3], const float hi[3], const float *V, double focal, float cx, float cy, int w, int h) {
+    float mnx = 1e30f, mny = 1e30f, mxx = -1e30f, mxy = -1e30f;
+    for (int i = 0; i < 8; i++) {
+        const float p[3] = {(i & 1) ? hi[0] : lo[0], (i & 2) ? hi[1] : lo[1], (i & 4) ? hi[2] : lo[2]};
+        const float sx = (float)(focal * (V[0] * p[0] + V[4] * p[1] + V[8] * p[2])) + cx;
+        const float sy = (float)(focal * (V[1] * p[0] + V[5] * p[1] + V[9] * p[2])) + cy;
+        mnx = fminf(mnx, sx); mxx = fmaxf(mxx, sx);
+        mny = fminf(mny, sy); mxy = fmaxf(mxy, sy);
+    }
+    return mxx >= -2.0f && mnx <= (float)w + 2.0f && mxy >= -2.0f && mny <= (float)h + 2.0f;
+}
+
 int splat_skin_add_model(const Splat_Cloud *c) {
     if (!S.ready) SPLAT_FATAL("[splat] splat_skin_add_model before splat_init\n");
     if (S.model_n >= (int)(sizeof(S.models) / sizeof(S.models[0]))) SPLAT_FATAL("[splat] too many skinned models\n");
@@ -443,6 +597,14 @@ void splat_skin_set_bones(int instance, const float *bones, int bone_n) {
         t[4] = m[3]; t[5] = m[4]; t[6] = m[5]; t[7] = m[10];
         t[8] = m[6]; t[9] = m[7]; t[10] = m[8]; t[11] = m[11];
     }
+}
+
+void splat_skin_set_bounds(int instance, const float center[3], float radius) {
+    if (instance < 0 || instance >= S.inst_n) SPLAT_FATAL("[splat] bad skinned instance %d\n", instance);
+    S.inst_bounds[instance][0] = center[0];
+    S.inst_bounds[instance][1] = center[1];
+    S.inst_bounds[instance][2] = center[2];
+    S.inst_bounds[instance][3] = radius;
 }
 
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]) {
@@ -503,15 +665,41 @@ static void draw_splats(const Splat_Target *t) {
     if (S.count) {
         fp.mode = (Splat_Vec4){{v->static_cut ? 1.0f : 0.0f, 0, 0, 0}};
         sg_apply_pipeline(S.splat_pip);
-        sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
         sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
         sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
-        sg_draw(0, 4, (int)S.count);
+        if (!S.chunks) {
+            sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
+            sg_draw(0, 4, (int)S.count);
+            S.splats_drawn = S.count;
+        } else {
+            int drawn = 0;
+            uint64_t sd = 0;
+            for (int c = 0; c < S.chunk_n; c++) {
+                const Splat_Chunk_Range *r = &S.chunks[c];
+                if (!box_visible(r->lo, r->hi, v->view, focal, cx, cy, t->w, t->h)) continue;
+                sg_apply_bindings(&(sg_bindings){
+                    .vertex_buffers[0] = S.instances,
+                    .vertex_buffer_offsets[0] = (int)((size_t)r->start * SPLAT_FLOATS * 4),
+                });
+                sg_draw(0, 4, (int)r->count);
+                drawn++;
+                sd += r->count;
+            }
+            S.chunks_drawn = drawn;
+            S.splats_drawn = sd;
+        }
     }
     if (S.inst_n) {
         fp.mode = (Splat_Vec4){{1, 0, 0, 0}};
         sg_apply_pipeline(S.skin_pip);
+        int sk = 0;
         for (int i = 0; i < S.inst_n; i++) {
+            const float *b = S.inst_bounds[i];
+            if (b[3] > 0) {
+                const float lo[3] = {b[0] - b[3], b[1] - b[3], b[2] - b[3]}, hi[3] = {b[0] + b[3], b[1] + b[3], b[2] + b[3]};
+                if (!box_visible(lo, hi, v->view, focal, cx, cy, t->w, t->h)) continue;
+            }
+            sk++;
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
             p.zr.v[2] = (float)i;
             sg_apply_bindings(&(sg_bindings){
@@ -523,6 +711,7 @@ static void draw_splats(const Splat_Target *t) {
             sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
             sg_draw(0, 4, (int)m->count);
         }
+        S.skin_drawn = sk;
     }
     sg_end_pass();
 }
@@ -598,5 +787,6 @@ Splat_Stats splat_stats(void) {
     uint32_t sk = 0;
     for (int i = 0; i < S.inst_n; i++) sk += S.models[S.inst_model[i]].count;
     return (Splat_Stats){.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
-                         .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
+                         .chunks = S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
+                         .skin_drawn = S.skin_drawn, .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
 }

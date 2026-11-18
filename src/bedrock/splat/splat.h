@@ -63,6 +63,9 @@ typedef struct Splat_Stats {
     uint32_t splats;
     uint32_t skinned_splats;  // drawn per frame (instances x model splats)
     int skin_instances;
+    int chunks, chunks_drawn;       // static chunks in the world / drawn last frame
+    uint64_t splats_drawn;          // static splats submitted last frame (per pass)
+    int skin_drawn;                 // skinned instances drawn last frame
     int art_w, art_h;
     int scale;          // composite scale (physical px per target px)
 } Splat_Stats;
@@ -78,6 +81,16 @@ void splat_render_offscreen(void);
 void splat_composite(Splat_Show show);
 Splat_Stats splat_stats(void);
 
+// Chunked static worlds: copies of prototype clouds placed by translation into a grid of
+// square chunks on x/z. splat_chunks_upload sorts each chunk back to front for the view
+// direction, orders the chunks back to front, uploads one buffer and frees the CPU copy.
+// Each frame only chunks whose bounds reach the view are drawn.
+typedef struct Splat_Chunks Splat_Chunks;
+Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int nz);
+void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float offset[3]);
+uint64_t splat_chunks_count(const Splat_Chunks *ch);
+void splat_chunks_upload(Splat_Chunks *ch, const float view[16], const uint32_t *pal, int pal_n, float radius);
+
 // Skinned clouds (every splat kind 12, carried by bones): uploaded at rest; each instance has
 // its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
 // depth test and an opaque cut after the static cloud.
@@ -86,6 +99,8 @@ Splat_Stats splat_stats(void);
 int splat_skin_add_model(const Splat_Cloud *c);
 int splat_skin_add_instance(int model);
 void splat_skin_set_bones(int instance, const float *bones, int bone_n);
+// bounding sphere of an instance in world space, for culling (radius <= 0: always drawn)
+void splat_skin_set_bounds(int instance, const float center[3], float radius);
 // out = (rotation yaw about +y, then translation) applied after each bone of frame `frame`
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]);
 
