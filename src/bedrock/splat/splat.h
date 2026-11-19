@@ -131,6 +131,8 @@ typedef struct Splat_Chunks Splat_Chunks;
 void splat_set_lod_cell0(float cell);
 Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int nz);
 void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float offset[3]);
+// rows already in world space (SPLAT_FLOATS each), static
+void splat_chunks_add_rows(Splat_Chunks *ch, const float *rows, uint32_t n);
 uint64_t splat_chunks_count(const Splat_Chunks *ch);
 void splat_chunks_upload(Splat_Chunks *ch, const float view[16], const uint32_t *pal, int pal_n, float radius);
 // The same in two halves: bake (sort, levels, bounds; CPU only, touches no GPU or shared state,

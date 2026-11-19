@@ -705,6 +705,12 @@ void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float of
     ch->total += proto->count;
 }
 
+void splat_chunks_add_rows(Splat_Chunks *ch, const float *rows, uint32_t n) {
+    const Splat_Cloud c = {.count = n, .data = (float *)rows};
+    const float zero[3] = {0, 0, 0};
+    splat_chunks_add(ch, &c, zero);
+}
+
 uint64_t splat_chunks_count(const Splat_Chunks *ch) { return ch->total; }
 
 typedef struct {
