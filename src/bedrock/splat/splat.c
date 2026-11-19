@@ -87,6 +87,124 @@ Splat_Cloud *splat_cloud_load(const char *path) {
     return c;
 }
 
+// see splat.h; the dab shape follows ink-studio's builder disc(): Sigma = st^2 I + (sn^2 - st^2) n n^T
+Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
+                                    float world_per_px, int alpha_cut, int split_row,
+                                    const uint32_t *pal, int pal_n) {
+    if (step < 1 || img_w < 2 || img_h < 2 || pal_n < 1 || pal_n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] bad from_views parameters\n");
+    enum { RING = 170 };
+    const float st = 0.95f * world_per_px * (float)step, sn = 0.51f * st, pi2 = 6.2831853f;
+    // per sampled row: centre and half-width of the opaque run in each view (half < 0 = no ring)
+    const int rows = img_h / step + 1;
+    float *mid = malloc(sizeof(float) * 4 * (size_t)rows), *half = malloc(sizeof(float) * 4 * (size_t)rows);
+    for (int ri = 0; ri < rows; ri++) {
+        const int j = ri * step;
+        int ok = j > 0 && j < img_h;
+        for (int v = 0; v < 4 && ok; v++) {
+            int l = img_w, r = -1;
+            for (int k = 0; k < img_w; k++)
+                if (views[v][((size_t)j * img_w + k) * 4 + 3] > alpha_cut) {
+                    if (k < l) l = k;
+                    r = k;
+                }
+            mid[ri * 4 + v] = 0.5f * (float)(l + r);
+            half[ri * 4 + v] = 0.5f * (float)(r - l);
+            if (r < 0 || half[ri * 4 + v] < 0.6f) ok = 0;
+        }
+        if (!ok) half[ri * 4] = -1.0f;
+    }
+    size_t cap = 4096, n = 0;
+    float *d = malloc(cap * SPLAT_FLOATS * sizeof(float));
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    // one dab: position, normal, colour (RGB packed low byte red), bone
+    #define FV_PUSH(P, NV, RGB, BONE) do { \
+        if (n == cap) { cap *= 2; d = realloc(d, cap * SPLAT_FLOATS * sizeof(float)); if (!d) SPLAT_FATAL("[splat] from_views: out of memory\n"); } \
+        float *o = d + n * SPLAT_FLOATS; const float dd = sn * sn - st * st; \
+        o[0] = (P)[0]; o[1] = (P)[1]; o[2] = (P)[2]; o[3] = 4.0f; \
+        o[4] = st * st + dd * (NV)[0] * (NV)[0]; o[5] = dd * (NV)[0] * (NV)[1]; o[6] = dd * (NV)[0] * (NV)[2]; o[7] = (float)(RGB); \
+        o[8] = st * st + dd * (NV)[1] * (NV)[1]; o[9] = dd * (NV)[1] * (NV)[2]; o[10] = st * st + dd * (NV)[2] * (NV)[2]; o[11] = 12.0f; \
+        o[12] = (BONE); o[13] = (BONE); o[14] = 0.0f; o[15] = 0.0f; \
+        for (int c_ = 0; c_ < 3; c_++) { if ((P)[c_] < lo[c_]) lo[c_] = (P)[c_]; if ((P)[c_] > hi[c_]) hi[c_] = (P)[c_]; } \
+        n++; } while (0)
+    for (int ri = 1; ri < rows; ri++) {
+        if (half[ri * 4] < 0) continue;
+        const int j = ri * step;
+        const float *M = mid + ri * 4, *H = half + ri * 4;
+        const float rx = 0.5f * (H[0] + H[2]) * world_per_px, rz = 0.5f * (H[1] + H[3]) * world_per_px;
+        const float y = (float)(img_h - 1 - j) * world_per_px;
+        const float bone = j < split_row ? 1.0f : 0.0f;
+        // the ring above (one sampled row up the image): where it is narrower, this row's top is
+        // seen from above and gets a ledge of upward dabs between the two outlines
+        const int up = ri - 1;
+        float urx = 0.0f, urz = 0.0f;
+        if (up >= 1 && half[up * 4] >= 0) {
+            urx = 0.5f * (half[up * 4] + half[up * 4 + 2]) * world_per_px;
+            urz = 0.5f * (half[up * 4 + 1] + half[up * 4 + 3]) * world_per_px;
+        }
+        for (int k = 0; k < RING; k++) {
+            const float a = pi2 * (float)k / RING, dx = cosf(a), dz = sinf(a);
+            // the facing front/back view and side view, and where the point falls across each (-1..1)
+            const int fv = dz < 0 ? 0 : 2, sv = dx > 0 ? 1 : 3;
+            const float ft = dz < 0 ? dx : -dx, stt = dx > 0 ? dz : -dz;
+            const float w = dx * dx;
+            const int fk = (int)lroundf(M[fv] + H[fv] * ft), sk = (int)lroundf(M[sv] + H[sv] * stt);
+            const uint8_t *fp = views[fv] + ((size_t)j * img_w + fk) * 4, *sp = views[sv] + ((size_t)j * img_w + sk) * 4;
+            if ((float)fp[3] * (1.0f - w) + (float)sp[3] * w < (float)alpha_cut) continue;
+            uint32_t rgb = 0;
+            for (int c = 0; c < 3; c++) {
+                const uint32_t cc = (uint32_t)lroundf((float)fp[c] * (1.0f - w) + (float)sp[c] * w);
+                rgb |= (cc > 255 ? 255 : cc) << (8 * c);
+            }
+            const float nl = sqrtf(dx * dx * rz * rz + dz * dz * rx * rx);  // ellipse normal
+            const float nv[3] = {nl > 0 ? dx * rz / nl : dx, 0.0f, nl > 0 ? dz * rx / nl : dz};
+            const float p[3] = {rx * dx, y, rz * dz};
+            FV_PUSH(p, nv, rgb, bone);
+            // ledge: from the outline above (or the axis at the top) out to this ring
+            const float in_r = sqrtf(urx * urx * dx * dx + urz * urz * dz * dz), out_r = sqrtf(rx * rx * dx * dx + rz * rz * dz * dz);
+            const float upn[3] = {0.0f, 1.0f, 0.0f};
+            // a ledge takes its colour a little further down the views: the outline runs along the
+            // silhouette's top edge, and a dark rim would otherwise be laid over the whole top
+            uint32_t lrgb = 0;
+            if (out_r - st > in_r + 0.5f * st) {
+                const int jj = j + 6 < img_h ? j + 6 : img_h - 1;
+                const uint8_t *fq = views[fv] + ((size_t)jj * img_w + fk) * 4, *sq = views[sv] + ((size_t)jj * img_w + sk) * 4;
+                for (int c = 0; c < 3; c++) {
+                    const uint32_t cc = (uint32_t)lroundf((float)fq[c] * (1.0f - w) + (float)sq[c] * w);
+                    lrgb |= (cc > 255 ? 255 : cc) << (8 * c);
+                }
+            }
+            for (float rr = out_r - st; rr > in_r + 0.5f * st; rr -= st) {
+                const float f = rr / out_r, q[3] = {p[0] * f, y, p[2] * f};
+                FV_PUSH(q, upn, lrgb, bone);
+                if (k % 2 && rr < out_r * 0.6f) break;  // fewer dabs towards the middle, where rings are dense
+            }
+        }
+    }
+    #undef FV_PUSH
+    free(mid);
+    free(half);
+    if (n == 0) {
+        free(d);
+        return NULL;
+    }
+    Splat_Cloud *c = calloc(1, sizeof(Splat_Cloud));
+    c->count = (uint32_t)n;
+    c->data = d;
+    c->pal_n = (uint32_t)pal_n;
+    memcpy(c->pal, pal, sizeof(uint32_t) * (size_t)pal_n);
+    c->bone_n = 2;
+    memcpy(c->bmin, lo, sizeof(lo));
+    memcpy(c->bmax, hi, sizeof(hi));
+    float r2 = 0;
+    for (int k = 0; k < 8; k++) {
+        const float x = (k & 1) ? hi[0] : lo[0], yy = (k & 2) ? hi[1] : lo[1], z = (k & 4) ? hi[2] : lo[2];
+        const float q = x * x + yy * yy + z * z;
+        if (q > r2) r2 = q;
+    }
+    c->radius = sqrtf(r2);
+    return c;
+}
+
 void splat_cloud_free(Splat_Cloud *c) {
     if (!c) return;
     free(c->data);
@@ -222,7 +340,7 @@ static struct {
     sg_image bone_img;
     sg_view bone_tex;
     float *bone_data;              // SPLAT_MAX_SKIN_INSTANCES x (SPLAT_MAX_BONES * 12)
-    Splat_Skin_Model models[16];
+    Splat_Skin_Model models[128];
     int model_n;
     int inst_model[SPLAT_MAX_SKIN_INSTANCES];
     int inst_n;

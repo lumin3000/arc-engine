@@ -80,6 +80,18 @@ typedef struct Splat_Stats {
 Splat_Cloud *splat_cloud_load(const char *path);
 void splat_cloud_free(Splat_Cloud *c);
 
+// A figure from four orthographic views (RGBA, rows top down): views[0] seen from -z, [1] from +x,
+// [2] from +z, [3] from -x; in each the image's right is the viewer's right (+x, +z, -x, -z).
+// Every `step`-th image row becomes a ring of flat dabs: its x and z radii are the half-widths of
+// the opaque run in the -z/+z and the +x/-x views; around the ring the colour blends the two
+// views it faces (the side view's share is cos^2 of the angle to the x axis). The figure stands
+// at y = 0 on its own axis, faces -z, is world_per_px per image pixel, and is made skinned
+// (kind 12) with two bones: 0 below image row split_row, 1 at and above it. Bones and frames are
+// the caller's to fill (bone_n = 2, frame_n = 0). NULL if no row has an opaque run.
+Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
+                                    float world_per_px, int alpha_cut, int split_row,
+                                    const uint32_t *pal, int pal_n);
+
 void splat_init(void);
 void splat_upload(const Splat_Cloud *c, const float view[16]);
 void splat_set_palette(const uint32_t *pal, int n);
