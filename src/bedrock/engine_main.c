@@ -325,6 +325,14 @@ static void engine_on_frame(void) {
       dx *= inv_sqrt2;
       dz *= inv_sqrt2;
     }
+    {
+      // pan along the screen axes: turn by the camera yaw (no-op at yaw 0)
+      const float yaw = ctx.gs->cam_rot[1] * 3.14159265358979f / 180.0f;
+      const float c = cosf(yaw), s = sinf(yaw);
+      const float rx = c * dx + s * dz, rz = -s * dx + c * dz;
+      dx = rx;
+      dz = rz;
+    }
 
     ctx.gs->cam_pos[0] += dx * speed * ctx.delta_t;
     ctx.gs->cam_pos[2] += dz * speed * ctx.delta_t;

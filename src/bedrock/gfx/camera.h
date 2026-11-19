@@ -20,6 +20,12 @@ typedef struct {
   Matrix4 vp_matrix;
 
   bool matrices_dirty;
+  // > 0: orbit mode. position (x, z) is the target on the ground plane y = 0 and the eye sits
+  // orbit_dist back from it, against the view direction given by rotation; 0: position is the eye.
+  float orbit_dist;
+  // world y is scaled by this before viewing (0 = 1). Lets a consumer whose world y is a layer
+  // order rather than a height keep those layers nearly flat under a tilted camera.
+  float world_y_scale;
 } Camera;
 
 void camera_init(Camera *cam);
@@ -41,6 +47,11 @@ void camera_set_ortho_size(Camera *cam, float size);
 void camera_set_aspect(Camera *cam, float aspect);
 
 void camera_set_clip_planes(Camera *cam, float near_clip, float far_clip);
+// orbit mode (see Camera.orbit_dist); dist <= 0 turns it off
+void camera_set_orbit(Camera *cam, float dist);
+// camera-to-world transform (eye placement including orbit mode); the view matrix is its inverse
+void camera_get_world_matrix(Camera *cam, Matrix4 out);
+void camera_set_world_y_scale(Camera *cam, float s);
 
 const Matrix4 *camera_get_vp_matrix(Camera *cam);
 

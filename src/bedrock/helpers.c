@@ -38,10 +38,7 @@ void get_world_space_proj(Matrix4 out) {
 
 void get_world_space_camera(Matrix4 out) {
 
-  Camera *cam = camera_get_main();
-
-  Vec3 scale = {1.0f, 1.0f, 1.0f};
-  matrix4_from_trs(cam->position, cam->rotation, scale, out);
+  camera_get_world_matrix(camera_get_main(), out);
 }
 
 float get_camera_zoom(void) {

@@ -147,12 +147,41 @@ void camera_set_clip_planes(Camera *cam, float near_clip, float far_clip) {
   cam->matrices_dirty = true;
 }
 
-static void compute_view_matrix(Camera *cam) {
+void camera_set_orbit(Camera *cam, float dist) {
+  if (!cam)
+    return;
+  cam->orbit_dist = dist > 0.0f ? dist : 0.0f;
+  cam->matrices_dirty = true;
+}
 
+void camera_get_world_matrix(Camera *cam, Matrix4 world_matrix) {
   Vec3 scale = {1.0f, 1.0f, 1.0f};
-  Matrix4 world_matrix;
-
   matrix4_from_trs(cam->position, cam->rotation, scale, world_matrix);
+  if (cam->orbit_dist > 0.0f) {
+    // eye = ground target - local +Z * dist (this camera looks down its local +Z: the top-down
+    // rotation (90, 0, 0) turns local +Z to world -Y)
+    const float *bz = &world_matrix[8];
+    world_matrix[12] = cam->position[0] - bz[0] * cam->orbit_dist;
+    world_matrix[13] = -bz[1] * cam->orbit_dist;
+    world_matrix[14] = cam->position[2] - bz[2] * cam->orbit_dist;
+  }
+  if (cam->world_y_scale > 0.0f && cam->world_y_scale != 1.0f) {
+    // view = inverse(W) * S(1, s, 1)  <=>  W' = S(1, 1/s, 1) * W (row y of W scaled)
+    const float k = 1.0f / cam->world_y_scale;
+    for (int c = 0; c < 4; c++) world_matrix[c * 4 + 1] *= k;
+  }
+}
+
+void camera_set_world_y_scale(Camera *cam, float s) {
+  if (!cam)
+    return;
+  cam->world_y_scale = s;
+  cam->matrices_dirty = true;
+}
+
+static void compute_view_matrix(Camera *cam) {
+  Matrix4 world_matrix;
+  camera_get_world_matrix(cam, world_matrix);
 
   matrix4_inverse(world_matrix, cam->view_matrix);
 }
