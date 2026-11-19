@@ -191,7 +191,7 @@ layout(binding=0) uniform sampler blit_smp;
 in vec2 v_uv;
 out vec4 frag_color;
 void main() {
-    frag_color = vec4(texture(sampler2D(blit_tex, blit_smp), v_uv).rgb, 1.0);
+    frag_color = texture(sampler2D(blit_tex, blit_smp), v_uv);
 }
 @end
 
@@ -202,7 +202,7 @@ layout(binding=1) uniform fs_resolve_params {
     vec4 pal[48];
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
-    vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised)
+    vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised); w = 1: transparent background
 };
 @image_sample_type u_scene unfilterable_float
 layout(binding=0) uniform texture2D u_scene;
@@ -265,6 +265,7 @@ void main() {
         for (int j = 0; j < 4; j++) if (solid[j] && labels[j] == labels[i]) n++;
         if (n > score) { best = labels[i]; score = n; }
     }
+    bool clear = phase.w > 0.5 && best < 0;
     if (best >= 0) {
         bool outer = coverage < 1.0 || max(max(pixelDepth(p - ivec2(1, 0)), pixelDepth(p + ivec2(1, 0))),
             max(pixelDepth(p - ivec2(0, 1)), pixelDepth(p + ivec2(0, 1)))) >= 0.995;
@@ -274,7 +275,8 @@ void main() {
             tone = min(vec3(1.0), tone * max(1.0, 0.12 / max(dot(tone, vec3(0.30, 0.55, 0.15)), 0.001)));
             vec3 edge = mix(body, tone, 0.65);
             edge = mix(edge, pixelMapped(0), opts.w);
-            c = mix(pixelMapped(0), edge, coverage);
+            // over a transparent background the contour keeps its own colour instead of fading to palette 0
+            c = phase.w > 0.5 ? edge : mix(pixelMapped(0), edge, coverage);
         } else if (opts.w > 0.0) {
             // dark contour where this pixel stands in front of a sharp step back
             float d0 = pixelDepth(p);
@@ -283,7 +285,7 @@ void main() {
             if (dn - d0 > phase.z) c = mix(c, pixelMapped(0), opts.w);
         }
     }
-    frag_color = vec4(c, 1.0);
+    frag_color = vec4(c, clear ? 0.0 : 1.0);
 }
 @end
 

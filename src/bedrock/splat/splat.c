@@ -416,6 +416,13 @@ void splat_init(void) {
     S.blit_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.blit_shd,
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .colors[0].blend = {
+            .enabled = true,
+            .src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA,
+            .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            .src_factor_alpha = SG_BLENDFACTOR_ZERO,
+            .dst_factor_alpha = SG_BLENDFACTOR_ONE,
+        },
         .label = "splat-blit-pipeline",
     });
     S.nearest = sg_make_sampler(&(sg_sampler_desc){
@@ -907,7 +914,7 @@ void splat_render_offscreen(void) {
     rp.opts = (Splat_Vec4){{(float)S.pal_n, S.view.dither, flip, S.view.outline}};
     rp.size = (Splat_Vec4){{(float)S.art_w, (float)S.art_h, (float)S.samples.w, (float)S.samples.h}};
     rp.phase = (Splat_Vec4){{(float)S.view.phase_x, (float)S.view.phase_y,
-                             S.view.outline_step / (2.0f * S.view.radius), 0}};
+                             S.view.outline_step / (2.0f * S.view.radius), S.view.transparent ? 1.0f : 0.0f}};
     vs_quad_params_t qp = {.quad = {{flip, 0, 0, 0}}};
     sg_begin_pass(&(sg_pass){
         .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
@@ -947,7 +954,7 @@ void splat_composite(Splat_Show show) {
     S.last_scale = k;
     // the pass's storage origin decides how a target is read back onto the screen
     vs_quad_params_t qp = {.quad = {{sg_query_features().origin_top_left ? 1.0f : 0.0f, 0, 0, 0}}};
-    sg_apply_viewport(0, 0, tw * k, th * k, true);
+    sg_apply_viewport(S.view.offset_px[0], S.view.offset_px[1], tw * k, th * k, true);
     sg_apply_pipeline(S.blit_pip);
     sg_apply_bindings(&(sg_bindings){.views[VIEW_blit_tex] = tex, .samplers[SMP_blit_smp] = S.nearest});
     sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));

@@ -55,6 +55,8 @@ typedef struct Splat_View {
     int scale;          // composite scale in physical px per art px; 0 = largest integer fit
     int static_cut;     // 1 = draw the static cloud with the opaque cut too (diagnostics)
     int lod_force;      // chunk worlds: -1 = pick the level from the art-pixel size, else that level
+    int transparent;    // 1 = art pixels with no splat are transparent, so the composite lies over the host's frame
+    int offset_px[2];   // composite offset in physical pixels (x right, y down), e.g. to undo art-pixel snapping
 } Splat_View;
 
 typedef enum {
