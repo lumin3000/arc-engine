@@ -205,6 +205,65 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
     return c;
 }
 
+Splat_Cloud *splat_cloud_from_icon(const uint8_t *rgba, int img_w, int img_h, int step, float world_per_px,
+                                   float thickness, int alpha_cut, const uint32_t *pal, int pal_n) {
+    if (step < 1 || img_w < 1 || img_h < 1 || pal_n < 1 || pal_n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] bad from_icon parameters\n");
+    const float st = 0.95f * world_per_px * (float)step, sn = 0.45f * st;
+    size_t cap = 4096, n = 0;
+    float *d = malloc(cap * SPLAT_FLOATS * sizeof(float));
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    #define FI_OPAQUE(i, j) ((i) >= 0 && (j) >= 0 && (i) < img_w && (j) < img_h && rgba[((size_t)(j) * img_w + (i)) * 4 + 3] > alpha_cut)
+    #define FI_PUSH(X, Y, Z, NX, NY, NZ, RGB) do { \
+        if (n == cap) { cap *= 2; d = realloc(d, cap * SPLAT_FLOATS * sizeof(float)); if (!d) SPLAT_FATAL("[splat] from_icon: out of memory\n"); } \
+        float *o = d + n * SPLAT_FLOATS; const float nv[3] = {NX, NY, NZ}, dd = sn * sn - st * st; \
+        o[0] = X; o[1] = Y; o[2] = Z; o[3] = 4.0f; \
+        o[4] = st * st + dd * nv[0] * nv[0]; o[5] = dd * nv[0] * nv[1]; o[6] = dd * nv[0] * nv[2]; o[7] = (float)(RGB); \
+        o[8] = st * st + dd * nv[1] * nv[1]; o[9] = dd * nv[1] * nv[2]; o[10] = st * st + dd * nv[2] * nv[2]; \
+        o[11] = 0.0f; o[12] = o[13] = o[14] = o[15] = 0.0f; \
+        const float p_[3] = {X, Y, Z}; \
+        for (int c_ = 0; c_ < 3; c_++) { if (p_[c_] < lo[c_]) lo[c_] = p_[c_]; if (p_[c_] > hi[c_]) hi[c_] = p_[c_]; } \
+        n++; } while (0)
+    for (int j = step / 2; j < img_h; j += step)
+        for (int i = step / 2; i < img_w; i += step) {
+            if (!FI_OPAQUE(i, j)) continue;
+            const uint8_t *px = rgba + ((size_t)j * img_w + i) * 4;
+            const uint32_t rgb = (uint32_t)px[0] | ((uint32_t)px[1] << 8) | ((uint32_t)px[2] << 16);
+            const float x = ((float)i + 0.5f - 0.5f * (float)img_w) * world_per_px;
+            const float z = (0.5f * (float)img_h - (float)j - 0.5f) * world_per_px;
+            FI_PUSH(x, thickness, z, 0.0f, 1.0f, 0.0f, rgb);
+            // rim: on the silhouette's edge, facing outwards, a little darker
+            const int e[4][2] = {{step, 0}, {-step, 0}, {0, step}, {0, -step}};
+            for (int k = 0; k < 4; k++) {
+                if (FI_OPAQUE(i + e[k][0], j + e[k][1])) continue;
+                const float ox = e[k][0] > 0 ? 1.0f : e[k][0] < 0 ? -1.0f : 0.0f, oz = e[k][1] > 0 ? -1.0f : e[k][1] < 0 ? 1.0f : 0.0f;
+                const uint32_t dark = (uint32_t)(px[0] * 0.7f) | ((uint32_t)(px[1] * 0.7f) << 8) | ((uint32_t)(px[2] * 0.7f) << 16);
+                for (float y = thickness - st; y > -0.25f * st; y -= st)
+                    FI_PUSH(x + ox * 0.5f * st, y < 0 ? 0 : y, z + oz * 0.5f * st, ox, 0.0f, oz, dark);
+            }
+        }
+    #undef FI_PUSH
+    #undef FI_OPAQUE
+    if (n == 0) {
+        free(d);
+        return NULL;
+    }
+    Splat_Cloud *c = calloc(1, sizeof(Splat_Cloud));
+    c->count = (uint32_t)n;
+    c->data = d;
+    c->pal_n = (uint32_t)pal_n;
+    memcpy(c->pal, pal, sizeof(uint32_t) * (size_t)pal_n);
+    memcpy(c->bmin, lo, sizeof(lo));
+    memcpy(c->bmax, hi, sizeof(hi));
+    float r2 = 0;
+    for (int k = 0; k < 8; k++) {
+        const float x = (k & 1) ? hi[0] : lo[0], yy = (k & 2) ? hi[1] : lo[1], z = (k & 4) ? hi[2] : lo[2];
+        const float q = x * x + yy * yy + z * z;
+        if (q > r2) r2 = q;
+    }
+    c->radius = sqrtf(r2);
+    return c;
+}
+
 void splat_cloud_free(Splat_Cloud *c) {
     if (!c) return;
     free(c->data);

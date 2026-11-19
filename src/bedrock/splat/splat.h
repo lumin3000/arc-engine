@@ -80,6 +80,13 @@ typedef struct Splat_Stats {
 Splat_Cloud *splat_cloud_load(const char *path);
 void splat_cloud_free(Splat_Cloud *c);
 
+// A slab from a top-down image (RGBA, rows top down; image up = +z, right = +x): every `step`-th
+// opaque pixel becomes an upward dab at height `thickness`, and pixels on the silhouette's edge
+// add a darker rim down to y = 0. Centred on the origin, world_per_px per image pixel, static
+// (kind 0). NULL if no pixel is opaque.
+Splat_Cloud *splat_cloud_from_icon(const uint8_t *rgba, int img_w, int img_h, int step, float world_per_px,
+                                   float thickness, int alpha_cut, const uint32_t *pal, int pal_n);
+
 // A figure from four orthographic views (RGBA, rows top down): views[0] seen from -z, [1] from +x,
 // [2] from +z, [3] from -x; in each the image's right is the viewer's right (+x, +z, -x, -z).
 // Every `step`-th image row becomes a ring of flat dabs: its x and z radii are the half-widths of
