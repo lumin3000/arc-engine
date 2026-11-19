@@ -611,8 +611,17 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
     return out;
 }
 
-void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pal, int pal_n, float radius) {
-    if (!S.ready) SPLAT_FATAL("[splat] splat_chunks_upload before splat_init\n");
+struct Splat_Baked {
+    float *all;
+    size_t bytes;
+    Splat_Chunk_Range *chunks;
+    int chunk_n;
+    uint64_t placed, rows;
+    uint64_t lod_splats[SPLAT_LOD_LEVELS];
+};
+
+Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
+    Splat_Baked *B = calloc(1, sizeof(Splat_Baked));
     if (ch->total == 0) SPLAT_FATAL("[splat] empty chunk world\n");
     if (ch->total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats exceed one 2 GB buffer\n", (unsigned long long)ch->total);
     const int n = ch->nx * ch->nz;
@@ -630,7 +639,7 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
     float **lev = calloc((size_t)n * SPLAT_LOD_LEVELS, sizeof(float *));
     uint32_t *lev_n = calloc((size_t)n * SPLAT_LOD_LEVELS, sizeof(uint32_t));
     uint64_t total = 0;
-    memset(S.lod_splats, 0, sizeof(S.lod_splats));
+    
     for (int c = 0; c < used; c++) {
         const int k = order[c].idx;
         lev[k * SPLAT_LOD_LEVELS] = ch->data[k];
@@ -645,22 +654,21 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
         }
         for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
             total += lev_n[k * SPLAT_LOD_LEVELS + l];
-            S.lod_splats[l] += lev_n[k * SPLAT_LOD_LEVELS + l];
+            B->lod_splats[l] += lev_n[k * SPLAT_LOD_LEVELS + l];
         }
     }
     if (total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats with levels exceed one 2 GB buffer\n", (unsigned long long)total);
     const size_t bytes = (size_t)total * SPLAT_FLOATS * 4;
     float *all = malloc(bytes);
     if (!all) SPLAT_FATAL("[splat] out of memory for %zu bytes\n", bytes);
-    free(S.chunks);
-    S.chunks = calloc((size_t)used, sizeof(Splat_Chunk_Range));
-    S.chunk_n = used;
+    B->chunks = calloc((size_t)used, sizeof(Splat_Chunk_Range));
+    B->chunk_n = used;
     uint32_t at = 0;
     Sort_Item *items = NULL;
     uint32_t items_cap = 0;
     for (int c = 0; c < used; c++) {
         const int k = order[c].idx;
-        Splat_Chunk_Range *r = &S.chunks[c];
+        Splat_Chunk_Range *r = &B->chunks[c];
         for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
             float *lo = r->lo[l], *hi = r->hi[l];
             for (int a = 0; a < 3; a++) { lo[a] = 1e30f; hi[a] = -1e30f; }
@@ -697,24 +705,42 @@ void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pa
     free(lev_n);
     free(items);
     free(order);
-    if (S.count) sg_destroy_buffer(S.instances);
-    S.instances = sg_make_buffer(&(sg_buffer_desc){
-        .usage = {.vertex_buffer = true, .immutable = true},
-        .data = {.ptr = all, .size = bytes},
-        .label = "splat-chunks",
-    });
-    free(all);
-    S.count = (uint32_t)ch->total;
-    S.scene_radius = radius;
-    splat_set_palette(pal, pal_n);
-    LOG_INFO("[splat] uploaded %llu splats in %d chunks with %d levels: %llu rows (%.1f MB); per level %llu %llu %llu %llu %llu %llu\n",
-             (unsigned long long)ch->total, used, SPLAT_LOD_LEVELS, (unsigned long long)total, (double)bytes / 1048576.0,
-             (unsigned long long)S.lod_splats[0], (unsigned long long)S.lod_splats[1], (unsigned long long)S.lod_splats[2],
-             (unsigned long long)S.lod_splats[3], (unsigned long long)S.lod_splats[4], (unsigned long long)S.lod_splats[5]);
+    B->all = all;
+    B->bytes = bytes;
+    B->placed = ch->total;
+    B->rows = total;
     free(ch->data);
     free(ch->count);
     free(ch->cap);
     free(ch);
+    return B;
+}
+
+void splat_baked_upload(Splat_Baked *B, const uint32_t *pal, int pal_n, float radius) {
+    if (!S.ready) SPLAT_FATAL("[splat] splat_baked_upload before splat_init\n");
+    if (S.count) sg_destroy_buffer(S.instances);
+    S.instances = sg_make_buffer(&(sg_buffer_desc){
+        .usage = {.vertex_buffer = true, .immutable = true},
+        .data = {.ptr = B->all, .size = B->bytes},
+        .label = "splat-chunks",
+    });
+    free(S.chunks);
+    S.chunks = B->chunks;
+    S.chunk_n = B->chunk_n;
+    memcpy(S.lod_splats, B->lod_splats, sizeof(S.lod_splats));
+    S.count = (uint32_t)B->placed;
+    S.scene_radius = radius;
+    splat_set_palette(pal, pal_n);
+    LOG_INFO("[splat] uploaded %llu splats in %d chunks with %d levels: %llu rows (%.1f MB); per level %llu %llu %llu %llu %llu %llu\n",
+             (unsigned long long)B->placed, B->chunk_n, SPLAT_LOD_LEVELS, (unsigned long long)B->rows, (double)B->bytes / 1048576.0,
+             (unsigned long long)S.lod_splats[0], (unsigned long long)S.lod_splats[1], (unsigned long long)S.lod_splats[2],
+             (unsigned long long)S.lod_splats[3], (unsigned long long)S.lod_splats[4], (unsigned long long)S.lod_splats[5]);
+    free(B->all);
+    free(B);
+}
+
+void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pal, int pal_n, float radius) {
+    splat_baked_upload(splat_chunks_bake(ch, V), pal, pal_n, radius);
 }
 
 // does a world-space box reach the target? (orthographic projection with the pass's view)

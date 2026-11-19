@@ -109,6 +109,11 @@ Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int
 void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float offset[3]);
 uint64_t splat_chunks_count(const Splat_Chunks *ch);
 void splat_chunks_upload(Splat_Chunks *ch, const float view[16], const uint32_t *pal, int pal_n, float radius);
+// The same in two halves: bake (sort, levels, bounds; CPU only, touches no GPU or shared state,
+// so it may run on any thread; consumes ch) and upload (GPU buffer, main thread; consumes baked).
+typedef struct Splat_Baked Splat_Baked;
+Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float view[16]);
+void splat_baked_upload(Splat_Baked *baked, const uint32_t *pal, int pal_n, float radius);
 
 // Skinned clouds (every splat kind 12, carried by bones): uploaded at rest; each instance has
 // its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
