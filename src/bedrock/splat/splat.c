@@ -1162,9 +1162,7 @@ static bool box_visible(const float lo[3], const float hi[3], const float *V, do
     return mxx >= -2.0f && mnx <= (float)w + 2.0f && mxy >= -2.0f && mny <= (float)h + 2.0f;
 }
 
-int splat_skin_add_model(const Splat_Cloud *c) {
-    if (!S.ready) SPLAT_FATAL("[splat] splat_skin_add_model before splat_init\n");
-    if (S.model_n >= (int)(sizeof(S.models) / sizeof(S.models[0]))) SPLAT_FATAL("[splat] too many skinned models\n");
+static sg_buffer skin_model_buffer(const Splat_Cloud *c) {
     if (c->bone_n == 0 || c->bone_n > SPLAT_MAX_BONES) SPLAT_FATAL("[splat] skinned model needs 1..%d bones, has %u\n", SPLAT_MAX_BONES, c->bone_n);
     for (uint32_t i = 0; i < c->count; i++) {
         const float *d = c->data + (size_t)i * SPLAT_FLOATS;
@@ -1172,17 +1170,32 @@ int splat_skin_add_model(const Splat_Cloud *c) {
         if (d[12] < 0 || d[12] >= (float)c->bone_n || d[13] < 0 || d[13] >= (float)c->bone_n)
             SPLAT_FATAL("[splat] skinned model splat %u has bone %g/%g of %u\n", i, d[12], d[13], c->bone_n);
     }
-    Splat_Skin_Model *m = &S.models[S.model_n];
-    m->buf = sg_make_buffer(&(sg_buffer_desc){
+    if (S.pal_n == 0) splat_set_palette(c->pal, (int)c->pal_n);
+    if (c->radius > S.scene_radius) S.scene_radius = c->radius;
+    return sg_make_buffer(&(sg_buffer_desc){
         .usage = {.vertex_buffer = true, .immutable = true},
         .data = {.ptr = c->data, .size = (size_t)c->count * SPLAT_FLOATS * 4},
         .label = "splat-skin-model",
     });
+}
+
+int splat_skin_add_model(const Splat_Cloud *c) {
+    if (!S.ready) SPLAT_FATAL("[splat] splat_skin_add_model before splat_init\n");
+    if (S.model_n >= (int)(sizeof(S.models) / sizeof(S.models[0]))) SPLAT_FATAL("[splat] too many skinned models\n");
+    Splat_Skin_Model *m = &S.models[S.model_n];
+    m->buf = skin_model_buffer(c);
     m->count = c->count;
     m->bone_n = (int)c->bone_n;
-    if (S.pal_n == 0) splat_set_palette(c->pal, (int)c->pal_n);
-    if (c->radius > S.scene_radius) S.scene_radius = c->radius;
     return S.model_n++;
+}
+
+void splat_skin_set_model(int model, const Splat_Cloud *c) {
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    Splat_Skin_Model *m = &S.models[model];
+    if ((int)c->bone_n != m->bone_n) SPLAT_FATAL("[splat] skinned model %d has %d bones, its replacement %u\n", model, m->bone_n, c->bone_n);
+    sg_destroy_buffer(m->buf);
+    m->buf = skin_model_buffer(c);
+    m->count = c->count;
 }
 
 int splat_skin_add_instance(int model) {

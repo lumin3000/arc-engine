@@ -170,6 +170,8 @@ void splat_chunk_baked_free(Splat_Chunk_Baked *baked);
 #define SPLAT_MAX_BONES 64
 #define SPLAT_MAX_SKIN_INSTANCES 256
 int splat_skin_add_model(const Splat_Cloud *c);
+// puts other splats in a model's place (the same number of bones); its instances stay as they are
+void splat_skin_set_model(int model, const Splat_Cloud *c);
 int splat_skin_add_instance(int model);
 void splat_skin_set_bones(int instance, const float *bones, int bone_n);
 // bounding sphere of an instance in world space, for culling (radius <= 0: always drawn)
