@@ -124,4 +124,11 @@ Splat_View splat_view_from_cloud_camera(const Splat_Cloud *c);
 Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float art_world, int art_w, int art_h,
                             float radius, float dither);
 
+// Oblique "top-down" projection on a cell grid (x east, z north, y up): the ground plane maps
+// to the screen without foreshortening (screen x = x, screen up = z + k * y), so every cell is
+// square on screen and ground picking is the inverse of a plain 2D top-down view; heights rise
+// up the screen by k per unit. Depth runs along the line of sight (down and north).
+Splat_View splat_view_oblique(float k, const float target[3], float art_world, int art_w, int art_h, float radius,
+                              float dither);
+
 #endif

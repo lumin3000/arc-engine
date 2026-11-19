@@ -235,6 +235,49 @@ static struct {
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
 } S;
 
+Splat_View splat_view_oblique(float k, const float target[3], float art_world, int art_w, int art_h, float radius,
+                              float dither) {
+    if (art_world <= 0.0f || art_w <= 0 || art_h <= 0 || k < 0.0f) SPLAT_FATAL("[splat] bad oblique view parameters\n");
+    const double oh = 0.5 * art_world * (double)art_h;
+    const double dn = sqrt(1.0 + (double)k * k);
+    // rows: screen x, screen y (up), view z (towards the viewer: up and south)
+    const double xa[3] = {1, 0, 0}, ya[3] = {0, k, 1}, za[3] = {0, 1.0 / dn, -(double)k / dn};
+    const double lat_off = 0.375;
+    const double tx = target[0], ty = (double)k * target[1] + target[2];
+    const double nx = floor(tx / art_world - lat_off + 0.5), ny = floor(ty / art_world - lat_off + 0.5);
+    const double sx = (nx + lat_off) * art_world, sy = (ny + lat_off) * art_world;
+    // panning north moves the target along the line of sight too (unlike the 45-degree view, where
+    // pans stay in the view plane). The depth normalisation is centred on the target's depth; it is
+    // quantised to half the depth radius so that ordinary pans leave every splat's normalised depth
+    // bit-identical (it then shifts only when a pan crosses a step), and the radius grows by half a
+    // step so the visible range stays covered.
+    const double r0 = fmin((double)radius, 2.0 * oh + 8.0), zstep = r0 * 0.5;
+    const double tz = za[0] * target[0] + za[1] * target[1] + za[2] * target[2];
+    const double tzq = floor(tz / zstep + 0.5) * zstep;
+    const double eye_d = oh / tan(19.0 * 3.14159265358979 / 180.0) + 2.0 * radius + 4.0;
+    Splat_View v = {0};
+    const float m[16] = {
+        (float)xa[0], (float)ya[0], (float)za[0], 0,
+        (float)xa[1], (float)ya[1], (float)za[1], 0,
+        (float)xa[2], (float)ya[2], (float)za[2], 0,
+        (float)-sx, (float)-sy, (float)-(tzq + eye_d), 1,
+    };
+    memcpy(v.view, m, sizeof(m));
+    v.ortho_half_h = (float)oh;
+    v.eye_dist = (float)eye_d;
+    v.radius = (float)(r0 + zstep * 0.5);
+    v.near_dist = 0.4f;
+    v.art_w = art_w;
+    v.art_h = art_h;
+    v.dither = dither;
+    v.outline_step = 0.35f;
+    v.lod_force = -1;
+    const long px0 = (long)nx - art_w / 2, py0 = (long)ny - art_h / 2;
+    v.phase_x = (int)(((px0 % 4) + 4) % 4);
+    v.phase_y = (int)(((py0 % 4) + 4) % 4);
+    return v;
+}
+
 static void target_destroy(Splat_Target *t) {
     if (t->w == 0) return;
     sg_destroy_view(t->color_att);
