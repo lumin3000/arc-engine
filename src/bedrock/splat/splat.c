@@ -810,7 +810,14 @@ struct Splat_Baked {
 Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
     Splat_Baked *B = calloc(1, sizeof(Splat_Baked));
     B->cell0 = s_lod_cell0;
-    if (ch->total == 0) SPLAT_FATAL("[splat] empty chunk world\n");
+    if (ch->total == 0) {
+        // an empty world is valid (a map with nothing on it): upload clears the static cloud
+        free(ch->data);
+        free(ch->count);
+        free(ch->cap);
+        free(ch);
+        return B;
+    }
     if (ch->total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats exceed one 2 GB buffer\n", (unsigned long long)ch->total);
     const int n = ch->nx * ch->nz;
     Chunk_Order *order = malloc(sizeof(Chunk_Order) * (size_t)n);
@@ -907,11 +914,12 @@ Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
 void splat_baked_upload(Splat_Baked *B, const uint32_t *pal, int pal_n, float radius) {
     if (!S.ready) SPLAT_FATAL("[splat] splat_baked_upload before splat_init\n");
     if (S.count) sg_destroy_buffer(S.instances);
-    S.instances = sg_make_buffer(&(sg_buffer_desc){
-        .usage = {.vertex_buffer = true, .immutable = true},
-        .data = {.ptr = B->all, .size = B->bytes},
-        .label = "splat-chunks",
-    });
+    if (B->bytes)
+        S.instances = sg_make_buffer(&(sg_buffer_desc){
+            .usage = {.vertex_buffer = true, .immutable = true},
+            .data = {.ptr = B->all, .size = B->bytes},
+            .label = "splat-chunks",
+        });
     free(S.chunks);
     S.chunks = B->chunks;
     S.chunk_n = B->chunk_n;
