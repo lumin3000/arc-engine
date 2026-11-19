@@ -230,6 +230,7 @@ static void engine_on_init(void) {
   arc_engine_state()->post_mesh_render_hook = g_cfg.on_post_mesh_render;
   arc_engine_state()->pre_pass_render_hook = g_cfg.on_pre_pass_render;
   arc_engine_state()->post_main_render_hook = g_cfg.on_post_main_render;
+  arc_engine_state()->pass_begin_render_hook = g_cfg.on_pass_begin_render;
   if (g_cfg.on_register_js_bindings) {
     js_runtime_set_game_bindings_registrar(g_cfg.on_register_js_bindings);
   }

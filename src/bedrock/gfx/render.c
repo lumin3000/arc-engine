@@ -900,6 +900,12 @@ void core_render_frame_end(void) {
     sg_begin_pass(&(sg_pass){.action = render_state.pass_action,
                              .swapchain = sglue_swapchain()});
 
+    {
+      // backdrop of the frame: before the sprite batches and every mesh queue
+      void (*begin)(void) = arc_engine_state()->pass_begin_render_hook;
+      if (begin) begin();
+    }
+
     sg_apply_pipeline(render_state.pip);
     sg_apply_bindings(&render_state.bind);
 

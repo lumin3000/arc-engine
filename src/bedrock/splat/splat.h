@@ -87,6 +87,15 @@ void splat_cloud_free(Splat_Cloud *c);
 Splat_Cloud *splat_cloud_from_icon(const uint8_t *rgba, int img_w, int img_h, int step, float world_per_px,
                                    float thickness, int alpha_cut, const uint32_t *pal, int pal_n);
 
+// A solid from a triangle mesh (positions and normals 3 floats per vertex, rgb 3 bytes per vertex,
+// 16-bit indices): every triangle is covered with flat dabs about `spacing` apart, facing the
+// triangle's normal, coloured by the vertex colours times a fixed directional shade
+// (ambient + (1 - ambient) * max(0, n . light), light normalised by the caller). Triangles
+// facing straight down are left out. Coordinates are taken as they are (y up), static (kind 0).
+// NULL if the mesh yields no dab.
+Splat_Cloud *splat_cloud_from_mesh(const float *pos, const uint8_t *rgb, int vert_n, const uint16_t *idx, int idx_n,
+                                   float spacing, const float light[3], float ambient, const uint32_t *pal, int pal_n);
+
 // A figure from four orthographic views (RGBA, rows top down): views[0] seen from -z, [1] from +x,
 // [2] from +z, [3] from -x; in each the image's right is the viewer's right (+x, +z, -x, -z).
 // Every `step`-th image row becomes a ring of flat dabs: its x and z radii are the half-widths of

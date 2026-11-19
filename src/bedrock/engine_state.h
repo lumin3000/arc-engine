@@ -86,6 +86,9 @@ typedef struct {
     // Per-frame hook inside the swapchain pass, after the main sprite batch and
     // before the 4000+ overlay band. Set via Engine_Config.on_post_main_render.
     void (*post_main_render_hook)(void);
+    // Per-frame hook inside the swapchain pass right after it begins, before the
+    // sprite batches and mesh queues. Set via Engine_Config.on_pass_begin_render.
+    void (*pass_begin_render_hook)(void);
     // render queue at which the 0-4000 band is split around post_mesh_render_hook (0 = after the band)
     int post_mesh_render_queue;
 } Arc_Engine_State;

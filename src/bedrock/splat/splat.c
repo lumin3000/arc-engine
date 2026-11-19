@@ -266,6 +266,81 @@ Splat_Cloud *splat_cloud_from_icon(const uint8_t *rgba, int img_w, int img_h, in
     return c;
 }
 
+Splat_Cloud *splat_cloud_from_mesh(const float *pos, const uint8_t *rgb, int vert_n, const uint16_t *idx, int idx_n,
+                                   float spacing, const float light[3], float ambient, const uint32_t *pal, int pal_n) {
+    if (vert_n < 3 || idx_n < 3 || idx_n % 3 || !(spacing > 0) || pal_n < 1 || pal_n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] bad from_mesh parameters\n");
+    size_t cap = 4096, n = 0;
+    float *d = malloc(cap * SPLAT_FLOATS * sizeof(float));
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (int t = 0; t < idx_n; t += 3) {
+        const int ia = idx[t], ib = idx[t + 1], ic = idx[t + 2];
+        if (ia >= vert_n || ib >= vert_n || ic >= vert_n) SPLAT_FATAL("[splat] from_mesh: index beyond %d vertices\n", vert_n);
+        const float *a = pos + ia * 3, *b = pos + ib * 3, *c = pos + ic * 3;
+        const float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        float nv[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        const float nl = sqrtf(nv[0] * nv[0] + nv[1] * nv[1] + nv[2] * nv[2]);
+        if (nl < 1e-12f) continue;  // degenerate
+        for (int k = 0; k < 3; k++) nv[k] /= nl;
+        if (nv[1] < -0.7f) continue;  // underside
+        const float l1 = sqrtf(e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2]), l2 = sqrtf(e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2]);
+        const float e3[3] = {c[0] - b[0], c[1] - b[1], c[2] - b[2]}, l3 = sqrtf(e3[0] * e3[0] + e3[1] * e3[1] + e3[2] * e3[2]);
+        const float lmax = l1 > l2 ? (l1 > l3 ? l1 : l3) : (l2 > l3 ? l2 : l3);
+        int m = (int)ceilf(lmax / spacing);
+        if (m < 1) m = 1;
+        if (m > 512) SPLAT_FATAL("[splat] from_mesh: a %.2f long triangle edge at spacing %.4f\n", lmax, spacing);
+        // dab size from the sample spacing actually reached on this triangle (area per sample)
+        const float st = 0.95f * sqrtf(0.5f * nl / (float)(m * m)), sn = 0.45f * st, dd = sn * sn - st * st;
+        const float ndl = nv[0] * light[0] + nv[1] * light[1] + nv[2] * light[2];
+        const float shade = ambient + (1.0f - ambient) * (ndl > 0 ? ndl : 0);
+        const uint8_t *ca = rgb + ia * 3, *cb = rgb + ib * 3, *cc = rgb + ic * 3;
+        // the m*m small triangles of the subdivision, one dab at each one's centroid
+        for (int i = 0; i < m; i++)
+            for (int j = 0; j < m - i; j++)
+                for (int up = 0; up < 2; up++) {
+                    if (up && j >= m - i - 1) continue;
+                    const float u = ((float)i + (up ? 2.0f : 1.0f) / 3.0f) / (float)m, v = ((float)j + (up ? 2.0f : 1.0f) / 3.0f) / (float)m, w = 1.0f - u - v;
+                    if (n == cap) {
+                        cap *= 2;
+                        d = realloc(d, cap * SPLAT_FLOATS * sizeof(float));
+                        if (!d) SPLAT_FATAL("[splat] from_mesh: out of memory\n");
+                    }
+                    float *o = d + n * SPLAT_FLOATS;
+                    uint32_t col = 0;
+                    for (int k = 0; k < 3; k++) {
+                        o[k] = w * a[k] + u * b[k] + v * c[k];
+                        if (o[k] < lo[k]) lo[k] = o[k];
+                        if (o[k] > hi[k]) hi[k] = o[k];
+                        const float cv = shade * (w * (float)ca[k] + u * (float)cb[k] + v * (float)cc[k]);
+                        col |= (uint32_t)lroundf(cv > 255 ? 255 : cv) << (8 * k);
+                    }
+                    o[3] = 4.0f;
+                    o[4] = st * st + dd * nv[0] * nv[0]; o[5] = dd * nv[0] * nv[1]; o[6] = dd * nv[0] * nv[2]; o[7] = (float)col;
+                    o[8] = st * st + dd * nv[1] * nv[1]; o[9] = dd * nv[1] * nv[2]; o[10] = st * st + dd * nv[2] * nv[2];
+                    o[11] = 0.0f; o[12] = o[13] = o[14] = o[15] = 0.0f;
+                    n++;
+                }
+    }
+    if (n == 0) {
+        free(d);
+        return NULL;
+    }
+    Splat_Cloud *c = calloc(1, sizeof(Splat_Cloud));
+    c->count = (uint32_t)n;
+    c->data = d;
+    c->pal_n = (uint32_t)pal_n;
+    memcpy(c->pal, pal, sizeof(uint32_t) * (size_t)pal_n);
+    memcpy(c->bmin, lo, sizeof(lo));
+    memcpy(c->bmax, hi, sizeof(hi));
+    float r2 = 0;
+    for (int k = 0; k < 8; k++) {
+        const float x = (k & 1) ? hi[0] : lo[0], yy = (k & 2) ? hi[1] : lo[1], z = (k & 4) ? hi[2] : lo[2];
+        const float q = x * x + yy * yy + z * z;
+        if (q > r2) r2 = q;
+    }
+    c->radius = sqrtf(r2);
+    return c;
+}
+
 void splat_cloud_free(Splat_Cloud *c) {
     if (!c) return;
     free(c->data);
