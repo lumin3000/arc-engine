@@ -88,6 +88,13 @@ void splat_render_offscreen(void);
 void splat_composite(Splat_Show show);
 Splat_Stats splat_stats(void);
 
+// Occluders for the next composite: things the host already drew (e.g. 2D characters). Each is
+// 5 floats: world ground rectangle x0, z0, x1, z1 (the screen area the drawing covers, measured
+// on the ground plane) and the world z of its foot, whose depth decides who is in front. At
+// most SPLAT_MAX_OCCLUDERS; more is fatal.
+#define SPLAT_MAX_OCCLUDERS 32
+void splat_set_occluders(const float *occ, int n);
+
 // Chunked static worlds: copies of prototype clouds placed by translation into a grid of
 // square chunks on x/z. splat_chunks_upload sorts each chunk back to front for the view
 // direction, orders the chunks back to front, uploads one buffer and frees the CPU copy.

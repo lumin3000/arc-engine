@@ -188,10 +188,44 @@ void main() {
 @fs fs_blit
 layout(binding=0) uniform texture2D blit_tex;
 layout(binding=0) uniform sampler blit_smp;
+@image_sample_type blit_depth unfilterable_float
+layout(binding=1) uniform texture2D blit_depth;
+@sampler_type blit_dsmp nonfiltering
+layout(binding=1) uniform sampler blit_dsmp;
+// occluders: things the host drew before the composite (e.g. 2D characters). Inside an
+// occluder's rectangle (art pixels, y-up), splat pixels farther than the occluder's depth are
+// dropped so the host's drawing shows through; nearer ones cover it.
+layout(binding=1) uniform fs_blit_params {
+    vec4 occ_rect[32];    // x0, y0, x1, y1 in art pixels (y-up)
+    vec4 occ_depth[32];   // x = normalised depth of the occluder's foot
+    vec4 occ_info;        // x = count, y = art height, z = 1 if storage origin is top-left, w = samples height
+};
 in vec2 v_uv;
 out vec4 frag_color;
 void main() {
-    frag_color = texture(sampler2D(blit_tex, blit_smp), v_uv);
+    vec4 c = texture(sampler2D(blit_tex, blit_smp), v_uv);
+    int n = int(occ_info.x);
+    if (n > 0 && c.a > 0.0) {
+        vec2 art = vec2(textureSize(sampler2D(blit_tex, blit_smp), 0));
+        // art pixel under this fragment, y-up
+        vec2 a = vec2(v_uv.x, occ_info.z > 0.5 ? 1.0 - v_uv.y : v_uv.y) * art;
+        ivec2 ap = ivec2(floor(a));
+        float d = 1.0;
+        for (int j = 0; j < 4; j++) {
+            ivec2 q = ap * 2 + ivec2(j & 1, j >> 1);
+            q.y = occ_info.z > 0.5 ? int(occ_info.w) - 1 - q.y : q.y;
+            d = min(d, texelFetch(sampler2D(blit_depth, blit_dsmp), q, 0).r);
+        }
+        for (int i = 0; i < 32; i++) {
+            if (i >= n) break;
+            vec4 r = occ_rect[i];
+            if (a.x >= r.x && a.x < r.z && a.y >= r.y && a.y < r.w) {
+                float od = occ_depth[i].x;
+                if (d > od) discard;
+            }
+        }
+    }
+    frag_color = c;
 }
 @end
 

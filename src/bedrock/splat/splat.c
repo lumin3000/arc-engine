@@ -233,6 +233,8 @@ static struct {
     uint64_t splats_drawn;
     uint64_t lod_splats[SPLAT_LOD_LEVELS];
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
+    float occ[SPLAT_MAX_OCCLUDERS * 5];
+    int occ_n;
 } S;
 
 Splat_View splat_view_oblique(float k, const float target[3], float art_world, int art_w, int art_h, float radius,
@@ -954,12 +956,47 @@ void splat_composite(Splat_Show show) {
     S.last_scale = k;
     // the pass's storage origin decides how a target is read back onto the screen
     vs_quad_params_t qp = {.quad = {{sg_query_features().origin_top_left ? 1.0f : 0.0f, 0, 0, 0}}};
+    // occluders to art-pixel rectangles and normalised depths (same formulas as the splat pass)
+    fs_blit_params_t bp;
+    memset(&bp, 0, sizeof(bp));
+    if (show == SPLAT_SHOW_ART && S.occ_n) {
+        const Splat_View *v = &S.view;
+        const double f = (double)S.art_h / 2.0 / (double)v->ortho_half_h;  // art px per world unit
+        const double cx = f * (double)v->view[12] + S.art_w / 2.0, cy = f * (double)v->view[13] + S.art_h / 2.0;
+        for (int i = 0; i < S.occ_n; i++) {
+            const float *o = S.occ + i * 5;
+            float lo[2] = {1e30f, 1e30f}, hi[2] = {-1e30f, -1e30f};
+            for (int c = 0; c < 4; c++) {
+                const float x = (c & 1) ? o[2] : o[0], z = (c & 2) ? o[3] : o[1];
+                const float sx = (float)(f * (v->view[0] * x + v->view[8] * z) + cx);
+                const float sy = (float)(f * (v->view[1] * x + v->view[9] * z) + cy);
+                lo[0] = fminf(lo[0], sx); hi[0] = fmaxf(hi[0], sx);
+                lo[1] = fminf(lo[1], sy); hi[1] = fmaxf(hi[1], sy);
+            }
+            bp.occ_rect[i] = (Splat_Vec4){{lo[0], lo[1], hi[0], hi[1]}};
+            const float pz = v->view[10] * o[4] + v->view[14];  // foot on the ground (x does not enter the depth row)
+            float dn = (-pz - (v->eye_dist - v->radius)) / (2.0f * v->radius);
+            dn = dn < 0 ? 0 : dn > 1 ? 1 : dn;
+            bp.occ_depth[i].v[0] = dn;
+        }
+        bp.occ_info = (Splat_Vec4){{(float)S.occ_n, (float)S.art_h, sg_query_features().origin_top_left ? 1.0f : 0.0f, (float)S.samples.h}};
+    }
     sg_apply_viewport(S.view.offset_px[0], S.view.offset_px[1], tw * k, th * k, true);
     sg_apply_pipeline(S.blit_pip);
-    sg_apply_bindings(&(sg_bindings){.views[VIEW_blit_tex] = tex, .samplers[SMP_blit_smp] = S.nearest});
+    sg_apply_bindings(&(sg_bindings){
+        .views = {[VIEW_blit_tex] = tex, [VIEW_blit_depth] = S.samples.depth_tex},
+        .samplers = {[SMP_blit_smp] = S.nearest, [SMP_blit_dsmp] = S.nearest},
+    });
     sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));
+    sg_apply_uniforms(UB_fs_blit_params, &SG_RANGE(bp));
     sg_draw(0, 4, 1);
     sg_apply_viewport(0, 0, sw, sh, true);
+}
+
+void splat_set_occluders(const float *occ, int n) {
+    if (n < 0 || n > SPLAT_MAX_OCCLUDERS) SPLAT_FATAL("[splat] %d occluders (max %d)\n", n, SPLAT_MAX_OCCLUDERS);
+    if (n) memcpy(S.occ, occ, sizeof(float) * 5 * (size_t)n);
+    S.occ_n = n;
 }
 
 Splat_Stats splat_stats(void) {
