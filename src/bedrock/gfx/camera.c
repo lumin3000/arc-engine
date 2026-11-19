@@ -165,7 +165,7 @@ void camera_get_world_matrix(Camera *cam, Matrix4 world_matrix) {
     world_matrix[13] = -bz[1] * cam->orbit_dist;
     world_matrix[14] = cam->position[2] - bz[2] * cam->orbit_dist;
   }
-  if (cam->world_y_scale > 0.0f && cam->world_y_scale != 1.0f) {
+  if (cam->world_y_scale != 0.0f && cam->world_y_scale != 1.0f) {
     // view = inverse(W) * S(1, s, 1)  <=>  W' = S(1, 1/s, 1) * W (row y of W scaled)
     const float k = 1.0f / cam->world_y_scale;
     for (int c = 0; c < 4; c++) world_matrix[c * 4 + 1] *= k;
@@ -199,6 +199,17 @@ static void compute_projection_matrix(Camera *cam) {
 
   matrix4_ortho3d(left, right, bottom, top, znear, zfar,
                   cam->projection_matrix);
+  if (cam->depth_near_wins) {
+    cam->projection_matrix[10] = -cam->projection_matrix[10];
+    cam->projection_matrix[14] = 1.0f - cam->projection_matrix[14];
+  }
+}
+
+void camera_set_depth_near_wins(Camera *cam, bool on) {
+  if (!cam)
+    return;
+  cam->depth_near_wins = on;
+  cam->matrices_dirty = true;
 }
 
 void camera_update_matrices(Camera *cam) {

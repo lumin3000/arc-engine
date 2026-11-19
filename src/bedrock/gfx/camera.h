@@ -26,6 +26,9 @@ typedef struct {
   // world y is scaled by this before viewing (0 = 1). Lets a consumer whose world y is a layer
   // order rather than a height keep those layers nearly flat under a tilted camera.
   float world_y_scale;
+  // true: clip depth runs 1 - z, so with LESS_EQUAL the surface nearer the eye wins
+  // (default: the farther one wins, as the top-down 2D layering expects)
+  bool depth_near_wins;
 } Camera;
 
 void camera_init(Camera *cam);
@@ -52,6 +55,7 @@ void camera_set_orbit(Camera *cam, float dist);
 // camera-to-world transform (eye placement including orbit mode); the view matrix is its inverse
 void camera_get_world_matrix(Camera *cam, Matrix4 out);
 void camera_set_world_y_scale(Camera *cam, float s);
+void camera_set_depth_near_wins(Camera *cam, bool on);
 
 const Matrix4 *camera_get_vp_matrix(Camera *cam);
 
