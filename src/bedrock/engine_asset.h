@@ -30,6 +30,11 @@ const char *engine_texture_search_path(int i);
 // generated_shader.h. Silently ignored if slot is out of range.
 void engine_register_view(int slot, sg_view view);
 
+// Split the 0-4000 render-queue band at `rq` around Engine_Config.on_post_mesh_render:
+// content below rq draws before the hook, content from rq up after it. 0 (default) keeps the
+// hook after the whole band.
+void engine_set_post_mesh_render_queue(int rq);
+
 // Per-frame fragment-shader global (Unity's Shader.SetGlobalFloat
 // equivalent). graphics.c writes this into Shader_Data.params[1] each
 // time it submits a mesh — games that need world-to-UV mapping set it

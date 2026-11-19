@@ -1000,17 +1000,28 @@ void core_render_frame_end(void) {
     extern int graphics_submit_meshes_range_count(int rq_min, int rq_max,
                                                   bool clear_after,
                                                   const Vec4 debug_color);
-    g_dc_breakdown.mesh_rq_0_4000 =
-        graphics_submit_meshes_range_count(0, 4000, false, NULL);
-
     // instanced 分带冲刷 (rq 0-4000): 与 mesh 同带内容在 4000+ 覆盖层
     // (雾/overlay) 之前落屏, 保持 renderQueue 遮挡语义
     extern int graphics_submit_instanced_range_count(int rq_min, int rq_max);
-    g_dc_breakdown.instanced =
-        graphics_submit_instanced_range_count(0, 4000);
-
-    {
-      void (*hook)(void) = arc_engine_state()->post_mesh_render_hook;
+    // post-mesh hook position: default after the whole 0-4000 band; with
+    // engine_set_post_mesh_render_queue(rq) the band is split at rq (meshes and
+    // instanced below rq, hook, meshes and instanced from rq up to 4000)
+    const int split = arc_engine_state()->post_mesh_render_queue;
+    void (*hook)(void) = arc_engine_state()->post_mesh_render_hook;
+    if (split > 0 && split < 4000) {
+      g_dc_breakdown.mesh_rq_0_4000 = graphics_submit_meshes_range_count(0, split, false, NULL);
+      g_dc_breakdown.instanced = graphics_submit_instanced_range_count(0, split);
+      if (hook) {
+        hook();
+        sg_apply_pipeline(render_state.pip);
+        sg_apply_bindings(&render_state.bind);
+        sg_apply_uniforms(UB_VS_MVP, &(sg_range){.ptr = &vs_mvp, .size = sizeof(VS_MVP_t)});
+      }
+      g_dc_breakdown.mesh_rq_0_4000 += graphics_submit_meshes_range_count(split, 4000, false, NULL);
+      g_dc_breakdown.instanced += graphics_submit_instanced_range_count(split, 4000);
+    } else {
+      g_dc_breakdown.mesh_rq_0_4000 = graphics_submit_meshes_range_count(0, 4000, false, NULL);
+      g_dc_breakdown.instanced = graphics_submit_instanced_range_count(0, 4000);
       if (hook) hook();
     }
 

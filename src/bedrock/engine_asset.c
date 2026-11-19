@@ -2,6 +2,7 @@
 #include "engine_asset.h"
 #include "gfx/render.h"
 #include "../log.h"
+#include "engine_state.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,6 +45,14 @@ int engine_texture_search_path_count(void) { return g_count; }
 const char *engine_texture_search_path(int i) {
   if (i < 0 || i >= g_count) return NULL;
   return g_paths[i];
+}
+
+void engine_set_post_mesh_render_queue(int rq) {
+    if (rq < 0 || rq > 4000) {
+        LOG_ERROR("[engine_asset] engine_set_post_mesh_render_queue: rq %d outside 0..4000\n", rq);
+        exit(1);
+    }
+    arc_engine_state()->post_mesh_render_queue = rq;
 }
 
 void engine_register_view(int slot, sg_view view) {
