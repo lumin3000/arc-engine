@@ -233,7 +233,7 @@ void main() {
 
 @fs fs_resolve
 layout(binding=1) uniform fs_resolve_params {
-    vec4 pal[48];
+    vec4 pal[64];
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
     vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised); w = 1: transparent background
@@ -253,7 +253,7 @@ int pixelNearest(vec3 c, bool solid) {
     int n = int(opts.x);
     int best = solid && n > 1 ? 1 : 0;
     float bd = 1e9;
-    for (int i = 0; i < 48; i++) {
+    for (int i = 0; i < 64; i++) {
         if (i >= n) break;
         if (solid && i == 0 && n > 1) continue;
         vec3 df = c - pal[i].rgb;

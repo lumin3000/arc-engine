@@ -22,7 +22,7 @@ typedef struct { float v[16]; } Splat_Mat4;
 typedef struct { float v[4]; } Splat_Vec4;
 
 #define SPLAT_FLOATS 16
-#define SPLAT_MAX_PALETTE 48
+#define SPLAT_MAX_PALETTE 64
 
 typedef struct Splat_Cloud {
     uint32_t count;
