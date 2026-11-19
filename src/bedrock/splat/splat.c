@@ -233,7 +233,7 @@ static struct {
     uint64_t splats_drawn;
     uint64_t lod_splats[SPLAT_LOD_LEVELS];
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
-    float occ[SPLAT_MAX_OCCLUDERS * 5];
+    float occ[SPLAT_MAX_OCCLUDERS * SPLAT_OCCLUDER_FLOATS];
     int occ_n;
 } S;
 
@@ -990,17 +990,17 @@ void splat_composite(Splat_Show show) {
         const double f = (double)S.art_h / 2.0 / (double)v->ortho_half_h;  // art px per world unit
         const double cx = f * (double)v->view[12] + S.art_w / 2.0, cy = f * (double)v->view[13] + S.art_h / 2.0;
         for (int i = 0; i < S.occ_n; i++) {
-            const float *o = S.occ + i * 5;
+            const float *o = S.occ + i * SPLAT_OCCLUDER_FLOATS;
             float lo[2] = {1e30f, 1e30f}, hi[2] = {-1e30f, -1e30f};
-            for (int c = 0; c < 4; c++) {
-                const float x = (c & 1) ? o[2] : o[0], z = (c & 2) ? o[3] : o[1];
-                const float sx = (float)(f * (v->view[0] * x + v->view[8] * z) + cx);
-                const float sy = (float)(f * (v->view[1] * x + v->view[9] * z) + cy);
+            for (int c = 0; c < 8; c++) {
+                const float x = (c & 1) ? o[2] : o[0], z = (c & 2) ? o[3] : o[1], y = (c & 4) ? o[4] : 0.0f;
+                const float sx = (float)(f * (v->view[0] * x + v->view[4] * y + v->view[8] * z) + cx);
+                const float sy = (float)(f * (v->view[1] * x + v->view[5] * y + v->view[9] * z) + cy);
                 lo[0] = fminf(lo[0], sx); hi[0] = fmaxf(hi[0], sx);
                 lo[1] = fminf(lo[1], sy); hi[1] = fmaxf(hi[1], sy);
             }
             bp.occ_rect[i] = (Splat_Vec4){{lo[0], lo[1], hi[0], hi[1]}};
-            const float pz = v->view[10] * o[4] + v->view[14];  // foot on the ground (x does not enter the depth row)
+            const float pz = v->view[2] * 0.5f * (o[0] + o[2]) + v->view[10] * o[5] + v->view[14];  // foot on the ground
             float dn = (-pz - (v->eye_dist - v->radius)) / (2.0f * v->radius);
             dn = dn < 0 ? 0 : dn > 1 ? 1 : dn;
             bp.occ_depth[i].v[0] = dn;
@@ -1021,7 +1021,7 @@ void splat_composite(Splat_Show show) {
 
 void splat_set_occluders(const float *occ, int n) {
     if (n < 0 || n > SPLAT_MAX_OCCLUDERS) SPLAT_FATAL("[splat] %d occluders (max %d)\n", n, SPLAT_MAX_OCCLUDERS);
-    if (n) memcpy(S.occ, occ, sizeof(float) * 5 * (size_t)n);
+    if (n) memcpy(S.occ, occ, sizeof(float) * SPLAT_OCCLUDER_FLOATS * (size_t)n);
     S.occ_n = n;
 }
 
