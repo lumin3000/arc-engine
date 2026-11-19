@@ -447,6 +447,13 @@ typedef struct {
     float lo[SPLAT_LOD_LEVELS][3], hi[SPLAT_LOD_LEVELS][3];      // per-level bounds, grown by that level's largest extent
 } Splat_Chunk_Range;
 
+typedef struct {
+    sg_buffer buf;
+    bool live;
+    uint32_t placed;
+    Splat_Chunk_Range r;     // ranges within its own buffer
+} Splat_World_Chunk;
+
 struct Splat_Chunks {
     float size, x0, z0;
     int nx, nz;
@@ -483,6 +490,9 @@ static struct {
     float scene_radius;
     Splat_Chunk_Range *chunks;    // NULL: the static cloud is one range
     int chunk_n;
+    Splat_World_Chunk *world;     // non-NULL: the static cloud is a grid of chunks with a buffer each
+    int world_nx, world_nz, world_live;
+    int *world_order;             // grid indices back to front
     int chunks_drawn, skin_drawn, lod_level;
     uint64_t splats_drawn;
     uint64_t lod_splats[SPLAT_LOD_LEVELS];
@@ -711,6 +721,26 @@ static int cmp_key(const void *a, const void *b) {
     return ia < ib ? -1 : ia > ib;
 }
 
+// drops the static cloud, whichever form it has
+static void static_clear(void) {
+    if (S.world) {
+        for (int k = 0; k < S.world_nx * S.world_nz; k++)
+            if (S.world[k].live) sg_destroy_buffer(S.world[k].buf);
+        free(S.world);
+        free(S.world_order);
+        S.world = NULL;
+        S.world_order = NULL;
+        S.world_live = 0;
+    } else if (S.count) {
+        sg_destroy_buffer(S.instances);
+    }
+    free(S.chunks);
+    S.chunks = NULL;
+    S.chunk_n = 0;
+    S.count = 0;
+    memset(S.lod_splats, 0, sizeof(S.lod_splats));
+}
+
 void splat_upload(const Splat_Cloud *c, const float V[16]) {
     if (!S.ready) SPLAT_FATAL("[splat] splat_upload before splat_init\n");
     if (c->count == 0) SPLAT_FATAL("[splat] empty cloud\n");
@@ -727,11 +757,8 @@ void splat_upload(const Splat_Cloud *c, const float V[16]) {
     for (uint32_t i = 0; i < c->count; i++)
         memcpy(sorted + (size_t)i * SPLAT_FLOATS, c->data + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
     free(items);
-    if (S.count) sg_destroy_buffer(S.instances);
     // a single cloud replaces any chunk world
-    free(S.chunks);
-    S.chunks = NULL;
-    S.chunk_n = 0;
+    static_clear();
     S.instances = sg_make_buffer(&(sg_buffer_desc){
         .usage = {.vertex_buffer = true, .immutable = true},
         .data = {.ptr = sorted, .size = bytes},
@@ -878,6 +905,34 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
     return out;
 }
 
+// one level of one chunk: its rows sorted back to front for V into dst, and its bounds grown by
+// the largest splat extent
+static void level_emit(const float *src, uint32_t cnt, const float *V, float *dst, float lo[3], float hi[3],
+                       Sort_Item **items_io, uint32_t *items_cap) {
+    for (int a = 0; a < 3; a++) { lo[a] = 1e30f; hi[a] = -1e30f; }
+    float ext = 0;
+    if (cnt > *items_cap) {
+        *items_cap = cnt;
+        *items_io = realloc(*items_io, sizeof(Sort_Item) * cnt);
+    }
+    Sort_Item *items = *items_io;
+    for (uint32_t i = 0; i < cnt; i++) {
+        const float *d = src + (size_t)i * SPLAT_FLOATS;
+        items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
+        items[i].idx = i;
+        for (int a = 0; a < 3; a++) {
+            if (d[a] < lo[a]) lo[a] = d[a];
+            if (d[a] > hi[a]) hi[a] = d[a];
+        }
+        const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
+        if (e > ext) ext = e;
+    }
+    for (int a = 0; a < 3; a++) { lo[a] -= ext; hi[a] += ext; }
+    qsort(items, cnt, sizeof(Sort_Item), cmp_key);
+    for (uint32_t i = 0; i < cnt; i++)
+        memcpy(dst + (size_t)i * SPLAT_FLOATS, src + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
+}
+
 struct Splat_Baked {
     float cell0;
     float *all;
@@ -946,32 +1001,11 @@ Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
         const int k = order[c].idx;
         Splat_Chunk_Range *r = &B->chunks[c];
         for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
-            float *lo = r->lo[l], *hi = r->hi[l];
-            for (int a = 0; a < 3; a++) { lo[a] = 1e30f; hi[a] = -1e30f; }
-            float ext = 0;
             const float *src = lev[k * SPLAT_LOD_LEVELS + l];
             const uint32_t cnt = lev_n[k * SPLAT_LOD_LEVELS + l];
-            if (cnt > items_cap) {
-                items_cap = cnt;
-                items = realloc(items, sizeof(Sort_Item) * cnt);
-            }
             r->start[l] = at;
             r->count[l] = cnt;
-            for (uint32_t i = 0; i < cnt; i++) {
-                const float *d = src + (size_t)i * SPLAT_FLOATS;
-                items[i].key = V[2] * d[0] + V[6] * d[1] + V[10] * d[2] + V[14];
-                items[i].idx = i;
-                for (int a = 0; a < 3; a++) {
-                    if (d[a] < lo[a]) lo[a] = d[a];
-                    if (d[a] > hi[a]) hi[a] = d[a];
-                }
-                const float e = 3.0f * sqrtf(fmaxf(d[4], fmaxf(d[8], d[10])));
-                if (e > ext) ext = e;
-            }
-            for (int a = 0; a < 3; a++) { lo[a] -= ext; hi[a] += ext; }
-            qsort(items, cnt, sizeof(Sort_Item), cmp_key);
-            for (uint32_t i = 0; i < cnt; i++)
-                memcpy(all + (size_t)(at + i) * SPLAT_FLOATS, src + (size_t)items[i].idx * SPLAT_FLOATS, SPLAT_FLOATS * 4);
+            level_emit(src, cnt, V, all + (size_t)at * SPLAT_FLOATS, r->lo[l], r->hi[l], &items, &items_cap);
             at += cnt;
             free(lev[k * SPLAT_LOD_LEVELS + l]);
         }
@@ -994,14 +1028,13 @@ Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
 
 void splat_baked_upload(Splat_Baked *B, const uint32_t *pal, int pal_n, float radius) {
     if (!S.ready) SPLAT_FATAL("[splat] splat_baked_upload before splat_init\n");
-    if (S.count) sg_destroy_buffer(S.instances);
+    static_clear();
     if (B->bytes)
         S.instances = sg_make_buffer(&(sg_buffer_desc){
             .usage = {.vertex_buffer = true, .immutable = true},
             .data = {.ptr = B->all, .size = B->bytes},
             .label = "splat-chunks",
         });
-    free(S.chunks);
     S.chunks = B->chunks;
     S.chunk_n = B->chunk_n;
     memcpy(S.lod_splats, B->lod_splats, sizeof(S.lod_splats));
@@ -1019,6 +1052,101 @@ void splat_baked_upload(Splat_Baked *B, const uint32_t *pal, int pal_n, float ra
 
 void splat_chunks_upload(Splat_Chunks *ch, const float V[16], const uint32_t *pal, int pal_n, float radius) {
     splat_baked_upload(splat_chunks_bake(ch, V), pal, pal_n, radius);
+}
+
+struct Splat_Chunk_Baked {
+    float *all;
+    size_t bytes;
+    uint32_t placed;
+    Splat_Chunk_Range r;
+};
+
+Splat_Chunk_Baked *splat_chunk_bake(float *rows, uint32_t n, const float V[16]) {
+    Splat_Chunk_Baked *B = calloc(1, sizeof(Splat_Chunk_Baked));
+    B->placed = n;
+    if (n == 0) {
+        free(rows);
+        return B;
+    }
+    const float cell0 = s_lod_cell0;
+    float *lev[SPLAT_LOD_LEVELS];
+    uint32_t lev_n[SPLAT_LOD_LEVELS], total = n;
+    lev[0] = rows;
+    lev_n[0] = n;
+    for (int l = 1; l < SPLAT_LOD_LEVELS; l++) {
+        lev[l] = malloc((size_t)lev_n[l - 1] * SPLAT_FLOATS * sizeof(float));
+        lev_n[l] = lod_merge(lev[l - 1], lev_n[l - 1], cell0 * (float)(1 << (l - 1)), lev[l]);
+        total += lev_n[l];
+    }
+    B->bytes = (size_t)total * SPLAT_FLOATS * 4;
+    B->all = malloc(B->bytes);
+    if (!B->all) SPLAT_FATAL("[splat] out of memory for %zu bytes\n", B->bytes);
+    Sort_Item *items = NULL;
+    uint32_t items_cap = 0, at = 0;
+    for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
+        B->r.start[l] = at;
+        B->r.count[l] = lev_n[l];
+        level_emit(lev[l], lev_n[l], V, B->all + (size_t)at * SPLAT_FLOATS, B->r.lo[l], B->r.hi[l], &items, &items_cap);
+        at += lev_n[l];
+        free(lev[l]);
+    }
+    free(items);
+    return B;
+}
+
+void splat_chunk_baked_free(Splat_Chunk_Baked *B) {
+    free(B->all);
+    free(B);
+}
+
+void splat_world_begin(float chunk_size, float x0, float z0, int nx, int nz, const float V[16], const uint32_t *pal,
+                       int pal_n, float radius) {
+    if (!S.ready) SPLAT_FATAL("[splat] splat_world_begin before splat_init\n");
+    if (chunk_size <= 0 || nx <= 0 || nz <= 0) SPLAT_FATAL("[splat] bad chunk grid\n");
+    static_clear();
+    S.world = calloc((size_t)nx * nz, sizeof(Splat_World_Chunk));
+    S.world_nx = nx;
+    S.world_nz = nz;
+    Chunk_Order *order = malloc(sizeof(Chunk_Order) * (size_t)nx * nz);
+    for (int k = 0; k < nx * nz; k++) {
+        const float cx = x0 + ((float)(k % nx) + 0.5f) * chunk_size, cz = z0 + ((float)(k / nx) + 0.5f) * chunk_size;
+        order[k].key = V[2] * cx + V[10] * cz + V[14];
+        order[k].idx = k;
+    }
+    qsort(order, (size_t)nx * nz, sizeof(Chunk_Order), cmp_chunk);
+    S.world_order = malloc(sizeof(int) * (size_t)nx * nz);
+    for (int k = 0; k < nx * nz; k++) S.world_order[k] = order[k].idx;
+    free(order);
+    S.lod_cell0 = s_lod_cell0;
+    S.scene_radius = radius;
+    splat_set_palette(pal, pal_n);
+}
+
+void splat_world_set_chunk(int cx, int cz, Splat_Chunk_Baked *B) {
+    if (!S.world) SPLAT_FATAL("[splat] splat_world_set_chunk without a world\n");
+    if (cx < 0 || cz < 0 || cx >= S.world_nx || cz >= S.world_nz) SPLAT_FATAL("[splat] chunk %d,%d outside the world grid\n", cx, cz);
+    Splat_World_Chunk *w = &S.world[cz * S.world_nx + cx];
+    if (w->live) {
+        sg_destroy_buffer(w->buf);
+        S.count -= w->placed;
+        for (int l = 0; l < SPLAT_LOD_LEVELS; l++) S.lod_splats[l] -= w->r.count[l];
+        S.world_live--;
+        w->live = false;
+    }
+    if (B->bytes) {
+        w->buf = sg_make_buffer(&(sg_buffer_desc){
+            .usage = {.vertex_buffer = true, .immutable = true},
+            .data = {.ptr = B->all, .size = B->bytes},
+            .label = "splat-chunk",
+        });
+        w->r = B->r;
+        w->placed = B->placed;
+        w->live = true;
+        S.count += B->placed;
+        for (int l = 0; l < SPLAT_LOD_LEVELS; l++) S.lod_splats[l] += B->r.count[l];
+        S.world_live++;
+    }
+    splat_chunk_baked_free(B);
 }
 
 // does a world-space box reach the target? (orthographic projection with the pass's view)
@@ -1145,7 +1273,7 @@ static void draw_splats(const Splat_Target *t) {
         sg_apply_pipeline(S.splat_pip);
         sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
         sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
-        if (!S.chunks) {
+        if (!S.chunks && !S.world) {
             sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
             sg_draw(0, 4, (int)S.count);
             S.splats_drawn = S.count;
@@ -1159,11 +1287,14 @@ static void draw_splats(const Splat_Target *t) {
             S.lod_level = lvl;
             int drawn = 0;
             uint64_t sd = 0;
-            for (int c = 0; c < S.chunk_n; c++) {
-                const Splat_Chunk_Range *r = &S.chunks[c];
+            const int chunk_n = S.world ? S.world_nx * S.world_nz : S.chunk_n;
+            for (int c = 0; c < chunk_n; c++) {
+                const Splat_World_Chunk *w = S.world ? &S.world[S.world_order[c]] : NULL;
+                if (w && !w->live) continue;
+                const Splat_Chunk_Range *r = w ? &w->r : &S.chunks[c];
                 if (!r->count[lvl] || !box_visible(r->lo[lvl], r->hi[lvl], v->view, focal, cx, cy, t->w, t->h)) continue;
                 sg_apply_bindings(&(sg_bindings){
-                    .vertex_buffers[0] = S.instances,
+                    .vertex_buffers[0] = w ? w->buf : S.instances,
                     .vertex_buffer_offsets[0] = (int)((size_t)r->start[lvl] * SPLAT_FLOATS * 4),
                 });
                 sg_draw(0, 4, (int)r->count[lvl]);
@@ -1307,7 +1438,7 @@ Splat_Stats splat_stats(void) {
     uint32_t sk = 0;
     for (int i = 0; i < S.inst_n; i++) sk += S.models[S.inst_model[i]].count;
     return (Splat_Stats){.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
-                         .chunks = S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
+                         .chunks = S.world ? S.world_live : S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
                          .skin_drawn = S.skin_drawn, .lod_level = S.lod_level,
                          .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
 }

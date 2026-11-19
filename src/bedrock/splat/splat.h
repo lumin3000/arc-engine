@@ -150,6 +150,20 @@ typedef struct Splat_Baked Splat_Baked;
 Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float view[16]);
 void splat_baked_upload(Splat_Baked *baked, const uint32_t *pal, int pal_n, float radius);
 
+// Chunk worlds that change: the same grid, but every chunk has its own GPU buffer and is baked and
+// replaced on its own, so an edit costs one chunk. splat_world_begin (main thread) replaces the
+// static cloud with an empty grid, drawn back to front for the direction of `view`.
+// splat_chunk_bake sorts one chunk's rows (world space, SPLAT_FLOATS each, static; malloc'd, taken
+// over; n may be 0) for the view direction and builds its levels: CPU only, any thread.
+// splat_world_set_chunk (main thread) puts the result at grid cell (cx, cz) in place of what was
+// there and consumes it; splat_chunk_baked_free drops a result that is not wanted any more.
+typedef struct Splat_Chunk_Baked Splat_Chunk_Baked;
+void splat_world_begin(float chunk_size, float x0, float z0, int nx, int nz, const float view[16], const uint32_t *pal,
+                       int pal_n, float radius);
+Splat_Chunk_Baked *splat_chunk_bake(float *rows, uint32_t n, const float view[16]);
+void splat_world_set_chunk(int cx, int cz, Splat_Chunk_Baked *baked);
+void splat_chunk_baked_free(Splat_Chunk_Baked *baked);
+
 // Skinned clouds (every splat kind 12, carried by bones): uploaded at rest; each instance has
 // its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
 // depth test and an opaque cut after the static cloud.
