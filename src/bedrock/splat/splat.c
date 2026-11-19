@@ -92,7 +92,6 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
                                     float world_per_px, int alpha_cut, int split_row,
                                     const uint32_t *pal, int pal_n) {
     if (step < 1 || img_w < 2 || img_h < 2 || pal_n < 1 || pal_n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] bad from_views parameters\n");
-    enum { RING = 170 };
     const float st = 0.95f * world_per_px * (float)step, sn = 0.51f * st, pi2 = 6.2831853f;
     // per sampled row: centre and half-width of the opaque run in each view (half < 0 = no ring)
     const int rows = img_h / step + 1;
@@ -141,8 +140,11 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
             urx = 0.5f * (half[up * 4] + half[up * 4 + 2]) * world_per_px;
             urz = 0.5f * (half[up * 4 + 1] + half[up * 4 + 3]) * world_per_px;
         }
-        for (int k = 0; k < RING; k++) {
-            const float a = pi2 * (float)k / RING, dx = cosf(a), dz = sinf(a);
+        // dabs round the ring about one dab width apart
+        int ring = (int)ceilf(pi2 * fmaxf(rx, rz) / (0.9f * st));
+        ring = ring < 16 ? 16 : ring > 256 ? 256 : ring;
+        for (int k = 0; k < ring; k++) {
+            const float a = pi2 * (float)k / (float)ring, dx = cosf(a), dz = sinf(a);
             // the facing front/back view and side view, and where the point falls across each (-1..1)
             const int fv = dz < 0 ? 0 : 2, sv = dx > 0 ? 1 : 3;
             const float ft = dz < 0 ? dx : -dx, stt = dx > 0 ? dz : -dz;
@@ -399,7 +401,7 @@ static struct {
     sg_image bone_img;
     sg_view bone_tex;
     float *bone_data;              // SPLAT_MAX_SKIN_INSTANCES x (SPLAT_MAX_BONES * 12)
-    Splat_Skin_Model models[128];
+    Splat_Skin_Model models[640];
     int model_n;
     int inst_model[SPLAT_MAX_SKIN_INSTANCES];
     int inst_n;
@@ -412,7 +414,14 @@ static struct {
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
     float occ[SPLAT_MAX_OCCLUDERS * SPLAT_OCCLUDER_FLOATS];
     int occ_n;
+    float lod_cell0;  // level 1 merge cell of the uploaded world
 } S;
+
+static float s_lod_cell0 = SPLAT_LOD_CELL0;  // for worlds baked from now on (any thread reads it)
+void splat_set_lod_cell0(float cell) {
+    if (!(cell > 0.0f)) SPLAT_FATAL("[splat] lod cell %g\n", cell);
+    s_lod_cell0 = cell;
+}
 
 Splat_View splat_view_oblique(float k, const float target[3], float art_world, int art_w, int art_h, float radius,
                               float dither) {
@@ -789,6 +798,7 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
 }
 
 struct Splat_Baked {
+    float cell0;
     float *all;
     size_t bytes;
     Splat_Chunk_Range *chunks;
@@ -799,6 +809,7 @@ struct Splat_Baked {
 
 Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
     Splat_Baked *B = calloc(1, sizeof(Splat_Baked));
+    B->cell0 = s_lod_cell0;
     if (ch->total == 0) SPLAT_FATAL("[splat] empty chunk world\n");
     if (ch->total * SPLAT_FLOATS * 4 > 0x7fffffffull) SPLAT_FATAL("[splat] %llu splats exceed one 2 GB buffer\n", (unsigned long long)ch->total);
     const int n = ch->nx * ch->nz;
@@ -825,7 +836,7 @@ Splat_Baked *splat_chunks_bake(Splat_Chunks *ch, const float V[16]) {
             const float *src = lev[k * SPLAT_LOD_LEVELS + l - 1];
             const uint32_t sn = lev_n[k * SPLAT_LOD_LEVELS + l - 1];
             float *dst = malloc((size_t)sn * SPLAT_FLOATS * sizeof(float));
-            const uint32_t dn = lod_merge(src, sn, SPLAT_LOD_CELL0 * (float)(1 << (l - 1)), dst);
+            const uint32_t dn = lod_merge(src, sn, B->cell0 * (float)(1 << (l - 1)), dst);
             lev[k * SPLAT_LOD_LEVELS + l] = realloc(dst, (size_t)dn * SPLAT_FLOATS * sizeof(float));
             lev_n[k * SPLAT_LOD_LEVELS + l] = dn;
         }
@@ -906,6 +917,7 @@ void splat_baked_upload(Splat_Baked *B, const uint32_t *pal, int pal_n, float ra
     S.chunk_n = B->chunk_n;
     memcpy(S.lod_splats, B->lod_splats, sizeof(S.lod_splats));
     S.count = (uint32_t)B->placed;
+    S.lod_cell0 = B->cell0;
     S.scene_radius = radius;
     splat_set_palette(pal, pal_n);
     LOG_INFO("[splat] uploaded %llu splats in %d chunks with %d levels: %llu rows (%.1f MB); per level %llu %llu %llu %llu %llu %llu\n",
@@ -1053,7 +1065,7 @@ static void draw_splats(const Splat_Target *t) {
             const float px_world = (float)(1.0 / focal);
             int lvl = 0;
             for (int l = 1; l < SPLAT_LOD_LEVELS; l++)
-                if (SPLAT_LOD_CELL0 * (float)(1 << (l - 1)) <= px_world) lvl = l;
+                if (S.lod_cell0 * (float)(1 << (l - 1)) <= px_world) lvl = l;
             if (v->lod_force >= 0) lvl = v->lod_force < SPLAT_LOD_LEVELS ? v->lod_force : SPLAT_LOD_LEVELS - 1;
             S.lod_level = lvl;
             int drawn = 0;

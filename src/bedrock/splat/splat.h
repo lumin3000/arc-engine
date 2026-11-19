@@ -126,6 +126,9 @@ typedef struct Splat_Chunks Splat_Chunks;
 // frame draws the coarsest level whose cell is no larger than one samples pixel.
 #define SPLAT_LOD_LEVELS 6
 #define SPLAT_LOD_CELL0 0.25f
+// level 1's merge cell for worlds baked from now on (default SPLAT_LOD_CELL0); a host whose
+// splats are finer than the default cell (e.g. at a small art pixel) sets a smaller one
+void splat_set_lod_cell0(float cell);
 Splat_Chunks *splat_chunks_new(float chunk_size, float x0, float z0, int nx, int nz);
 void splat_chunks_add(Splat_Chunks *ch, const Splat_Cloud *proto, const float offset[3]);
 uint64_t splat_chunks_count(const Splat_Chunks *ch);
