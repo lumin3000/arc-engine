@@ -1019,6 +1019,17 @@ void core_render_frame_end(void) {
     sg_apply_uniforms(UB_VS_MVP,
                       &(sg_range){.ptr = &vs_mvp, .size = sizeof(VS_MVP_t)});
 
+    {
+      // after the main quad batch (sprites), before the 4000+ overlay band
+      void (*post_main)(void) = arc_engine_state()->post_main_render_hook;
+      if (post_main) {
+        post_main();
+        sg_apply_pipeline(render_state.pip);
+        sg_apply_bindings(&render_state.bind);
+        sg_apply_uniforms(UB_VS_MVP, &(sg_range){.ptr = &vs_mvp, .size = sizeof(VS_MVP_t)});
+      }
+    }
+
     g_dc_breakdown.mesh_rq_4000_plus =
         graphics_submit_meshes_range_count(4000, 999999, true, NULL);
 

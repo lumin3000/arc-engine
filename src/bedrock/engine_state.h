@@ -82,6 +82,10 @@ typedef struct {
     // Per-frame hook invoked before the swapchain pass begins, for
     // offscreen passes. Set via Engine_Config.on_pre_pass_render.
     void (*pre_pass_render_hook)(void);
+
+    // Per-frame hook inside the swapchain pass, after the main sprite batch and
+    // before the 4000+ overlay band. Set via Engine_Config.on_post_main_render.
+    void (*post_main_render_hook)(void);
 } Arc_Engine_State;
 
 // Returns the singleton. Never NULL. Storage is in engine_main.c.

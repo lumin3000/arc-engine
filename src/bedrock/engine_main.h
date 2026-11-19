@@ -94,6 +94,10 @@ typedef struct {
     // install a hook here. NULL = no-op.
     void (*on_pre_pass_render)(void);
 
+    // Invoked every frame inside the swapchain pass after the main sprite batch,
+    // before the overlay band (render queue 4000+). NULL = no-op.
+    void (*on_post_main_render)(void);
+
     // Installs engine-provided JS bindings into each JSContext. jtask
     // weak-links js_init_message_module and calls it for every worker
     // ctx plus the bootstrap ctx, and the engine invokes this registrar
