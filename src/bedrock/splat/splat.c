@@ -483,6 +483,7 @@ static struct {
     sg_image bone_img;
     sg_view bone_tex;
     float *bone_data;              // SPLAT_MAX_SKIN_INSTANCES x (SPLAT_MAX_BONES * 12)
+    int bone_rows;                 // rows of bone_img: grows by doubling with the number of instances
     Splat_Skin_Model models[640];
     int model_n;
     int inst_model[SPLAT_MAX_SKIN_INSTANCES];
@@ -494,6 +495,8 @@ static struct {
     int world_nx, world_nz, world_live;
     int *world_order;             // grid indices back to front
     int chunks_drawn, skin_drawn, lod_level;
+    int pass_lod[2];
+    uint64_t pass_splats[2], pass_skinned[2];
     uint64_t splats_drawn;
     uint64_t lod_splats[SPLAT_LOD_LEVELS];
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
@@ -612,6 +615,18 @@ static void ensure_targets(int aw, int ah) {
     S.art_h = ah;
 }
 
+static void bone_image_make(int rows) {
+    S.bone_rows = rows;
+    S.bone_img = sg_make_image(&(sg_image_desc){
+        .usage = {.stream_update = true},
+        .width = SPLAT_MAX_BONES * 3,
+        .height = rows,
+        .pixel_format = SG_PIXELFORMAT_RGBA32F,
+        .label = "splat-bones",
+    });
+    S.bone_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.bone_img}});
+}
+
 void splat_init(void) {
     if (S.ready) return;
     S.splat_shd = sg_make_shader(splat_shader_desc(sg_query_backend()));
@@ -669,14 +684,7 @@ void splat_init(void) {
         .sample_count = 1,
         .label = "splat-skin-pipeline",
     });
-    S.bone_img = sg_make_image(&(sg_image_desc){
-        .usage = {.stream_update = true},
-        .width = SPLAT_MAX_BONES * 3,
-        .height = SPLAT_MAX_SKIN_INSTANCES,
-        .pixel_format = SG_PIXELFORMAT_RGBA32F,
-        .label = "splat-bones",
-    });
-    S.bone_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.bone_img}});
+    bone_image_make(256);
     S.bone_data = calloc((size_t)SPLAT_MAX_SKIN_INSTANCES * SPLAT_MAX_BONES * 12, sizeof(float));
     S.resolve_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.resolve_shd,
@@ -1201,8 +1209,19 @@ void splat_skin_set_model(int model, const Splat_Cloud *c) {
 int splat_skin_add_instance(int model) {
     if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
     if (S.inst_n >= SPLAT_MAX_SKIN_INSTANCES) SPLAT_FATAL("[splat] more than %d skinned instances\n", SPLAT_MAX_SKIN_INSTANCES);
+    if (S.inst_n >= S.bone_rows) {
+        sg_destroy_view(S.bone_tex);
+        sg_destroy_image(S.bone_img);
+        bone_image_make(S.bone_rows * 2);
+    }
     S.inst_model[S.inst_n] = model;
     return S.inst_n++;
+}
+
+void splat_skin_set_instance_model(int instance, int model) {
+    if (instance < 0 || instance >= S.inst_n) SPLAT_FATAL("[splat] bad skinned instance %d\n", instance);
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    S.inst_model[instance] = model;
 }
 
 void splat_skin_set_bones(int instance, const float *bones, int bone_n) {
@@ -1317,11 +1336,14 @@ static void draw_splats(const Splat_Target *t) {
             S.chunks_drawn = drawn;
             S.splats_drawn = sd;
         }
+        S.pass_lod[t == &S.native] = S.lod_level;
+        S.pass_splats[t == &S.native] = S.splats_drawn;
     }
     if (S.inst_n) {
         fp.mode = (Splat_Vec4){{1, 0, 0, 0}};
         sg_apply_pipeline(S.skin_pip);
         int sk = 0;
+        uint64_t sks = 0;
         for (int i = 0; i < S.inst_n; i++) {
             const float *b = S.inst_bounds[i];
             if (b[3] > 0) {
@@ -1330,6 +1352,7 @@ static void draw_splats(const Splat_Target *t) {
             }
             sk++;
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
+            sks += m->count;
             p.zr.v[2] = (float)i;
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = m->buf,
@@ -1341,6 +1364,7 @@ static void draw_splats(const Splat_Target *t) {
             sg_draw(0, 4, (int)m->count);
         }
         S.skin_drawn = sk;
+        S.pass_skinned[t == &S.native] = sks;
     }
     sg_end_pass();
 }
@@ -1351,7 +1375,7 @@ void splat_render_offscreen(void) {
     if (S.inst_n) {
         sg_update_image(S.bone_img, &(sg_image_data){.mip_levels[0] = {
             .ptr = S.bone_data,
-            .size = (size_t)SPLAT_MAX_SKIN_INSTANCES * SPLAT_MAX_BONES * 12 * sizeof(float),
+            .size = (size_t)S.bone_rows * SPLAT_MAX_BONES * 12 * sizeof(float),
         }});
     }
     draw_splats(&S.samples);
@@ -1447,11 +1471,26 @@ void splat_set_occluders(const float *occ, int n) {
     S.occ_n = n;
 }
 
+_Static_assert(SPLAT_LOD_LEVELS == 6, "Splat_Stats.lod_splats holds six levels");
 Splat_Stats splat_stats(void) {
     uint32_t sk = 0;
     for (int i = 0; i < S.inst_n; i++) sk += S.models[S.inst_model[i]].count;
-    return (Splat_Stats){.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
-                         .chunks = S.world ? S.world_live : S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
-                         .skin_drawn = S.skin_drawn, .lod_level = S.lod_level,
-                         .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
+    Splat_Stats st = {.splats = S.count, .skinned_splats = sk, .skin_instances = S.inst_n,
+                      .chunks = S.world ? S.world_live : S.chunk_n, .chunks_drawn = S.chunks_drawn, .splats_drawn = S.splats_drawn,
+                      .skin_drawn = S.skin_drawn, .lod_level = S.lod_level,
+                      .art_w = S.art_w, .art_h = S.art_h, .scale = S.last_scale};
+    for (int p = 0; p < 2; p++) {
+        st.pass_lod[p] = S.pass_lod[p];
+        st.pass_splats[p] = S.pass_splats[p];
+        st.pass_skinned[p] = S.pass_skinned[p];
+    }
+    for (int l = 0; l < SPLAT_LOD_LEVELS; l++) {
+        st.lod_splats[l] = S.lod_splats[l];
+        st.static_bytes += S.lod_splats[l] * SPLAT_FLOATS * 4;
+    }
+    if (S.lod_splats[0] == 0) st.static_bytes = (uint64_t)S.count * SPLAT_FLOATS * 4;  // one buffer, no levels
+    for (int m = 0; m < S.model_n; m++) st.skin_bytes += (uint64_t)S.models[m].count * SPLAT_FLOATS * 4;
+    // a target is two RGBA8 images and a depth buffer (4 bytes a pixel each): the 2x sample grid, the art grid; then the art image
+    st.target_bytes = (uint64_t)S.art_w * S.art_h * (4 * 12 + 12 + 4) + (uint64_t)S.bone_rows * SPLAT_MAX_BONES * 12 * 4;
+    return st;
 }

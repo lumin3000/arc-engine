@@ -75,6 +75,13 @@ typedef struct Splat_Stats {
     int lod_level;                  // chunk level drawn last frame (last pass)
     int art_w, art_h;
     int scale;          // composite scale (physical px per target px)
+    // per pass ([0] the 2x sample grid, [1] the art grid): static level drawn, static and skinned splats submitted
+    int pass_lod[2];
+    uint64_t pass_splats[2];
+    uint64_t pass_skinned[2];
+    uint64_t lod_splats[6];   // static splats held per level (all chunks)
+    // GPU memory held: static buffers (every level), skinned model buffers, render targets with the bone texture
+    uint64_t static_bytes, skin_bytes, target_bytes;
 } Splat_Stats;
 
 Splat_Cloud *splat_cloud_load(const char *path);
@@ -168,11 +175,13 @@ void splat_chunk_baked_free(Splat_Chunk_Baked *baked);
 // its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
 // depth test and an opaque cut after the static cloud.
 #define SPLAT_MAX_BONES 64
-#define SPLAT_MAX_SKIN_INSTANCES 256
+#define SPLAT_MAX_SKIN_INSTANCES 1024
 int splat_skin_add_model(const Splat_Cloud *c);
 // puts other splats in a model's place (the same number of bones); its instances stay as they are
 void splat_skin_set_model(int model, const Splat_Cloud *c);
 int splat_skin_add_instance(int model);
+// an instance draws another model from now on (its bones must be set again before it is drawn)
+void splat_skin_set_instance_model(int instance, int model);
 void splat_skin_set_bones(int instance, const float *bones, int bone_n);
 // bounding sphere of an instance in world space, for culling (radius <= 0: always drawn)
 void splat_skin_set_bounds(int instance, const float center[3], float radius);

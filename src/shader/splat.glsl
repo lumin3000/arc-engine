@@ -42,11 +42,16 @@ void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c
         v_rel = vec2(0.0); v_conic = vec3(0.0); v_col = vec4(0.0); v_dn = 1.0;
         return;
     }
-    vec2 ext = vec2(min(3.0 * sqrt(A), 2048.0), min(3.0 * sqrt(C), 2048.0));
+    // how many sigmas out the fragment stage can still draw: it drops everything past 3 sigma
+    // (pw < -4.5), and a solid splat (al >= 1) wherever al * exp(pw) <= 0.38, where its
+    // smoothstep is 0. Solid splats are most of a world and end well inside 3 sigma (2.17 at
+    // density 4), so their quads are that much smaller and the fill with them.
+    float k = al >= 1.0 ? min(3.0, sqrt(2.0 * log(al / 0.38))) : 3.0;
+    vec2 ext = vec2(min(k * sqrt(A), 2048.0), min(k * sqrt(C), 2048.0));
     vec2 rel = focal * vec2(dot(xa, pos), dot(ya, pos));
-    // the quad is a little larger than 3 sigma so its edge never decides a fragment: the
-    // exp() cut in the fragment stage does
-    vec2 corner_px = rel + cam.xy + sgn * (ext * 1.05 + 1.0);
+    // the quad is a little larger than that so its edge never decides a fragment: the cuts in
+    // the fragment stage do
+    vec2 corner_px = rel + cam.xy + sgn * (ext * 1.02 + 0.5);
     vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
     // hardware depth: farther = larger, over the whole scene depth range
     float zd = clamp((-pz - zr.x) * zr.y, 0.0, 1.0);
