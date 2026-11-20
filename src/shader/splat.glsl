@@ -144,6 +144,7 @@ void main() {
 layout(binding=1) uniform fs_splat_params {
     vec4 frag;      // x = screen offset Cx, y = Cy, z = target height px, w = 1 if storage origin is top-left
     vec4 mode;      // x = 1: opaque cut (alpha >= 0.5 drawn whole, the rest dropped), for splats drawn out of order
+    vec4 tint;      // rgb = colour the splats are pulled towards, a = how far (0 = their own colour)
 };
 flat in vec2 v_rel;
 flat in vec3 v_conic;
@@ -168,7 +169,7 @@ void main() {
         if (a < 0.5) discard;
         a = 1.0;
     }
-    frag_color = vec4(min(v_col.rgb, vec3(1.0)), a);
+    frag_color = vec4(mix(min(v_col.rgb, vec3(1.0)), tint.rgb, tint.a), a);
     frag_depth = vec4(v_dn, 0.0, 0.0, solid ? a : 0.0);
 }
 @end

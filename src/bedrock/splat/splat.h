@@ -185,6 +185,8 @@ void splat_skin_set_instance_model(int instance, int model);
 void splat_skin_set_bones(int instance, const float *bones, int bone_n);
 // bounding sphere of an instance in world space, for culling (radius <= 0: always drawn)
 void splat_skin_set_bounds(int instance, const float center[3], float radius);
+// pulls every splat of an instance towards rgb by a (0..1; 0, the default, leaves its colours alone)
+void splat_skin_set_tint(int instance, const float rgba[4]);
 // out = (rotation yaw about +y, then translation) applied after each bone of frame `frame`
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]);
 

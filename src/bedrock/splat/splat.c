@@ -125,6 +125,11 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
         o[12] = (BONE); o[13] = (BONE); o[14] = 0.0f; o[15] = 0.0f; \
         for (int c_ = 0; c_ < 3; c_++) { if ((P)[c_] < lo[c_]) lo[c_] = (P)[c_]; if ((P)[c_] > hi[c_]) hi[c_] = (P)[c_]; } \
         n++; } while (0)
+    // the lowest ring gets a sole: the figure is a shell, and one that is laid down or carried shows
+    // its open underside
+    int last = -1;
+    for (int ri = 1; ri < rows; ri++)
+        if (half[ri * 4] >= 0) last = ri;
     for (int ri = 1; ri < rows; ri++) {
         if (half[ri * 4] < 0) continue;
         const int j = ri * step;
@@ -179,6 +184,24 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
                 const float f = rr / out_r, q[3] = {p[0] * f, y, p[2] * f};
                 FV_PUSH(q, upn, lrgb, bone);
                 if (k % 2 && rr < out_r * 0.6f) break;  // fewer dabs towards the middle, where rings are dense
+            }
+            if (ri == last) {
+                // sole: downward dabs from this ring in to the axis, darkened (it is in shade). The colour is
+                // taken a little further up the views: the lowest row is the silhouette's dark outline
+                const int jj = j - 10 > 0 ? j - 10 : j;
+                const uint8_t *fq = views[fv] + ((size_t)jj * img_w + fk) * 4, *sq = views[sv] + ((size_t)jj * img_w + sk) * 4;
+                const int lit = (float)fq[3] * (1.0f - w) + (float)sq[3] * w >= (float)alpha_cut;
+                uint32_t srgb = 0;
+                for (int c = 0; c < 3; c++) {
+                    const float cc = lit ? (float)fq[c] * (1.0f - w) + (float)sq[c] * w : (float)((rgb >> (8 * c)) & 255u);
+                    srgb |= (uint32_t)(cc * 0.72f) << (8 * c);
+                }
+                const float dn[3] = {0.0f, -1.0f, 0.0f};
+                for (float rr = out_r - st; rr > 0.5f * st; rr -= st) {
+                    const float f = rr / out_r, q[3] = {p[0] * f, y, p[2] * f};
+                    FV_PUSH(q, dn, srgb, bone);
+                    if (k % 2 && rr < out_r * 0.6f) break;
+                }
             }
         }
     }
@@ -500,6 +523,7 @@ static struct {
     uint64_t splats_drawn;
     uint64_t lod_splats[SPLAT_LOD_LEVELS];
     float inst_bounds[SPLAT_MAX_SKIN_INSTANCES][4];
+    float inst_tint[SPLAT_MAX_SKIN_INSTANCES][4];
     float occ[SPLAT_MAX_OCCLUDERS * SPLAT_OCCLUDER_FLOATS];
     int occ_n;
     float lod_cell0;  // level 1 merge cell of the uploaded world
@@ -1215,6 +1239,7 @@ int splat_skin_add_instance(int model) {
         bone_image_make(S.bone_rows * 2);
     }
     S.inst_model[S.inst_n] = model;
+    memset(S.inst_tint[S.inst_n], 0, sizeof(S.inst_tint[0]));
     return S.inst_n++;
 }
 
@@ -1243,6 +1268,11 @@ void splat_skin_set_bounds(int instance, const float center[3], float radius) {
     S.inst_bounds[instance][1] = center[1];
     S.inst_bounds[instance][2] = center[2];
     S.inst_bounds[instance][3] = radius;
+}
+
+void splat_skin_set_tint(int instance, const float rgba[4]) {
+    if (instance < 0 || instance >= S.inst_n) SPLAT_FATAL("[splat] bad skinned instance %d\n", instance);
+    memcpy(S.inst_tint[instance], rgba, sizeof(S.inst_tint[0]));
 }
 
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]) {
@@ -1354,6 +1384,7 @@ static void draw_splats(const Splat_Target *t) {
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
             sks += m->count;
             p.zr.v[2] = (float)i;
+            memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = m->buf,
                 .views[VIEW_bone_tex] = S.bone_tex,
