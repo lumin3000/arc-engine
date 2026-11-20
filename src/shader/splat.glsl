@@ -358,3 +358,37 @@ void main() {
 @end
 
 @program resolve vs_quad fs_resolve
+
+// The crop carries the visible contribution of just one own-palette model in
+// depth.b. All other geometry participates in depth and colour blending.
+@fs fs_detail
+layout(binding=0) uniform texture2D detail_color;
+layout(binding=1) uniform texture2D detail_depth;
+layout(binding=2) uniform texture2D detail_palette;
+@sampler_type detail_smp nonfiltering
+layout(binding=0) uniform sampler detail_smp;
+layout(binding=1) uniform fs_detail_params { vec4 palette; };
+in vec2 v_uv;
+out vec4 frag_color;
+void main() {
+    float coverage = texture(sampler2D(detail_depth, detail_smp), v_uv).b;
+    if (coverage == 0.0) discard;
+    vec3 source = texture(sampler2D(detail_color, detail_smp), v_uv).rgb;
+    const int ranks[16] = int[16](0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5);
+    ivec2 q = ivec2(v_uv * vec2(textureSize(sampler2D(detail_color, detail_smp), 0)));
+    source += ((float(ranks[(q.x & 3) + 4*(q.y & 3)]) + 0.5)/16.0 - 0.5) * palette.z;
+    vec3 color = vec3(0.0);
+    float best = 1e9;
+    for (int i=0; i<int(palette.y); i++) {
+        vec3 entry = texelFetch(sampler2D(detail_palette, detail_smp), ivec2(i,int(palette.x)),0).rgb;
+        vec3 delta = source-entry;
+        float error = dot(delta*delta,vec3(0.30,0.55,0.15));
+        if (error < best) { best=error; color=entry; }
+    }
+    vec3 background = texelFetch(sampler2D(detail_palette, detail_smp), ivec2(0, int(palette.x)), 0).rgb;
+    if (coverage < 1.0 && all(equal(color, background))) discard;
+    frag_color = vec4(color, 1.0);
+}
+@end
+
+@program detail vs_quad fs_detail

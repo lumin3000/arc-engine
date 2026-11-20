@@ -33,7 +33,7 @@ typedef struct Splat_Cloud {
     float radius;
     float bmin[3], bmax[3];
     bool has_cam;
-    // yaw, pitch, dist, target xyz, eyeD, oh, focal, near, px, dither, W, H, 0, 0
+    // yaw, pitch, dist, target xyz, eyeD, oh, focal, near, px, dither, W, H, has authored figure pitch, authored pitch (rad)
     float cam[16];
     float cam_view[16];
     uint32_t pal[SPLAT_MAX_PALETTE];
@@ -213,6 +213,8 @@ void splat_skin_set_tint(int instance, const float rgba[4]);
 int splat_palette_add(const uint32_t *pal, int n, float dither);
 // a model's splats are resolved against own palette `palette` (0, the default: the scene's)
 void splat_skin_set_model_palette(int model, int palette);
+// Resolve a blended model on the output pixel grid, retaining scene occlusion.
+void splat_skin_set_model_physical_pixels(int model);
 // A blended model: its instances are drawn back to front with alpha blending, after everything
 // else, instead of out of order with the opaque cut. Each instance is sorted by depth on the
 // CPU from the model's rows (c: the cloud the model was made from; its rows are copied) and

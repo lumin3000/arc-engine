@@ -185,6 +185,7 @@ static JSValue js_game_get_state(JSContext *js_ctx, JSValueConst this_val,
 
   JS_SetPropertyStr(js_ctx, state, "window_w", JS_NewInt32(js_ctx, window_w));
   JS_SetPropertyStr(js_ctx, state, "window_h", JS_NewInt32(js_ctx, window_h));
+  JS_SetPropertyStr(js_ctx, state, "framebuffer_h", JS_NewInt32(js_ctx, sapp_height()));
   JS_SetPropertyStr(js_ctx, state, "dpi_scale", JS_NewFloat64(js_ctx, sapp_dpi_scale()));
   JS_SetPropertyStr(js_ctx, state, "log_level",
                     JS_NewInt32(js_ctx, g_log_level));

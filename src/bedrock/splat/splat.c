@@ -504,10 +504,17 @@ typedef struct {
     sg_buffer buf;
     uint32_t count;
     int bone_n;
+    bool physical_pixels;
     int own;       // own palette (0 = the scene's)
     float *rows;   // blended models: the model's rows, which its instances are sorted from
     float lead;    // blended models: world units their hardware depth is brought towards the eye
 } Splat_Skin_Model;
+
+// Crop in physical pixels of the projected art image, origin bottom-left.
+typedef struct {
+    int instance, x, y;
+    Splat_Target target;
+} Splat_Detail;
 
 // one blended instance's rows in drawing order
 typedef struct {
@@ -542,7 +549,10 @@ struct Splat_Chunks {
 static struct {
     bool ready;
     sg_shader splat_shd, resolve_shd, blit_shd;
-    sg_pipeline splat_pip, resolve_pip, blit_pip;
+    sg_pipeline splat_pip, resolve_pip, blit_pip, detail_pip;
+    Splat_Detail details[SPLAT_MAX_SKIN_INSTANCES];
+    bool detail_active[SPLAT_MAX_SKIN_INSTANCES];
+    int detail_n;
     sg_sampler nearest;
     sg_buffer instances;
     uint32_t count;
@@ -799,6 +809,11 @@ void splat_init(void) {
             .dst_factor_alpha = SG_BLENDFACTOR_ONE,
         },
         .label = "splat-blit-pipeline",
+    });
+    S.detail_pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(detail_shader_desc(sg_query_backend())),
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .label = "splat-detail-composite",
     });
     S.nearest = sg_make_sampler(&(sg_sampler_desc){
         .min_filter = SG_FILTER_NEAREST,
@@ -1445,6 +1460,12 @@ int splat_palette_add(const uint32_t *pal, int n, float dither) {
     return k;
 }
 
+void splat_skin_set_model_physical_pixels(int model) {
+    if (model < 0 || model >= S.model_n || !S.models[model].rows || !S.models[model].own)
+        SPLAT_FATAL("[splat] physical pixels require a blended model with its own palette\n");
+    S.models[model].physical_pixels = true;
+}
+
 void splat_skin_set_model_palette(int model, int palette) {
     if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
     if (palette < 0 || palette > S.own_n) SPLAT_FATAL("[splat] bad own palette %d\n", palette);
@@ -1604,21 +1625,67 @@ static void blended_prepare(const Splat_Target *t) {
     for (int k = 0; k < S.blend_n; k++) sorted_update(S.blend_list[k], za);
 }
 
-static void draw_splats(const Splat_Target *t) {
+static void prepare_detail_regions(void) {
+    const Splat_View *v = &S.view;
+    const int old_n = S.detail_n, scale = v->scale;
+    S.detail_n = 0;
+    memset(S.detail_active, 0, sizeof S.detail_active);
+    // Host occluder rectangles use the shared art grid. Retain the regular
+    // composite in that mode; 3D geometry in detail crops has real depth.
+    if (!S.occ_n) {
+        const int w = v->art_w * scale, h = v->art_h * scale;
+        const float focal = h / (2.0f * v->ortho_half_h);
+        for (int k = 0; k < S.blend_n; k++) {
+            const int i = S.blend_list[k];
+            if (!S.models[S.inst_model[i]].physical_pixels) continue;
+            const float *b = S.inst_bounds[i];
+            if (b[3] <= 0.0f) continue;
+            const float x = w * 0.5f + focal * (v->view[0]*b[0] + v->view[4]*b[1] + v->view[8]*b[2] + v->view[12]);
+            const float y = h * 0.5f + focal * (v->view[1]*b[0] + v->view[5]*b[1] + v->view[9]*b[2] + v->view[13]);
+            const float r = focal * b[3] + 2;
+            if (x+r <= 0 || y+r <= 0 || x-r >= w || y-r >= h) continue;
+            // Round the allocation size so pan and small zoom changes reuse it.
+            const int side = 32 * (int)ceilf(2*r / 32);
+            const int dw = side < w ? side : w, dh = side < h ? side : h;
+            Splat_Detail *d = &S.details[S.detail_n++];
+            d->instance = i;
+            d->x = (int)fmaxf(0, fminf(w-dw, floorf(x-dw*0.5f)));
+            d->y = (int)fmaxf(0, fminf(h-dh, floorf(y-dh*0.5f)));
+            if (d->target.w != dw || d->target.h != dh) target_make(&d->target, dw, dh, "splat-detail-region");
+            S.detail_active[i] = true;
+        }
+    }
+    for (int k = S.detail_n; k < old_n; k++) target_destroy(&S.details[k].target);
+}
+
+static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
     const Splat_View *v = &S.view;
     vs_splat_params_t p;
     memcpy(p.view.v, v->view, sizeof(p.view.v));
-    // screen position = focal * (axis . world) + C, with C carrying the view translation
-    // (same as cli/render.js: ((p.x / (oh * asp)) * 0.5 + 0.5) * W, since W / (2 oh asp) = focal)
-    const double focal = (double)t->h / 2.0 / (double)v->ortho_half_h;
-    const float cx = (float)(focal * (double)v->view[12] + (double)t->w / 2.0);
-    const float cy = (float)(focal * (double)v->view[13] + (double)t->h / 2.0);
+    // A crop uses the same projected scene and depth range, translated to
+    // its own target. Only the sampling pitch changes.
+    const int w = detail ? v->art_w * v->scale : t->w;
+    const int h = detail ? v->art_h * v->scale : t->h;
+    const double focal = h / (2.0 * v->ortho_half_h);
+    const float cx = (float)(focal*v->view[12] + w*0.5 - (detail ? detail->x : 0));
+    const float cy = (float)(focal*v->view[13] + h*0.5 - (detail ? detail->y : 0));
     p.cam = (Splat_Vec4){{cx, cy, (float)t->w, (float)t->h}};
     p.dep = (Splat_Vec4){{v->eye_dist, v->radius, (float)focal, v->near_dist}};
     const float zrad = S.scene_radius > v->radius ? S.scene_radius : v->radius;
     p.zr = (Splat_Vec4){{v->eye_dist - zrad - 1.0f, 1.0f / (2.0f * zrad + 2.0f), 0, 0}};
     fs_splat_params_t fp = {.frag = {{cx, cy, (float)t->h, sg_query_features().origin_top_left ? 1.0f : 0.0f}}};
-    float *bg = S.pal[0];
+    const float *bg = S.pal[0];
+    // Ink resolves a figure against its own background colour. The other
+    // geometry in this crop supplies occlusion only; mixing its colour into
+    // the figure changes the palette entry at the edge of the artwork.
+    Splat_Vec4 backdrop = {{0}};
+    if (detail) {
+        const int own = S.models[S.inst_model[detail->instance]].own;
+        const uint8_t *base = S.own_px + own * SPLAT_MAX_PALETTE * 4;
+        backdrop = (Splat_Vec4){{base[0] / 255.0f, base[1] / 255.0f, base[2] / 255.0f, 1}};
+        bg = backdrop.v;
+        fp.tint = backdrop;
+    }
     sg_begin_pass(&(sg_pass){
         .action = {
             .colors[0] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {bg[0], bg[1], bg[2], 0.0f}},
@@ -1663,8 +1730,10 @@ static void draw_splats(const Splat_Target *t) {
             S.chunks_drawn = drawn;
             S.splats_drawn = sd;
         }
-        S.pass_lod[t == &S.native] = S.lod_level;
-        S.pass_splats[t == &S.native] = S.splats_drawn;
+        if (!detail) {
+            S.pass_lod[t == &S.native] = S.lod_level;
+            S.pass_splats[t == &S.native] = S.splats_drawn;
+        }
     }
     if (S.inst_n) {
         fp.mode = (Splat_Vec4){{1, 0, 0, 0}};
@@ -1682,8 +1751,8 @@ static void draw_splats(const Splat_Target *t) {
             sk++;
             sks += m->count;
             p.zr.v[2] = (float)i;
-            fp.mode.v[1] = (float)m->own;
-            memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
+            fp.mode.v[1] = detail ? 0.0f : (float)m->own;
+            if (!detail) memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = m->buf,
                 .views[VIEW_bone_tex] = S.bone_tex,
@@ -1697,13 +1766,15 @@ static void draw_splats(const Splat_Target *t) {
         // stands in front of it has written its depth
         for (int k = 0; k < S.blend_n; k++) {
             const int i = S.blend_list[k];
+            if (!detail && S.detail_active[i]) continue;
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
             sk++;
             sks += m->count;
             p.zr.v[2] = (float)i;
             p.zr.v[3] = m->lead * p.zr.v[1];
-            fp.mode = (Splat_Vec4){{0, (float)m->own, 0, 0}};
-            memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
+            fp.mode = (Splat_Vec4){{0, detail && i != detail->instance ? 0.0f : (float)m->own, 0, 0}};
+            if (detail && i != detail->instance) fp.tint = backdrop;
+            else memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = S.sorted[i]->buf,
                 .views[VIEW_bone_tex] = S.bone_tex,
@@ -1713,8 +1784,10 @@ static void draw_splats(const Splat_Target *t) {
             sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
             sg_draw(0, 4, (int)m->count);
         }
-        S.skin_drawn = sk;
-        S.pass_skinned[t == &S.native] = sks;
+        if (!detail) {
+            S.skin_drawn = sk;
+            S.pass_skinned[t == &S.native] = sks;
+        }
     }
     sg_end_pass();
 }
@@ -1733,8 +1806,10 @@ void splat_render_offscreen(void) {
         S.own_dirty = false;
     }
     blended_prepare(&S.samples);
-    draw_splats(&S.samples);
-    draw_splats(&S.native);
+    prepare_detail_regions();
+    for (int k = 0; k < S.detail_n; k++) draw_splats(&S.details[k].target, &S.details[k]);
+    draw_splats(&S.samples, NULL);
+    draw_splats(&S.native, NULL);
 
     const float flip = sg_query_features().origin_top_left ? 1.0f : 0.0f;
     fs_resolve_params_t rp;
@@ -1821,6 +1896,25 @@ void splat_composite(Splat_Show show) {
     sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));
     sg_apply_uniforms(UB_fs_blit_params, &SG_RANGE(bp));
     sg_draw(0, 4, 1);
+    if (show == SPLAT_SHOW_ART) {
+        for (int i = 0; i < S.detail_n; i++) {
+            const Splat_Detail *d = &S.details[i];
+            const int pal = S.models[S.inst_model[d->instance]].own;
+            const int x = S.view.offset_px[0] + d->x;
+            const int y = S.view.offset_px[1] + S.art_h * k - d->y - d->target.h;
+            sg_apply_viewport(x, y, d->target.w, d->target.h, true);
+            sg_apply_pipeline(S.detail_pip);
+            sg_apply_bindings(&(sg_bindings){
+                .views = {[VIEW_detail_color] = d->target.color_tex, [VIEW_detail_depth] = d->target.depth_tex,
+                          [VIEW_detail_palette] = S.own_tex},
+                .samplers[SMP_detail_smp] = S.nearest,
+            });
+            fs_detail_params_t dp = {.palette = {{(float)pal, S.own_opt[pal][0], S.own_opt[pal][1], 0}}};
+            sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));
+            sg_apply_uniforms(UB_fs_detail_params, &SG_RANGE(dp));
+            sg_draw(0, 4, 1);
+        }
+    }
     sg_apply_viewport(0, 0, sw, sh, true);
 }
 
@@ -1851,6 +1945,8 @@ Splat_Stats splat_stats(void) {
     for (int m = 0; m < S.model_n; m++) st.skin_bytes += (uint64_t)S.models[m].count * SPLAT_FLOATS * 4;
     // a target is two RGBA8 images and a depth buffer (4 bytes a pixel each): the 2x sample grid, the art grid; then the art image
     st.target_bytes = (uint64_t)S.art_w * S.art_h * (4 * 12 + 12 + 4) + (uint64_t)S.bone_rows * SPLAT_MAX_BONES * 12 * 4;
+    for (int i = 0; i < S.detail_n; i++)
+        st.target_bytes += (uint64_t)S.details[i].target.w * S.details[i].target.h * 12;
     st.blended_drawn = S.blend_n;
     st.blended_sorted = S.sorted_now;
     st.blended_sorted_splats = S.sorted_splats;
