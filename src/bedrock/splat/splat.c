@@ -506,6 +506,7 @@ typedef struct {
     int bone_n;
     int own;       // own palette (0 = the scene's)
     float *rows;   // blended models: the model's rows, which its instances are sorted from
+    float lead;    // blended models: world units their hardware depth is brought towards the eye
 } Splat_Skin_Model;
 
 // one blended instance's rows in drawing order
@@ -1418,6 +1419,13 @@ void splat_skin_set_model_blended(int model, const Splat_Cloud *c) {
     memcpy(m->rows, c->data, bytes);
 }
 
+void splat_skin_set_model_lead(int model, float lead) {
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    if (!S.models[model].rows) SPLAT_FATAL("[splat] skinned model %d is not blended: it has no depth lead\n", model);
+    if (!(lead >= 0.0f)) SPLAT_FATAL("[splat] depth lead %g\n", (double)lead);
+    S.models[model].lead = lead;
+}
+
 static double wall_ms(void) {
     struct timespec t;
     timespec_get(&t, TIME_UTC);
@@ -1629,6 +1637,7 @@ static void draw_splats(const Splat_Target *t) {
             sk++;
             sks += m->count;
             p.zr.v[2] = (float)i;
+            p.zr.v[3] = m->lead * p.zr.v[1];
             fp.mode = (Splat_Vec4){{0, (float)m->own, 0, 0}};
             memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){

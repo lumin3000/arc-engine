@@ -214,6 +214,13 @@ void splat_skin_set_model_palette(int model, int palette);
 // holds the sorted rows in a buffer of its own; it is sorted again only when its bones turn or
 // move against each other, or the view direction changes.
 void splat_skin_set_model_blended(int model, const Splat_Cloud *c);
+// A blended model's splats are tested against the hardware depth, and written to it, `lead` world
+// units nearer the eye than they are (0, the default: where they are). A splat has one depth for
+// its whole quad, the depth of its centre: a broad flat splat of the ground reaches up the screen
+// with the depth of its centre and so hides the lowest pixels of what stands on the ground just
+// behind that centre. The lead is the allowance for that; the model shows through anything that
+// stands less than `lead` in front of it.
+void splat_skin_set_model_lead(int model, float lead);
 // out = (rotation yaw about +y, then translation) applied after each bone of frame `frame`
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]);
 

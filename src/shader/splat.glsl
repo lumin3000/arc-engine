@@ -56,7 +56,7 @@ void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c
     vec2 corner_px = rel + cam.xy + sgn * (ext * 1.02 + 0.5);
     vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
     // hardware depth: farther = larger, over the whole scene depth range
-    float zd = clamp((-pz - zr.x) * zr.y, 0.0, 1.0);
+    float zd = clamp((-pz - zr.x) * zr.y - zr.w, 0.0, 1.0);
     gl_Position = vec4(ndc, zd, 1.0);
     v_rel = rel;
     v_conic = vec3(C / det, -B / det, A / det);
@@ -70,7 +70,8 @@ layout(binding=0) uniform vs_splat_params {
     mat4 view;      // world -> view (column-major); only its rotation rows are used for x/y
     vec4 cam;       // x = screen offset Cx, y = screen offset Cy (target px), z = target width px, w = target height px
     vec4 dep;       // x = eye distance, y = depth radius, z = focal px, w = near
-    vec4 zr;        // x = hardware depth near (view distance), y = 1 / depth range
+    vec4 zr;        // x = hardware depth near (view distance), y = 1 / depth range, w = how much nearer these
+                    // splats are tested and written than they are (share of the depth range)
 };
 
 in vec4 a_pos;   // x y z density
