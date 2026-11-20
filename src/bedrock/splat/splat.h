@@ -82,6 +82,11 @@ typedef struct Splat_Stats {
     uint64_t lod_splats[6];   // static splats held per level (all chunks)
     // GPU memory held: static buffers (every level), skinned model buffers, render targets with the bone texture
     uint64_t static_bytes, skin_bytes, target_bytes;
+    // blended instances last frame: drawn, sorted again (with their splats and the CPU time of
+    // sorting and handing the rows over), and the bytes their sorted buffers hold
+    int blended_drawn, blended_sorted;
+    uint64_t blended_sorted_splats, blended_bytes;
+    double blended_sort_ms;
 } Splat_Stats;
 
 Splat_Cloud *splat_cloud_load(const char *path);
@@ -192,6 +197,19 @@ void splat_skin_set_bones(int instance, const float *bones, int bone_n);
 void splat_skin_set_bounds(int instance, const float center[3], float radius);
 // pulls every splat of an instance towards rgb by a (0..1; 0, the default, leaves its colours alone)
 void splat_skin_set_tint(int instance, const float rgba[4]);
+// Own palettes: a look that keeps its colours apart from the scene's. A skinned model given an
+// own palette is resolved against that palette and its dither wherever its splats make up at
+// least half of an art pixel. At most SPLAT_MAX_OWN_PALETTES; returns the palette's number (>= 1).
+#define SPLAT_MAX_OWN_PALETTES 15
+int splat_palette_add(const uint32_t *pal, int n, float dither);
+// a model's splats are resolved against own palette `palette` (0, the default: the scene's)
+void splat_skin_set_model_palette(int model, int palette);
+// A blended model: its instances are drawn back to front with alpha blending, after everything
+// else, instead of out of order with the opaque cut. Each instance is sorted by depth on the
+// CPU from the model's rows (c: the cloud the model was made from; its rows are copied) and
+// holds the sorted rows in a buffer of its own; it is sorted again only when its bones turn or
+// move against each other, or the view direction changes.
+void splat_skin_set_model_blended(int model, const Splat_Cloud *c);
 // out = (rotation yaw about +y, then translation) applied after each bone of frame `frame`
 void splat_bones_place(float *out, const float *frame, int bone_n, float yaw, const float pos[3]);
 

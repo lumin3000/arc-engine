@@ -7,9 +7,11 @@
 //   splat    — one instanced quad per splat; the vertex stage projects the splat's 3D
 //              covariance to a screen-space ellipse (orthographic view), the fragment stage
 //              evaluates the Gaussian. Two colour targets: 0 = colour (blended by alpha),
-//              1 = normalised depth in .r (blended by alpha for solid splats only).
+//              1 = normalised depth in .r (blended by alpha for solid splats only); .g and .b
+//              carry the own palette of the splats that drew the pixel (see fs_splat).
 //   resolve  — palette resolve of a 2x samples target into the art grid: 2x2 palette
-//              vote, ordered dither on the native picture, body-coloured outer contour.
+//              vote, ordered dither on the native picture, body-coloured outer contour. A pixel
+//              drawn by splats with an own palette is resolved against that palette.
 //   blit     — nearest-neighbour copy of a target into a viewport.
 //
 // Pixel coordinates in every pass are "y-up": row 0 is the lowest screen row. Storage rows
@@ -143,7 +145,8 @@ void main() {
 @fs fs_splat
 layout(binding=1) uniform fs_splat_params {
     vec4 frag;      // x = screen offset Cx, y = Cy, z = target height px, w = 1 if storage origin is top-left
-    vec4 mode;      // x = 1: opaque cut (alpha >= 0.5 drawn whole, the rest dropped), for splats drawn out of order
+    vec4 mode;      // x = 1: opaque cut (alpha >= 0.5 drawn whole, the rest dropped), for splats drawn out of order;
+                    // y = own palette of these splats (0 = the scene's)
     vec4 tint;      // rgb = colour the splats are pulled towards, a = how far (0 = their own colour)
 };
 flat in vec2 v_rel;
@@ -170,7 +173,9 @@ void main() {
         a = 1.0;
     }
     frag_color = vec4(mix(min(v_col.rgb, vec3(1.0)), tint.rgb, tint.a), a);
-    frag_depth = vec4(v_dn, 0.0, 0.0, solid ? a : 0.0);
+    // .g = own palette number in steps of 8/255, .b = 1 for an own palette: blended like the depth, so
+    // .b is the share of the pixel that splats with an own palette drew and .g / .b their palette
+    frag_depth = vec4(v_dn, mode.y * (8.0 / 255.0), mode.y > 0.0 ? 1.0 : 0.0, solid ? a : 0.0);
 }
 @end
 
@@ -243,6 +248,7 @@ layout(binding=1) uniform fs_resolve_params {
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
     vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised); w = 1: transparent background
+    vec4 own[16]; // own palette k (1..15): x = size, y = dither
 };
 @image_sample_type u_scene unfilterable_float
 layout(binding=0) uniform texture2D u_scene;
@@ -250,25 +256,34 @@ layout(binding=0) uniform texture2D u_scene;
 layout(binding=1) uniform texture2D u_depth;
 @image_sample_type u_native unfilterable_float
 layout(binding=2) uniform texture2D u_native;
+// own palettes: row k holds palette k (row 0 unused), one colour a texel
+@image_sample_type u_pal unfilterable_float
+layout(binding=3) uniform texture2D u_pal;
 @sampler_type u_smp nonfiltering
 layout(binding=0) uniform sampler u_smp;
 in vec2 v_uv;
 out vec4 frag_color;
 
-int pixelNearest(vec3 c, bool solid) {
-    int n = int(opts.x);
+// colour i of palette k (0 = the scene's)
+vec3 pixelMapped(int k, int i) {
+    if (k == 0) return pal[i].rgb;
+    return texelFetch(sampler2D(u_pal, u_smp), ivec2(i, k), 0).rgb;
+}
+int pixelNearest(vec3 c, bool solid, int k) {
+    int n = int(k == 0 ? opts.x : own[k].x);
     int best = solid && n > 1 ? 1 : 0;
     float bd = 1e9;
     for (int i = 0; i < 64; i++) {
         if (i >= n) break;
         if (solid && i == 0 && n > 1) continue;
-        vec3 df = c - pal[i].rgb;
+        vec3 df = c - pixelMapped(k, i);
         float d = dot(df * df, vec3(0.30, 0.55, 0.15));
         if (d < bd) { bd = d; best = i; }
     }
     return best;
 }
-vec3 pixelMapped(int i) { return pal[i].rgb; }
+// own palette of a samples texel of the depth target (0 = the scene's): see fs_splat
+int ownOf(vec4 d) { return d.b > 0.5 ? int(d.g / d.b * (255.0 / 8.0) + 0.5) : 0; }
 // y-up pixel coordinate -> storage texel coordinate
 ivec2 stor(ivec2 p, float h) { return ivec2(p.x, opts.z > 0.5 ? int(h) - 1 - p.y : p.y); }
 ivec2 clampS(ivec2 p) { return clamp(p, ivec2(0), ivec2(size.zw) - 1); }
@@ -286,18 +301,29 @@ float bayer(int i) {
 void main() {
     ivec2 fp = ivec2(gl_FragCoord.xy);
     ivec2 p = ivec2(fp.x, opts.z > 0.5 ? int(size.y) - 1 - fp.y : fp.y);
-    vec3 samples[4]; int labels[4]; bool solid[4]; float coverage = 0.0;
+    // labels number the colours of every palette apart: palette * 64 + colour
+    vec3 samples[4]; int labels[4]; int owns[4]; bool solid[4]; float coverage = 0.0;
     for (int i = 0; i < 4; i++) {
         ivec2 q = stor(clampS(p * 2 + ivec2(i & 1, i >> 1)), size.w);
         samples[i] = texelFetch(sampler2D(u_scene, u_smp), q, 0).rgb;
-        solid[i] = texelFetch(sampler2D(u_depth, u_smp), q, 0).r < 0.995;
-        labels[i] = pixelNearest(samples[i], solid[i]);
+        vec4 dq = texelFetch(sampler2D(u_depth, u_smp), q, 0);
+        solid[i] = dq.r < 0.995;
+        owns[i] = ownOf(dq);
+        labels[i] = owns[i] * 64 + pixelNearest(samples[i], solid[i], owns[i]);
         if (solid[i]) coverage += 0.25;
+    }
+    // the pixel takes an own palette, and its dither, when at least two of its four samples do
+    int k = 0;
+    for (int i = 0; i < 4; i++) {
+        if (owns[i] == 0) continue;
+        int n = 0;
+        for (int j = 0; j < 4; j++) if (owns[j] == owns[i]) n++;
+        if (n >= 2) k = owns[i];
     }
     vec3 native = texelFetch(sampler2D(u_native, u_smp), stor(p, size.y), 0).rgb;
     ivec2 dp = p + ivec2(phase.xy);
-    float noise = ((bayer((dp.x & 3) + ((dp.y & 3) << 2)) + 0.5) / 16.0 - 0.5) * opts.y;
-    vec3 c = pixelMapped(pixelNearest(clamp(native + noise, 0.0, 1.0), false));
+    float noise = ((bayer((dp.x & 3) + ((dp.y & 3) << 2)) + 0.5) / 16.0 - 0.5) * (k == 0 ? opts.y : own[k].y);
+    vec3 c = pixelMapped(k, pixelNearest(clamp(native + noise, 0.0, 1.0), false, k));
     int best = -1, score = 0;
     for (int i = 0; i < 4; i++) {
         if (!solid[i]) continue;
@@ -310,19 +336,19 @@ void main() {
         bool outer = coverage < 1.0 || max(max(pixelDepth(p - ivec2(1, 0)), pixelDepth(p + ivec2(1, 0))),
             max(pixelDepth(p - ivec2(0, 1)), pixelDepth(p + ivec2(0, 1)))) >= 0.995;
         if (outer) {
-            vec3 body = pixelMapped(best);
+            vec3 body = pixelMapped(best / 64, best % 64);
             vec3 tone = body * 0.64;
             tone = min(vec3(1.0), tone * max(1.0, 0.12 / max(dot(tone, vec3(0.30, 0.55, 0.15)), 0.001)));
             vec3 edge = mix(body, tone, 0.65);
-            edge = mix(edge, pixelMapped(0), opts.w);
+            edge = mix(edge, pixelMapped(0, 0), opts.w);
             // over a transparent background the contour keeps its own colour instead of fading to palette 0
-            c = phase.w > 0.5 ? edge : mix(pixelMapped(0), edge, coverage);
+            c = phase.w > 0.5 ? edge : mix(pixelMapped(0, 0), edge, coverage);
         } else if (opts.w > 0.0) {
             // dark contour where this pixel stands in front of a sharp step back
             float d0 = pixelDepth(p);
             float dn = max(max(pixelDepth(p - ivec2(1, 0)), pixelDepth(p + ivec2(1, 0))),
                            max(pixelDepth(p - ivec2(0, 1)), pixelDepth(p + ivec2(0, 1))));
-            if (dn - d0 > phase.z) c = mix(c, pixelMapped(0), opts.w);
+            if (dn - d0 > phase.z) c = mix(c, pixelMapped(0, 0), opts.w);
         }
     }
     frag_color = vec4(c, clear ? 0.0 : 1.0);

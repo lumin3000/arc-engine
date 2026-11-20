@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "../../../external/sokol/c/sokol_app.h"
 #include "../../../external/sokol/c/sokol_gfx.h"
@@ -503,7 +504,18 @@ typedef struct {
     sg_buffer buf;
     uint32_t count;
     int bone_n;
+    int own;       // own palette (0 = the scene's)
+    float *rows;   // blended models: the model's rows, which its instances are sorted from
 } Splat_Skin_Model;
+
+// one blended instance's rows in drawing order
+typedef struct {
+    sg_buffer buf;
+    uint32_t cap;   // rows the buffer holds
+    int model;      // what the order was made for: this model, this view direction, these bones
+    float za[3];
+    float bones[SPLAT_MAX_BONES * 12];  // linear parts as given; translations relative to bone 0
+} Splat_Sorted;
 
 typedef struct {
     uint32_t start[SPLAT_LOD_LEVELS], count[SPLAT_LOD_LEVELS];   // splat ranges per level
@@ -567,6 +579,21 @@ static struct {
     float occ[SPLAT_MAX_OCCLUDERS * SPLAT_OCCLUDER_FLOATS];
     int occ_n;
     float lod_cell0;  // level 1 merge cell of the uploaded world
+    // own palettes: row k of the texture is palette k (row 0 unused)
+    sg_image own_img;
+    sg_view own_tex;
+    uint8_t own_px[(SPLAT_MAX_OWN_PALETTES + 1) * SPLAT_MAX_PALETTE * 4];
+    float own_opt[SPLAT_MAX_OWN_PALETTES + 1][2];  // size, dither
+    int own_n;
+    bool own_dirty;
+    // blended instances
+    Splat_Sorted *sorted[SPLAT_MAX_SKIN_INSTANCES];  // made when an instance is first drawn blended
+    int blend_list[SPLAT_MAX_SKIN_INSTANCES], blend_n;  // this frame's, far first
+    float *sort_depth, *sort_rows;                   // scratch for one model
+    uint32_t sort_cap;
+    int sorted_now;
+    uint64_t sorted_splats, sorted_bytes;
+    double sort_ms;
 } S;
 
 static float s_lod_cell0 = SPLAT_LOD_CELL0;  // for worlds baked from now on (any thread reads it)
@@ -777,6 +804,15 @@ void splat_init(void) {
         .wrap_v = SG_WRAP_CLAMP_TO_EDGE,
         .label = "splat-nearest",
     });
+    S.own_img = sg_make_image(&(sg_image_desc){
+        .usage = {.dynamic_update = true},
+        .width = SPLAT_MAX_PALETTE,
+        .height = SPLAT_MAX_OWN_PALETTES + 1,
+        .pixel_format = SG_PIXELFORMAT_RGBA8,
+        .label = "splat-own-palettes",
+    });
+    S.own_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.own_img}});
+    S.own_dirty = true;
     S.ready = true;
 }
 
@@ -1265,6 +1301,7 @@ void splat_skin_set_model(int model, const Splat_Cloud *c) {
     if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
     Splat_Skin_Model *m = &S.models[model];
     if ((int)c->bone_n != m->bone_n) SPLAT_FATAL("[splat] skinned model %d has %d bones, its replacement %u\n", model, m->bone_n, c->bone_n);
+    if (m->rows) SPLAT_FATAL("[splat] skinned model %d is blended: its splats cannot be replaced\n", model);
     sg_destroy_buffer(m->buf);
     m->buf = skin_model_buffer(c);
     m->count = c->count;
@@ -1347,6 +1384,154 @@ void splat_set_view(const Splat_View *v) {
     S.have_view = true;
 }
 
+int splat_palette_add(const uint32_t *pal, int n, float dither) {
+    if (n <= 0 || n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] own palette size %d\n", n);
+    if (S.own_n >= SPLAT_MAX_OWN_PALETTES) SPLAT_FATAL("[splat] more than %d own palettes\n", SPLAT_MAX_OWN_PALETTES);
+    const int k = ++S.own_n;
+    for (int i = 0; i < n; i++) {
+        uint8_t *t = S.own_px + ((size_t)k * SPLAT_MAX_PALETTE + i) * 4;
+        t[0] = (uint8_t)(pal[i] >> 16);
+        t[1] = (uint8_t)(pal[i] >> 8);
+        t[2] = (uint8_t)pal[i];
+        t[3] = 255;
+    }
+    S.own_opt[k][0] = (float)n;
+    S.own_opt[k][1] = dither;
+    S.own_dirty = true;
+    return k;
+}
+
+void splat_skin_set_model_palette(int model, int palette) {
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    if (palette < 0 || palette > S.own_n) SPLAT_FATAL("[splat] bad own palette %d\n", palette);
+    S.models[model].own = palette;
+}
+
+void splat_skin_set_model_blended(int model, const Splat_Cloud *c) {
+    if (model < 0 || model >= S.model_n) SPLAT_FATAL("[splat] bad skinned model %d\n", model);
+    Splat_Skin_Model *m = &S.models[model];
+    if (c->count != m->count || (int)c->bone_n != m->bone_n) SPLAT_FATAL("[splat] blended model %d: the cloud is not the one it was made from\n", model);
+    if (m->rows) return;
+    const size_t bytes = (size_t)c->count * SPLAT_FLOATS * 4;
+    m->rows = malloc(bytes);
+    if (!m->rows) SPLAT_FATAL("[splat] out of memory for blended model %d\n", model);
+    memcpy(m->rows, c->data, bytes);
+}
+
+static double wall_ms(void) {
+    struct timespec t;
+    timespec_get(&t, TIME_UTC);
+    return (double)t.tv_sec * 1000.0 + (double)t.tv_nsec / 1e6;
+}
+
+// Brings blended instance `inst` into back-to-front order for the view direction za (the view
+// matrix's z row: larger = nearer the eye). The order holds while the instance's bones keep
+// their linear parts and their places against each other and za stays: moving the whole
+// instance, or the view sideways, changes no splat's rank.
+#define SORT_BUCKETS 65536
+static void sorted_update(int inst, const float za[3]) {
+    const int model = S.inst_model[inst];
+    const Splat_Skin_Model *m = &S.models[model];
+    const float *bt = S.bone_data + (size_t)inst * SPLAT_MAX_BONES * 12;  // texels: [r00 r01 r02 tx] [r10 ..] [r20 ..]
+    float key[SPLAT_MAX_BONES * 12];
+    memcpy(key, bt, sizeof(float) * 12 * (size_t)m->bone_n);
+    for (int b = m->bone_n - 1; b >= 0; b--)
+        for (int r = 0; r < 3; r++) key[b * 12 + r * 4 + 3] -= key[r * 4 + 3];
+    Splat_Sorted *s = S.sorted[inst];
+    if (!s) {
+        s = S.sorted[inst] = calloc(1, sizeof(Splat_Sorted));
+        s->model = -1;
+    }
+    if (s->model == model && s->cap >= m->count && memcmp(s->za, za, sizeof(s->za)) == 0 &&
+        memcmp(s->bones, key, sizeof(float) * 12 * (size_t)m->bone_n) == 0)
+        return;
+    const double t0 = wall_ms();
+    const uint32_t n = m->count;
+    if (S.sort_cap < n) {
+        S.sort_cap = n;
+        S.sort_depth = realloc(S.sort_depth, sizeof(float) * n);
+        S.sort_rows = realloc(S.sort_rows, sizeof(float) * SPLAT_FLOATS * n);
+        if (!S.sort_depth || !S.sort_rows) SPLAT_FATAL("[splat] out of memory sorting %u splats\n", n);
+    }
+    // each bone's depth row: za . (R p + t)
+    float brow[SPLAT_MAX_BONES][4];
+    for (int b = 0; b < m->bone_n; b++) {
+        const float *t = bt + b * 12;
+        for (int k = 0; k < 4; k++) brow[b][k] = za[0] * t[k] + za[1] * t[4 + k] + za[2] * t[8 + k];
+    }
+    float lo = 1e30f, hi = -1e30f;
+    for (uint32_t i = 0; i < n; i++) {
+        const float *d = m->rows + (size_t)i * SPLAT_FLOATS;
+        const float *r0 = brow[(int)d[12]];
+        float z = r0[0] * d[0] + r0[1] * d[1] + r0[2] * d[2] + r0[3];
+        if (d[14] > 0.0f) {
+            const float *r1 = brow[(int)d[13]];
+            z += (r1[0] * d[0] + r1[1] * d[1] + r1[2] * d[2] + r1[3] - z) * d[14];
+        }
+        S.sort_depth[i] = z;
+        if (z < lo) lo = z;
+        if (z > hi) hi = z;
+    }
+    // counting sort over the depth range, far (small z) first
+    static uint32_t start[SORT_BUCKETS + 1];
+    memset(start, 0, sizeof(start));
+    const float scale = hi > lo ? (float)(SORT_BUCKETS - 1) / (hi - lo) : 0.0f;
+    for (uint32_t i = 0; i < n; i++) start[(uint32_t)((S.sort_depth[i] - lo) * scale) + 1]++;
+    for (int k = 0; k < SORT_BUCKETS; k++) start[k + 1] += start[k];
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t at = start[(uint32_t)((S.sort_depth[i] - lo) * scale)]++;
+        memcpy(S.sort_rows + (size_t)at * SPLAT_FLOATS, m->rows + (size_t)i * SPLAT_FLOATS, sizeof(float) * SPLAT_FLOATS);
+    }
+    if (s->cap < n) {
+        if (s->cap) sg_destroy_buffer(s->buf);
+        s->buf = sg_make_buffer(&(sg_buffer_desc){
+            .usage = {.vertex_buffer = true, .dynamic_update = true},
+            .size = (size_t)n * SPLAT_FLOATS * 4,
+            .label = "splat-sorted",
+        });
+        S.sorted_bytes += (uint64_t)(n - s->cap) * SPLAT_FLOATS * 4;
+        s->cap = n;
+    }
+    sg_update_buffer(s->buf, &(sg_range){.ptr = S.sort_rows, .size = (size_t)n * SPLAT_FLOATS * 4});
+    s->model = model;
+    memcpy(s->za, za, sizeof(s->za));
+    memcpy(s->bones, key, sizeof(float) * 12 * (size_t)m->bone_n);
+    S.sorted_now++;
+    S.sorted_splats += n;
+    S.sort_ms += wall_ms() - t0;
+}
+
+// The blended instances that reach the view, far ones first, each in order for this frame.
+static void blended_prepare(const Splat_Target *t) {
+    const Splat_View *v = &S.view;
+    const double focal = (double)t->h / 2.0 / (double)v->ortho_half_h;
+    const float cx = (float)(focal * (double)v->view[12] + (double)t->w / 2.0);
+    const float cy = (float)(focal * (double)v->view[13] + (double)t->h / 2.0);
+    const float za[3] = {v->view[2], v->view[6], v->view[10]};
+    S.blend_n = 0;
+    S.sorted_now = 0;
+    S.sorted_splats = 0;
+    S.sort_ms = 0.0;
+    float depth[SPLAT_MAX_SKIN_INSTANCES];
+    for (int i = 0; i < S.inst_n; i++) {
+        if (!S.models[S.inst_model[i]].rows) continue;
+        const float *b = S.inst_bounds[i];
+        if (b[3] > 0) {
+            const float lo[3] = {b[0] - b[3], b[1] - b[3], b[2] - b[3]}, hi[3] = {b[0] + b[3], b[1] + b[3], b[2] + b[3]};
+            if (!box_visible(lo, hi, v->view, focal, cx, cy, t->w, t->h)) continue;
+        }
+        const float z = za[0] * b[0] + za[1] * b[1] + za[2] * b[2];
+        int at = S.blend_n++;
+        for (; at > 0 && depth[at - 1] > z; at--) {
+            depth[at] = depth[at - 1];
+            S.blend_list[at] = S.blend_list[at - 1];
+        }
+        depth[at] = z;
+        S.blend_list[at] = i;
+    }
+    for (int k = 0; k < S.blend_n; k++) sorted_update(S.blend_list[k], za);
+}
+
 static void draw_splats(const Splat_Target *t) {
     const Splat_View *v = &S.view;
     vs_splat_params_t p;
@@ -1415,18 +1600,39 @@ static void draw_splats(const Splat_Target *t) {
         int sk = 0;
         uint64_t sks = 0;
         for (int i = 0; i < S.inst_n; i++) {
+            const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
+            if (m->rows) continue;  // blended: below
             const float *b = S.inst_bounds[i];
             if (b[3] > 0) {
                 const float lo[3] = {b[0] - b[3], b[1] - b[3], b[2] - b[3]}, hi[3] = {b[0] + b[3], b[1] + b[3], b[2] + b[3]};
                 if (!box_visible(lo, hi, v->view, focal, cx, cy, t->w, t->h)) continue;
             }
             sk++;
-            const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
             sks += m->count;
             p.zr.v[2] = (float)i;
+            fp.mode.v[1] = (float)m->own;
             memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = m->buf,
+                .views[VIEW_bone_tex] = S.bone_tex,
+                .samplers[SMP_bone_smp] = S.nearest,
+            });
+            sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
+            sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
+            sg_draw(0, 4, (int)m->count);
+        }
+        // blended instances last, far ones first: each is in back-to-front order itself, and what
+        // stands in front of it has written its depth
+        for (int k = 0; k < S.blend_n; k++) {
+            const int i = S.blend_list[k];
+            const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
+            sk++;
+            sks += m->count;
+            p.zr.v[2] = (float)i;
+            fp.mode = (Splat_Vec4){{0, (float)m->own, 0, 0}};
+            memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
+            sg_apply_bindings(&(sg_bindings){
+                .vertex_buffers[0] = S.sorted[i]->buf,
                 .views[VIEW_bone_tex] = S.bone_tex,
                 .samplers[SMP_bone_smp] = S.nearest,
             });
@@ -1449,6 +1655,11 @@ void splat_render_offscreen(void) {
             .size = (size_t)S.bone_rows * SPLAT_MAX_BONES * 12 * sizeof(float),
         }});
     }
+    if (S.own_dirty) {
+        sg_update_image(S.own_img, &(sg_image_data){.mip_levels[0] = {.ptr = S.own_px, .size = sizeof(S.own_px)}});
+        S.own_dirty = false;
+    }
+    blended_prepare(&S.samples);
     draw_splats(&S.samples);
     draw_splats(&S.native);
 
@@ -1460,6 +1671,7 @@ void splat_render_offscreen(void) {
     rp.size = (Splat_Vec4){{(float)S.art_w, (float)S.art_h, (float)S.samples.w, (float)S.samples.h}};
     rp.phase = (Splat_Vec4){{(float)S.view.phase_x, (float)S.view.phase_y,
                              S.view.outline_step / (2.0f * S.view.radius), S.view.transparent ? 1.0f : 0.0f}};
+    for (int k = 1; k <= S.own_n; k++) rp.own[k] = (Splat_Vec4){{S.own_opt[k][0], S.own_opt[k][1], 0, 0}};
     vs_quad_params_t qp = {.quad = {{flip, 0, 0, 0}}};
     sg_begin_pass(&(sg_pass){
         .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
@@ -1472,6 +1684,7 @@ void splat_render_offscreen(void) {
             [VIEW_u_scene] = S.samples.color_tex,
             [VIEW_u_depth] = S.samples.depth_tex,
             [VIEW_u_native] = S.native.color_tex,
+            [VIEW_u_pal] = S.own_tex,
         },
         .samplers[SMP_u_smp] = S.nearest,
     });
@@ -1563,5 +1776,10 @@ Splat_Stats splat_stats(void) {
     for (int m = 0; m < S.model_n; m++) st.skin_bytes += (uint64_t)S.models[m].count * SPLAT_FLOATS * 4;
     // a target is two RGBA8 images and a depth buffer (4 bytes a pixel each): the 2x sample grid, the art grid; then the art image
     st.target_bytes = (uint64_t)S.art_w * S.art_h * (4 * 12 + 12 + 4) + (uint64_t)S.bone_rows * SPLAT_MAX_BONES * 12 * 4;
+    st.blended_drawn = S.blend_n;
+    st.blended_sorted = S.sorted_now;
+    st.blended_sorted_splats = S.sorted_splats;
+    st.blended_bytes = S.sorted_bytes;
+    st.blended_sort_ms = S.sort_ms;
     return st;
 }
