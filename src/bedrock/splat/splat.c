@@ -87,22 +87,35 @@ Splat_Cloud *splat_cloud_load(const char *path) {
     return c;
 }
 
+// Arc-style front plates have the eyes one quarter of the way down and the collar at
+// two fifths. Give the brow less space and the face more; below the collar the plate is 1:1.
+static int portrait_row(int row, int height) {
+    const float t = (float)row / (float)(height - 1);
+    float src = t;
+    if (t < 0.16f) src = t * (0.25f / 0.16f);
+    else if (t < 0.40f) src = 0.25f + (t - 0.16f) * (0.15f / 0.24f);
+    return (int)lroundf(src * (float)(height - 1));
+}
+
 // see splat.h; the dab shape follows ink-studio's builder disc(): Sigma = st^2 I + (sn^2 - st^2) n n^T
-Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
+static Splat_Cloud *cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
                                     float world_per_px, int alpha_cut, int split_row,
-                                    const uint32_t *pal, int pal_n) {
+                                    const uint32_t *pal, int pal_n, bool front_panel) {
     if (step < 1 || img_w < 2 || img_h < 2 || pal_n < 1 || pal_n > SPLAT_MAX_PALETTE) SPLAT_FATAL("[splat] bad from_views parameters\n");
     const float st = 0.95f * world_per_px * (float)step, sn = 0.51f * st, pi2 = 6.2831853f;
+    // The portrait side plate is shallower so a diagonal heading still shows both cheeks.
+    const float profile_depth = front_panel ? 0.63f : 1.0f;
     // per sampled row: centre and half-width of the opaque run in each view (half < 0 = no ring)
     const int rows = img_h / step + 1;
     float *mid = malloc(sizeof(float) * 4 * (size_t)rows), *half = malloc(sizeof(float) * 4 * (size_t)rows);
     for (int ri = 0; ri < rows; ri++) {
         const int j = ri * step;
         int ok = j > 0 && j < img_h;
+        const int src_j = front_panel && ok ? portrait_row(j, img_h) : j;
         for (int v = 0; v < 4 && ok; v++) {
             int l = img_w, r = -1;
             for (int k = 0; k < img_w; k++)
-                if (views[v][((size_t)j * img_w + k) * 4 + 3] > alpha_cut) {
+                if (views[v][((size_t)src_j * img_w + k) * 4 + 3] > alpha_cut) {
                     if (k < l) l = k;
                     r = k;
                 }
@@ -133,8 +146,9 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
     for (int ri = 1; ri < rows; ri++) {
         if (half[ri * 4] < 0) continue;
         const int j = ri * step;
+        const int src_j = front_panel ? portrait_row(j, img_h) : j;
         const float *M = mid + ri * 4, *H = half + ri * 4;
-        const float rx = 0.5f * (H[0] + H[2]) * world_per_px, rz = 0.5f * (H[1] + H[3]) * world_per_px;
+        const float rx = 0.5f * (H[0] + H[2]) * world_per_px, rz = 0.5f * (H[1] + H[3]) * world_per_px * profile_depth;
         const float y = (float)(img_h - 1 - j) * world_per_px;
         const float bone = j < split_row ? 1.0f : 0.0f;
         // the ring above (one sampled row up the image): where it is narrower, this row's top is
@@ -143,37 +157,51 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
         float urx = 0.0f, urz = 0.0f;
         if (up >= 1 && half[up * 4] >= 0) {
             urx = 0.5f * (half[up * 4] + half[up * 4 + 2]) * world_per_px;
-            urz = 0.5f * (half[up * 4 + 1] + half[up * 4 + 3]) * world_per_px;
+            urz = 0.5f * (half[up * 4 + 1] + half[up * 4 + 3]) * world_per_px * profile_depth;
         }
         // dabs round the ring about one dab width apart
         int ring = (int)ceilf(pi2 * fmaxf(rx, rz) / (0.9f * st));
+        // Keep the diagonals in register from row to row; a coarse cheek still needs
+        // enough samples across the painted plate for the two eyes to stay separate.
+        if (front_panel && src_j < img_h * 2 / 5) ring = ((ring * 3 / 2 + 7) / 8) * 8;
         ring = ring < 16 ? 16 : ring > 256 ? 256 : ring;
         for (int k = 0; k < ring; k++) {
             const float a = pi2 * (float)k / (float)ring, dx = cosf(a), dz = sinf(a);
             // the facing front/back view and side view, and where the point falls across each (-1..1)
             const int fv = dz < 0 ? 0 : 2, sv = dx > 0 ? 1 : 3;
-            const float ft = dz < 0 ? dx : -dx, stt = dx > 0 ? dz : -dz;
-            const float w = dx * dx;
+            // A rounded rectangular section gives both eyes room on a near-flat cheek.
+            // x^4 + z^4 = 1; the generic shell remains elliptical.
+            const float ux = dx * dx, uz = dz * dz;
+            const float gain = front_panel ? 1.0f / sqrtf(sqrtf(ux * ux + uz * uz)) : 1.0f;
+            const float ft = (dz < 0 ? dx : -dx) * gain, stt = (dx > 0 ? dz : -dz) * gain;
+            // On a portrait keep each eye, fringe and collar on the same painted panel.
+            // Feather into the true profile only at the temple. Back views retain their own plate.
+            float w = dx * dx;
+            if (front_panel) {
+                const float t = fminf(1.0f, fmaxf(0.0f, (fabsf(dx) - 0.80f) / 0.17f));
+                w = t * t * (3.0f - 2.0f * t);
+            }
             const int fk = (int)lroundf(M[fv] + H[fv] * ft), sk = (int)lroundf(M[sv] + H[sv] * stt);
-            const uint8_t *fp = views[fv] + ((size_t)j * img_w + fk) * 4, *sp = views[sv] + ((size_t)j * img_w + sk) * 4;
+            const uint8_t *fp = views[fv] + ((size_t)src_j * img_w + fk) * 4, *sp = views[sv] + ((size_t)src_j * img_w + sk) * 4;
             if ((float)fp[3] * (1.0f - w) + (float)sp[3] * w < (float)alpha_cut) continue;
             uint32_t rgb = 0;
             for (int c = 0; c < 3; c++) {
                 const uint32_t cc = (uint32_t)lroundf((float)fp[c] * (1.0f - w) + (float)sp[c] * w);
                 rgb |= (cc > 255 ? 255 : cc) << (8 * c);
             }
-            const float nl = sqrtf(dx * dx * rz * rz + dz * dz * rx * rx);  // ellipse normal
-            const float nv[3] = {nl > 0 ? dx * rz / nl : dx, 0.0f, nl > 0 ? dz * rx / nl : dz};
-            const float p[3] = {rx * dx, y, rz * dz};
+            const float nx = (front_panel ? dx * ux : dx) * rz, nz = (front_panel ? dz * uz : dz) * rx;
+            const float nl = sqrtf(nx * nx + nz * nz);
+            const float nv[3] = {nl > 0 ? nx / nl : dx, 0.0f, nl > 0 ? nz / nl : dz};
+            const float p[3] = {gain * rx * dx, y, gain * rz * dz};
             FV_PUSH(p, nv, rgb, bone);
             // ledge: from the outline above (or the axis at the top) out to this ring
-            const float in_r = sqrtf(urx * urx * dx * dx + urz * urz * dz * dz), out_r = sqrtf(rx * rx * dx * dx + rz * rz * dz * dz);
+            const float in_r = gain * sqrtf(urx * urx * dx * dx + urz * urz * dz * dz), out_r = gain * sqrtf(rx * rx * dx * dx + rz * rz * dz * dz);
             const float upn[3] = {0.0f, 1.0f, 0.0f};
             // a ledge takes its colour a little further down the views: the outline runs along the
             // silhouette's top edge, and a dark rim would otherwise be laid over the whole top
             uint32_t lrgb = 0;
             if (out_r - st > in_r + 0.5f * st) {
-                const int jj = j + 6 < img_h ? j + 6 : img_h - 1;
+                const int jj = src_j + 6 < img_h ? src_j + 6 : img_h - 1;
                 const uint8_t *fq = views[fv] + ((size_t)jj * img_w + fk) * 4, *sq = views[sv] + ((size_t)jj * img_w + sk) * 4;
                 for (int c = 0; c < 3; c++) {
                     const uint32_t cc = (uint32_t)lroundf((float)fq[c] * (1.0f - w) + (float)sq[c] * w);
@@ -188,7 +216,7 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
             if (ri == last) {
                 // sole: downward dabs from this ring in to the axis, darkened (it is in shade). The colour is
                 // taken a little further up the views: the lowest row is the silhouette's dark outline
-                const int jj = j - 10 > 0 ? j - 10 : j;
+                const int jj = src_j - 10 > 0 ? src_j - 10 : src_j;
                 const uint8_t *fq = views[fv] + ((size_t)jj * img_w + fk) * 4, *sq = views[sv] + ((size_t)jj * img_w + sk) * 4;
                 const int lit = (float)fq[3] * (1.0f - w) + (float)sq[3] * w >= (float)alpha_cut;
                 uint32_t srgb = 0;
@@ -228,6 +256,18 @@ Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, in
     }
     c->radius = sqrtf(r2);
     return c;
+}
+
+Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
+                                    float world_per_px, int alpha_cut, int split_row,
+                                    const uint32_t *pal, int pal_n) {
+    return cloud_from_views(views, img_w, img_h, step, world_per_px, alpha_cut, split_row, pal, pal_n, false);
+}
+
+Splat_Cloud *splat_cloud_from_portrait(const uint8_t *const views[4], int img_w, int img_h, int step,
+                                    float world_per_px, int alpha_cut, int split_row,
+                                    const uint32_t *pal, int pal_n) {
+    return cloud_from_views(views, img_w, img_h, step, world_per_px, alpha_cut, split_row, pal, pal_n, true);
 }
 
 Splat_Cloud *splat_cloud_from_icon(const uint8_t *rgba, int img_w, int img_h, int step, float world_per_px,

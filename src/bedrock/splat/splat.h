@@ -114,6 +114,11 @@ Splat_Cloud *splat_cloud_from_mesh(const float *pos, const uint8_t *rgb, int ver
 Splat_Cloud *splat_cloud_from_views(const uint8_t *const views[4], int img_w, int img_h, int step,
                                     float world_per_px, int alpha_cut, int split_row,
                                     const uint32_t *pal, int pal_n);
+// Portrait variant for the Arc crew plates: a shallow, round-cornered section with broad
+// painted panels. The upper 40% trades crown for face height; the collar and hem stay registered.
+Splat_Cloud *splat_cloud_from_portrait(const uint8_t *const views[4], int img_w, int img_h, int step,
+                                    float world_per_px, int alpha_cut, int split_row,
+                                    const uint32_t *pal, int pal_n);
 
 void splat_init(void);
 void splat_upload(const Splat_Cloud *c, const float view[16]);
