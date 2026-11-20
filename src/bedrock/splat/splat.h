@@ -57,6 +57,7 @@ typedef struct Splat_View {
     int lod_force;      // chunk worlds: -1 = pick the level from the art-pixel size, else that level
     int transparent;    // 1 = art pixels with no splat are transparent, so the composite lies over the host's frame
     int offset_px[2];   // composite offset in physical pixels (x right, y down), e.g. to undo art-pixel snapping
+    float lamp_seconds, lamp_height; // local light animation clock and emitter elevation
 } Splat_View;
 
 typedef enum {
@@ -137,6 +138,7 @@ Splat_Cloud *splat_cloud_from_portrait(const uint8_t *const views[4], int img_w,
 void splat_init(void);
 void splat_upload(const Splat_Cloud *c, const float view[16]);
 void splat_set_palette(const uint32_t *pal, int n);
+void splat_set_lights(const float *data, int side);
 void splat_set_view(const Splat_View *v);
 void splat_render_offscreen(void);
 void splat_composite(Splat_Show show);

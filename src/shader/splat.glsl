@@ -21,10 +21,62 @@
 @ctype mat4 Splat_Mat4
 @ctype vec4 Splat_Vec4
 
+@block local_light_inputs
+@image_sample_type lamp_cells unfilterable_float
+layout(binding=1) uniform texture2D lamp_cells;
+@sampler_type lamp_smp nonfiltering
+layout(binding=1) uniform sampler lamp_smp;
+@end
+
+@block local_light
+vec3 surface_normal(mat3 shape, vec3 towardsEye) {
+    // Longest cofactor is perpendicular to the plane of the elliptical splat.
+    vec3 a=cross(shape[0],shape[1]), b=cross(shape[1],shape[2]), c=cross(shape[2],shape[0]);
+    vec3 n=dot(a,a)>dot(b,b)?a:b;
+    if(dot(c,c)>dot(n,n)) n=c;
+    return dot(n,towardsEye)<0.0 ? -normalize(n+vec3(0,1e-20,0)) : normalize(n+vec3(0,1e-20,0));
+}
+vec3 unpack_normal(float packedNormal) {
+    int bits=int(packedNormal)-1;
+    vec2 p=vec2(bits&255,(bits>>8)&255)/127.5-1.0;
+    vec3 n=vec3(p,1.0-abs(p.x)-abs(p.y));
+    n.xy+=mix(vec2(1),vec2(-1),greaterThanEqual(n.xy,vec2(0)))*max(0.0,-n.z);
+    return normalize(n);
+}
+void lamp_shade(vec3 pos, mat3 shape, vec3 normal) {
+    ivec2 cell=ivec2(floor(pos.xz)-lampOrigin.xy);
+    if(any(lessThan(cell,ivec2(0))) || any(greaterThanEqual(cell,ivec2(lampFrame.xy)))) return;
+    int width=textureSize(sampler2D(lamp_cells,lamp_smp),0).x;
+    int header=1+cell.y*int(lampFrame.x)+cell.x;
+    vec2 span=texelFetch(sampler2D(lamp_cells,lamp_smp),ivec2(header%width,header/width),0).xy;
+    if(span.y<0.5) return;
+    vec3 n=normal;
+    if(dot(n,n)<0.1) n=surface_normal(shape,vec3(view[0][2],view[1][2],view[2][2]));
+    vec3 energy=vec3(0);
+    for(int i=0;i<int(span.y);i++){
+        int index=int(span.x)+i;
+        vec4 lamp=texelFetch(sampler2D(lamp_cells,lamp_smp),ivec2(index%width,index/width),0);
+        vec3 delta=vec3(lamp.x,lampFrame.w,lamp.y)-pos;
+        float distanceToLight=length(delta);
+        float atten=max(0.0,1.0-distanceToLight/lamp.z);
+        float direct=max(0.0,dot(n,delta/max(.001,distanceToLight)));
+        int rgb=int(lamp.w);
+        vec3 color=vec3(rgb>>16,(rgb>>8)&255,rgb&255)/255.0;
+        float phase=lampFrame.z+dot(floor(lamp.xy),vec2(1.7,2.1));
+        float flicker=1.0+.025*sin(5.0*phase);
+        energy+=color*atten*atten*(.15+1.40*direct)*flicker;
+    }
+    if(max(energy.r,max(energy.g,energy.b))<.009) return;
+    v_col.rgb+=min(energy,vec3(1.6))*(.14+.72*v_col.rgb);
+    v_lit=1.0;
+}
+@end
+
 @block splat_project
 // Projects one splat (world position, density, covariance, packed colour) into the target and
 // fills the flat outputs. Uniforms: view, cam, dep, zr (declared by the including stage).
 void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c02, float c11, float c12, float c22, float pk) {
+    v_lit=0.0;
     vec2 sgn = vec2((corner & 1) != 0 ? 1.0 : -1.0, (corner & 2) != 0 ? 1.0 : -1.0);
     vec3 xa = vec3(view[0][0], view[1][0], view[2][0]);
     vec3 ya = vec3(view[0][1], view[1][1], view[2][1]);
@@ -72,7 +124,10 @@ layout(binding=0) uniform vs_splat_params {
     vec4 dep;       // x = eye distance, y = depth radius, z = focal px, w = near
     vec4 zr;        // x = hardware depth near (view distance), y = 1 / depth range, w = how much nearer these
                     // splats are tested and written than they are (share of the depth range)
+    vec4 lampOrigin;
+    vec4 lampFrame; // map width, height, animation seconds, flame height
 };
+@include_block local_light_inputs
 
 in vec4 a_pos;   // x y z density
 in vec4 a_cov0;  // c00 c01 c02 packed rgb
@@ -84,12 +139,25 @@ in vec4 a_cov1;  // c11 c12 c22 kind
 flat out vec2 v_rel;    // splat centre minus the screen offset, target px (y-up)
 flat out vec3 v_conic;
 flat out vec4 v_col;
+flat out float v_lit;
 flat out float v_dn;
 
 @include_block splat_project
+@include_block local_light
 
 void main() {
-    splat_project(gl_VertexIndex, a_pos.xyz, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
+    vec3 pos=a_pos.xyz;
+    float flame=max(0.0,-a_cov1.w);
+    if(flame>0.0) {
+        float phase=lampFrame.z+dot(floor(pos.xz),vec2(1.7,2.1));
+        pos.x+=flame*.035*sin(phase*5.0);
+        pos.y+=flame*.045*sin(phase*7.0);
+    }
+    splat_project(gl_VertexIndex, pos, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
+    if(flame==0.0 && lampFrame.x>0.0) {
+        mat3 shape=mat3(a_cov0.xyz,vec3(a_cov0.y,a_cov1.xy),vec3(a_cov0.z,a_cov1.yz));
+        lamp_shade(pos,shape,vec3(0));
+    }
 }
 @end
 
@@ -99,7 +167,10 @@ layout(binding=0) uniform vs_splat_params {
     vec4 cam;
     vec4 dep;
     vec4 zr;        // z = bone texture row of this instance
+    vec4 lampOrigin;
+    vec4 lampFrame;
 };
+@include_block local_light_inputs
 @image_sample_type bone_tex unfilterable_float
 layout(binding=0) uniform texture2D bone_tex;
 @sampler_type bone_smp nonfiltering
@@ -113,9 +184,11 @@ in vec4 a_bone;  // bone, second bone, second bone share, unused
 flat out vec2 v_rel;
 flat out vec3 v_conic;
 flat out vec4 v_col;
+flat out float v_lit;
 flat out float v_dn;
 
 @include_block splat_project
+@include_block local_light
 
 // bone b of this instance: rows of [R | t]
 void bone_rows(int b, out vec4 r0, out vec4 r1, out vec4 r2) {
@@ -140,6 +213,10 @@ void main() {
     mat3 R = transpose(mat3(r0.xyz, r1.xyz, r2.xyz));
     mat3 Sp = R * S * transpose(R);
     splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w);
+    if(lampFrame.x>0.0) {
+        vec3 n=a_bone.w>0.0 ? normalize(R*unpack_normal(a_bone.w)) : vec3(0);
+        lamp_shade(x,Sp,n);
+    }
 }
 @end
 
@@ -153,6 +230,7 @@ layout(binding=1) uniform fs_splat_params {
 flat in vec2 v_rel;
 flat in vec3 v_conic;
 flat in vec4 v_col;
+flat in float v_lit;
 flat in float v_dn;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
@@ -176,7 +254,7 @@ void main() {
     frag_color = vec4(mix(min(v_col.rgb, vec3(1.0)), tint.rgb, tint.a), a);
     // .g = own palette number in steps of 8/255, .b = 1 for an own palette: blended like the depth, so
     // .b is the share of the pixel that splats with an own palette drew and .g / .b their palette
-    frag_depth = vec4(v_dn, mode.y * (8.0 / 255.0), mode.y > 0.0 ? 1.0 : 0.0, solid ? a : 0.0);
+    frag_depth = vec4(v_dn, (mode.y*8.0+(mode.y>0.0 ? 3.0*v_lit : 0.0))/255.0, mode.y > 0.0 ? 1.0 : 0.0, solid ? a : 0.0);
 }
 @end
 
@@ -244,6 +322,14 @@ void main() {
 
 @program blit vs_quad fs_blit
 
+@block warm_palette
+// Keep the native luminance choices; add the chroma of a lit sample in small discrete steps.
+vec3 lit_palette(vec3 entry,vec3 sampleColor) {
+    vec3 d=sampleColor-entry;
+    vec3 chroma=d-vec3(dot(d,vec3(.30,.55,.15)));
+    return clamp(entry+round(64.0*chroma)/64.0,0.0,1.0);
+}
+@end
 @fs fs_resolve
 layout(binding=1) uniform fs_resolve_params {
     vec4 pal[64];
@@ -266,6 +352,7 @@ layout(binding=0) uniform sampler u_smp;
 in vec2 v_uv;
 out vec4 frag_color;
 
+@include_block warm_palette
 // colour i of palette k (0 = the scene's)
 vec3 pixelMapped(int k, int i) {
     if (k == 0) return pal[i].rgb;
@@ -353,6 +440,10 @@ void main() {
             if (dn - d0 > phase.z) c = mix(c, pixelMapped(0, 0), opts.w);
         }
     }
+    if(k>0) {
+        vec4 meta=texelFetch(sampler2D(u_depth,u_smp),stor(clampS(p*2),size.w),0);
+        if(meta.b>.5 && meta.g*255.0/meta.b-float(k*8)>1.5) c=lit_palette(c,native);
+    }
     frag_color = vec4(c, clear ? 0.0 : 1.0);
 }
 @end
@@ -370,8 +461,10 @@ layout(binding=0) uniform sampler detail_smp;
 layout(binding=1) uniform fs_detail_params { vec4 palette; };
 in vec2 v_uv;
 out vec4 frag_color;
+@include_block warm_palette
 void main() {
-    float coverage = texture(sampler2D(detail_depth, detail_smp), v_uv).b;
+    vec4 meta=texture(sampler2D(detail_depth, detail_smp), v_uv);
+    float coverage=meta.b;
     if (coverage == 0.0) discard;
     vec3 source = texture(sampler2D(detail_color, detail_smp), v_uv).rgb;
     const int ranks[16] = int[16](0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5);
@@ -387,6 +480,7 @@ void main() {
     }
     vec3 background = texelFetch(sampler2D(detail_palette, detail_smp), ivec2(0, int(palette.x)), 0).rgb;
     if (coverage < 1.0 && all(equal(color, background))) discard;
+    if(meta.g*255.0/coverage-palette.x*8.0>1.5) color=lit_palette(color,source);
     frag_color = vec4(color, 1.0);
 }
 @end

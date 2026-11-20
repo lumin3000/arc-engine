@@ -553,6 +553,9 @@ static struct {
     Splat_Detail details[SPLAT_MAX_SKIN_INSTANCES];
     bool detail_active[SPLAT_MAX_SKIN_INSTANCES];
     int detail_n;
+    sg_image lamp_img;
+    sg_view lamp_tex;
+    int lamp_x, lamp_z, lamp_w, lamp_h;
     sg_sampler nearest;
     sg_buffer instances;
     uint32_t count;
@@ -731,6 +734,19 @@ static void bone_image_make(int rows) {
     S.bone_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.bone_img}});
 }
 
+void splat_set_lights(const float *data, int side) {
+    sg_destroy_view(S.lamp_tex);
+    sg_destroy_image(S.lamp_img);
+    S.lamp_img = sg_make_image(&(sg_image_desc){
+        .width = side, .height = side, .pixel_format = SG_PIXELFORMAT_RGBA32F,
+        .data.mip_levels[0] = {data, (size_t)side * side * 4 * sizeof(float)},
+        .label = "splat-local-lights"
+    });
+    S.lamp_tex = sg_make_view(&(sg_view_desc){.texture.image = S.lamp_img});
+    S.lamp_x = (int)data[0]; S.lamp_z = (int)data[1];
+    S.lamp_w = (int)data[2]; S.lamp_h = (int)data[3];
+}
+
 void splat_init(void) {
     if (S.ready) return;
     S.splat_shd = sg_make_shader(splat_shader_desc(sg_query_backend()));
@@ -831,6 +847,8 @@ void splat_init(void) {
     });
     S.own_tex = sg_make_view(&(sg_view_desc){.texture = {.image = S.own_img}});
     S.own_dirty = true;
+    const float unlit[4]={0};
+    splat_set_lights(unlit, 1);
     S.ready = true;
 }
 
@@ -982,11 +1000,12 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
     for (uint32_t a = 0; a < n;) {
         uint32_t b = a;
         while (b < n && it[b].key == it[a].key) b++;
-        double w = 0, m[3] = {0, 0, 0}, col[3] = {0, 0, 0}, al = 0;
+        double w = 0, m[3] = {0, 0, 0}, col[3] = {0, 0, 0}, al = 0, flame = 0;
         for (uint32_t k = a; k < b; k++) {
             const float *d = src + (size_t)it[k].idx * SPLAT_FLOATS;
             const double wk = 1.0;
             w += wk;
+            if (d[11] < 0) flame += d[11] * wk;
             for (int q = 0; q < 3; q++) m[q] += wk * d[q];
             const uint32_t pk = (uint32_t)d[7];
             col[0] += wk * (pk % 256);
@@ -1023,7 +1042,7 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
         o[10] = (float)(c[5] * f + (b - a == 1 ? base : 0));
         const uint32_t r = (uint32_t)lround(col[0] / w), g = (uint32_t)lround(col[1] / w), bl = (uint32_t)lround(col[2] / w);
         o[7] = (float)(r + g * 256 + bl * 65536);
-        o[11] = 0;
+        o[11] = flame / w < -0.4 ? (float)(flame / w) : 0;
         out++;
         a = b;
     }
@@ -1661,6 +1680,8 @@ static void prepare_detail_regions(void) {
 static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
     const Splat_View *v = &S.view;
     vs_splat_params_t p;
+    p.lampOrigin = (Splat_Vec4){{(float)S.lamp_x, (float)S.lamp_z, 0, 0}};
+    p.lampFrame=(Splat_Vec4){{(float)S.lamp_w,(float)S.lamp_h,v->lamp_seconds,v->lamp_height}};
     memcpy(p.view.v, v->view, sizeof(p.view.v));
     // A crop uses the same projected scene and depth range, translated to
     // its own target. Only the sampling pitch changes.
@@ -1700,7 +1721,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         sg_apply_uniforms(UB_vs_splat_params, &SG_RANGE(p));
         sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
         if (!S.chunks && !S.world) {
-            sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances});
+            sg_apply_bindings(&(sg_bindings){.vertex_buffers[0] = S.instances,.views[VIEW_lamp_cells]=S.lamp_tex,.samplers[SMP_lamp_smp]=S.nearest});
             sg_draw(0, 4, (int)S.count);
             S.splats_drawn = S.count;
         } else {
@@ -1720,6 +1741,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
                 const Splat_Chunk_Range *r = w ? &w->r : &S.chunks[c];
                 if (!r->count[lvl] || !box_visible(r->lo[lvl], r->hi[lvl], v->view, focal, cx, cy, t->w, t->h)) continue;
                 sg_apply_bindings(&(sg_bindings){
+                    .views[VIEW_lamp_cells]=S.lamp_tex,.samplers[SMP_lamp_smp]=S.nearest,
                     .vertex_buffers[0] = w ? w->buf : S.instances,
                     .vertex_buffer_offsets[0] = (int)((size_t)r->start[lvl] * SPLAT_FLOATS * 4),
                 });
@@ -1755,6 +1777,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
             if (!detail) memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = m->buf,
+                .views[VIEW_lamp_cells]=S.lamp_tex,.samplers[SMP_lamp_smp]=S.nearest,
                 .views[VIEW_bone_tex] = S.bone_tex,
                 .samplers[SMP_bone_smp] = S.nearest,
             });
@@ -1777,6 +1800,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
             else memcpy(fp.tint.v, S.inst_tint[i], sizeof(S.inst_tint[0]));
             sg_apply_bindings(&(sg_bindings){
                 .vertex_buffers[0] = S.sorted[i]->buf,
+                .views[VIEW_lamp_cells]=S.lamp_tex,.samplers[SMP_lamp_smp]=S.nearest,
                 .views[VIEW_bone_tex] = S.bone_tex,
                 .samplers[SMP_bone_smp] = S.nearest,
             });
