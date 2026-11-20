@@ -516,6 +516,7 @@ typedef struct {
     int model;      // what the order was made for: this model, this view direction, these bones
     float za[3];
     float bones[SPLAT_MAX_BONES * 12];  // linear parts as given; translations relative to bone 0
+    uint32_t fit;   // the last frame the instance was drawn with a model that fills at least half of the buffer
 } Splat_Sorted;
 
 typedef struct {
@@ -592,6 +593,7 @@ static struct {
     int blend_list[SPLAT_MAX_SKIN_INSTANCES], blend_n;  // this frame's, far first
     float *sort_depth, *sort_rows;                   // scratch for one model
     uint32_t sort_cap;
+    uint32_t blend_frame;
     int sorted_now;
     uint64_t sorted_splats, sorted_bytes;
     double sort_ms;
@@ -1012,6 +1014,47 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
     }
     free(it);
     return out;
+}
+
+// see splat.h
+Splat_Cloud *splat_cloud_merged(const Splat_Cloud *c, float cell) {
+    if (!(cell > 0.0f)) SPLAT_FATAL("[splat] merge cell %g\n", (double)cell);
+    Splat_Cloud *o = malloc(sizeof(*o));
+    float *part = malloc(sizeof(float) * SPLAT_FLOATS * c->count);
+    float *rows = malloc(sizeof(float) * SPLAT_FLOATS * c->count);
+    if (!o || !part || !rows) SPLAT_FATAL("[splat] out of memory merging %u splats\n", c->count);
+    *o = *c;
+    o->bones = NULL;
+    const size_t bb = (size_t)c->frame_n * c->bone_n * 12 * sizeof(float);
+    if (c->bones && bb) {
+        o->bones = malloc(bb);
+        memcpy(o->bones, c->bones, bb);
+    }
+    // a merged splat follows one bone: the splats of each first bone are merged among themselves
+    uint32_t out = 0;
+    const int groups = c->bone_n ? (int)c->bone_n : 1;
+    for (int b = 0; b < groups; b++) {
+        uint32_t n = 0;
+        float kind = 0.0f;
+        for (uint32_t i = 0; i < c->count; i++) {
+            const float *d = c->data + (size_t)i * SPLAT_FLOATS;
+            if (c->bone_n && (int)d[12] != b) continue;
+            kind = d[11];
+            memcpy(part + (size_t)n++ * SPLAT_FLOATS, d, sizeof(float) * SPLAT_FLOATS);
+        }
+        if (!n) continue;
+        const uint32_t m = lod_merge(part, n, cell, rows + (size_t)out * SPLAT_FLOATS);
+        for (uint32_t i = 0; c->bone_n && i < m; i++) {
+            float *d = rows + (size_t)(out + i) * SPLAT_FLOATS;
+            d[11] = kind;
+            d[12] = d[13] = (float)b;
+        }
+        out += m;
+    }
+    free(part);
+    o->count = out;
+    o->data = rows;
+    return o;
 }
 
 // one level of one chunk: its rows sorted back to front for V into dst, and its bounds grown by
@@ -1437,6 +1480,7 @@ static double wall_ms(void) {
 // their linear parts and their places against each other and za stays: moving the whole
 // instance, or the view sideways, changes no splat's rank.
 #define SORT_BUCKETS 65536
+#define SORTED_KEEP_FRAMES 120
 static void sorted_update(int inst, const float za[3]) {
     const int model = S.inst_model[inst];
     const Splat_Skin_Model *m = &S.models[model];
@@ -1480,12 +1524,15 @@ static void sorted_update(int inst, const float za[3]) {
         if (z < lo) lo = z;
         if (z > hi) hi = z;
     }
-    // counting sort over the depth range, far (small z) first
+    // counting sort over the depth range, far (small z) first; a small model takes fewer buckets
+    // (still two or more a splat), so that clearing and summing them does not outweigh its sort
     static uint32_t start[SORT_BUCKETS + 1];
-    memset(start, 0, sizeof(start));
-    const float scale = hi > lo ? (float)(SORT_BUCKETS - 1) / (hi - lo) : 0.0f;
+    uint32_t buckets = SORT_BUCKETS;
+    while (buckets > 1024 && buckets / 2 >= n * 2) buckets /= 2;
+    memset(start, 0, sizeof(uint32_t) * (buckets + 1));
+    const float scale = hi > lo ? (float)(buckets - 1) / (hi - lo) : 0.0f;
     for (uint32_t i = 0; i < n; i++) start[(uint32_t)((S.sort_depth[i] - lo) * scale) + 1]++;
-    for (int k = 0; k < SORT_BUCKETS; k++) start[k + 1] += start[k];
+    for (uint32_t k = 0; k < buckets; k++) start[k + 1] += start[k];
     for (uint32_t i = 0; i < n; i++) {
         const uint32_t at = start[(uint32_t)((S.sort_depth[i] - lo) * scale)]++;
         memcpy(S.sort_rows + (size_t)at * SPLAT_FLOATS, m->rows + (size_t)i * SPLAT_FLOATS, sizeof(float) * SPLAT_FLOATS);
@@ -1536,6 +1583,23 @@ static void blended_prepare(const Splat_Target *t) {
         }
         depth[at] = z;
         S.blend_list[at] = i;
+    }
+    // An instance's buffer is as large as the largest model it has been sorted from. It is given
+    // back once the instance has gone SORTED_KEEP_FRAMES frames without drawing a model that
+    // needs at least half of it (out of view, another kind of model, or a much smaller one),
+    // and made again at the size then needed.
+    S.blend_frame++;
+    for (int k = 0; k < S.blend_n; k++) {
+        Splat_Sorted *s = S.sorted[S.blend_list[k]];
+        if (s && s->cap <= 2 * S.models[S.inst_model[S.blend_list[k]]].count) s->fit = S.blend_frame;
+    }
+    for (int i = 0; i < S.inst_n; i++) {
+        Splat_Sorted *s = S.sorted[i];
+        if (!s || !s->cap || S.blend_frame - s->fit <= SORTED_KEEP_FRAMES) continue;
+        sg_destroy_buffer(s->buf);
+        S.sorted_bytes -= (uint64_t)s->cap * SPLAT_FLOATS * 4;
+        s->cap = 0;
+        s->model = -1;
     }
     for (int k = 0; k < S.blend_n; k++) sorted_update(S.blend_list[k], za);
 }

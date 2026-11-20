@@ -95,6 +95,11 @@ typedef struct Splat_Stats {
 
 Splat_Cloud *splat_cloud_load(const char *path);
 void splat_cloud_free(Splat_Cloud *c);
+// A coarser copy of a cloud, for when it is drawn small: the splats that share a cubic cell of
+// side `cell` (in a skinned cloud: and the same first bone) become one splat with their mean
+// place, their spread and their average colour; a merged splat of a skinned cloud follows that
+// one bone. Palette, bones, frames and camera are copied. The caller frees it.
+Splat_Cloud *splat_cloud_merged(const Splat_Cloud *c, float cell);
 
 // A slab from a top-down image (RGBA, rows top down; image up = +z, right = +x): every `step`-th
 // opaque pixel becomes an upward dab at height `thickness`, and pixels on the silhouette's edge
