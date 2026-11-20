@@ -63,6 +63,10 @@ typedef enum {
     SPLAT_SHOW_ART = 0,
     SPLAT_SHOW_NATIVE = 1,
     SPLAT_SHOW_SAMPLES = 2,
+    // the native picture with its colours exactly as the resolve reads them, covering whatever is
+    // behind (the plain one is laid over it by the target's alpha): for reading the target back
+    // from a screenshot
+    SPLAT_SHOW_NATIVE_RAW = 3,
 } Splat_Show;
 
 typedef struct Splat_Stats {

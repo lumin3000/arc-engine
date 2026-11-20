@@ -210,6 +210,7 @@ layout(binding=1) uniform fs_blit_params {
     vec4 occ_rect[32];    // x0, y0, x1, y1 in art pixels (y-up)
     vec4 occ_depth[32];   // x = normalised depth of the occluder's foot
     vec4 occ_info;        // x = count, y = art height, z = 1 if storage origin is top-left, w = samples height
+    vec4 blit_opts;       // x = 1: the copy covers what is behind it whatever the target's alpha
 };
 in vec2 v_uv;
 out vec4 frag_color;
@@ -236,7 +237,7 @@ void main() {
             }
         }
     }
-    frag_color = c;
+    frag_color = blit_opts.x > 0.5 ? vec4(c.rgb, 1.0) : c;
 }
 @end
 

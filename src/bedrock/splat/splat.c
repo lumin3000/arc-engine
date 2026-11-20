@@ -1698,7 +1698,8 @@ void splat_composite(Splat_Show show) {
     if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0) || S.art_w == 0) return;
     sg_view tex = S.art_tex;
     int tw = S.art_w, th = S.art_h;
-    if (show == SPLAT_SHOW_NATIVE) {
+    const bool raw = show == SPLAT_SHOW_NATIVE_RAW;
+    if (show == SPLAT_SHOW_NATIVE || raw) {
         tex = S.native.color_tex;
     } else if (show == SPLAT_SHOW_SAMPLES) {
         tex = S.samples.color_tex;
@@ -1715,6 +1716,7 @@ void splat_composite(Splat_Show show) {
     // occluders to art-pixel rectangles and normalised depths (same formulas as the splat pass)
     fs_blit_params_t bp;
     memset(&bp, 0, sizeof(bp));
+    bp.blit_opts.v[0] = raw ? 1.0f : 0.0f;
     if (show == SPLAT_SHOW_ART && S.occ_n) {
         const Splat_View *v = &S.view;
         const double f = (double)S.art_h / 2.0 / (double)v->ortho_half_h;  // art px per world unit
