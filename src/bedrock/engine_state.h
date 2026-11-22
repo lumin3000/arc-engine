@@ -29,6 +29,10 @@ typedef struct {
     // zoom value actually changed this frame, cam_pos shifts so the world
     // point under the cursor stays fixed. Default off.
     int      zoom_to_cursor;
+    // Stepped zoom: when > 0, zoom input moves zoom_level straight to the nearest level at
+    // which one world unit spans a whole multiple of this many framebuffer pixels, with no
+    // easing in between. A zoom set by script stays as given until the next zoom input.
+    float    zoom_pixel_step;
 } Game_State;
 
 typedef struct {

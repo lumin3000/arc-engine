@@ -55,6 +55,14 @@ void engine_set_post_mesh_render_queue(int rq) {
     arc_engine_state()->post_mesh_render_queue = rq;
 }
 
+void engine_set_zoom_pixel_step(float pixels) {
+    if (!(pixels >= 0.0f) || pixels > 64.0f) {
+        LOG_ERROR("[engine_asset] engine_set_zoom_pixel_step: %f outside 0..64\n", pixels);
+        exit(1);
+    }
+    if (ctx.gs) ctx.gs->zoom_pixel_step = pixels;
+}
+
 void engine_register_view(int slot, sg_view view) {
   int max_views = (int)(sizeof(render_state.bind.views) /
                         sizeof(render_state.bind.views[0]));

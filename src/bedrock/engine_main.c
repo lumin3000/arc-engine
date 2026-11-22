@@ -348,6 +348,7 @@ static void engine_on_frame(void) {
     // 键缩放在 -/= : Q/E 让位给消费者的游戏层快捷键 (滚轮缩放不变)。
     // 按时间而非按帧: 60fps 下与旧每帧倍率一致, 其他帧率下按住时长决定缩放量。
     const float zoom_before = ctx.gs->zoom_level;
+    const float desired_before = ctx.gs->desired_zoom_level;
     float key_dt = 60.0f * ctx.delta_t;
     if (key_down(KEY_MINUS)) ctx.gs->desired_zoom_level *= powf(ZOOM_IN_MULTIPLIER, key_dt);
     if (key_down(KEY_EQUAL)) ctx.gs->desired_zoom_level *= powf(ZOOM_OUT_MULTIPLIER, key_dt);
@@ -371,6 +372,26 @@ static void engine_on_frame(void) {
     zoom_step_buffer += ctx.delta_t;
     int zoom_steps = (int)floorf(zoom_step_buffer / zoom_step);
     zoom_step_buffer -= zoom_steps * zoom_step;
+    if (ctx.gs->zoom_pixel_step > 0.0f) {
+      // Stepped zoom: the wheel and keys still move desired_zoom_level continuously; the
+      // camera takes the nearest whole level at once, so no frame is drawn between levels.
+      // A level is held for ZOOM_STEP_HOLD so a continuous scroll reads as separate steps.
+      static bool zoom_step_pending = false;
+      static float zoom_step_held = ZOOM_STEP_HOLD;
+      zoom_step_held += ctx.delta_t;
+      if (ctx.gs->desired_zoom_level != desired_before) zoom_step_pending = true;
+      else if (ctx.gs->desired_zoom_level == ctx.gs->zoom_level) zoom_step_pending = false;  // set by script
+      if (zoom_step_pending && zoom_step_held >= ZOOM_STEP_HOLD) {
+        const float level = ctx.gs->zoom_pixel_step * 2.0f * base_ortho / (float)sapp_height();
+        float snapped = roundf(ctx.gs->desired_zoom_level / level) * level;
+        if (snapped < ctx.gs->zoom_min) snapped = ceilf(ctx.gs->zoom_min / level) * level;
+        if (snapped > ctx.gs->zoom_max) snapped = floorf(ctx.gs->zoom_max / level) * level;
+        if (snapped < ctx.gs->zoom_min) snapped = ctx.gs->desired_zoom_level;  // range narrower than a level
+        if (snapped != ctx.gs->zoom_level) zoom_step_held = 0.0f;
+        ctx.gs->zoom_level = snapped;
+        zoom_step_pending = false;
+      }
+    } else
     for (int i = 0; i < zoom_steps; i++) {
       ctx.gs->zoom_level +=
           (ctx.gs->desired_zoom_level - ctx.gs->zoom_level) * ZOOM_TIGHTNESS;

@@ -20,6 +20,8 @@
 #define ZOOM_SPEED 2.6f
 
 #define ZOOM_TIGHTNESS 0.4f
+// Stepped zoom (Game_State.zoom_pixel_step): shortest time one level stays on screen, seconds.
+#define ZOOM_STEP_HOLD 0.1f
 
 #define CAMERA_BASE_SPEED 2000.0f
 

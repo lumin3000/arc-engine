@@ -43,6 +43,12 @@ the header used by these builds and has not received this local extension.
 - `coord.set_camera_zoom(z)`：`z` 非有限数或越出当前 `[zoom_min, zoom_max]` → `JS_ThrowRangeError`（Fail-Fast）；调用方负责先夹。游戏侧 `game_bindings.c` 的同名实现注册在后覆盖引擎版，两处校验一致。
 - 缩放平滑改 60Hz 固定步（RW `Verse/Gen.cs` `FixedTimeStepUpdate` 同法）：帧 dt（已被 `MIN_FRAME_TIME` 封顶）累加进 buffer，每整步执行一次 `zoom += (desired-zoom)*ZOOM_TIGHTNESS`，相机控制被屏蔽时不累加不步进；到位时间与帧率无关。键盘 `-`/`=` 缩放改按 `60*dt` 折算倍率，按住时长决定缩放量。
 
+### 跳档缩放（2026-11-22）
+
+- `engine_set_zoom_pixel_step(pixels)`（`engine_asset.h`，写 `Game_State.zoom_pixel_step`，初值 0=平滑缩放）：`pixels` > 0 时缩放不再走 60Hz 平滑。滚轮和按键照旧连续推动 `desired_zoom_level`；`zoom_level` 直接取最近的一档，每档使一个世界单位占 `pixels` 帧缓冲像素的整数倍（档距 = `pixels * 2 * base_ortho / 帧缓冲高`），并夹在 `[zoom_min, zoom_max]` 内。
+- 一档至少停留 `ZOOM_STEP_HOLD`（0.1 秒）；期间的输入累积，到时一次跳到位。
+- 脚本用 `coord.set_camera_zoom` 设的值原样保留，直到下一次缩放输入才归档。相机控制被屏蔽时整块不执行。
+
 ### 朝鼠标缩放（2026-11-12，frame_cap_camera_zoom 役3）
 
 - `coord.set_zoom_to_cursor(on)`：参数须为严格布尔，否则 `JS_ThrowTypeError`；写 `Game_State.zoom_to_cursor`（初值 0=关），`ctx.gs` 未就绪时静默不写。对齐 RW `Verse/CameraDriver.cs` `ZoomToMouse`。

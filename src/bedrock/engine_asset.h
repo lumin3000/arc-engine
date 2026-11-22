@@ -35,6 +35,10 @@ void engine_register_view(int slot, sg_view view);
 // hook after the whole band.
 void engine_set_post_mesh_render_queue(int rq);
 
+// Stepped zoom for pixel-grid consumers (Game_State.zoom_pixel_step): `pixels` framebuffer
+// pixels per step of one world unit; 0 (default) restores eased zoom.
+void engine_set_zoom_pixel_step(float pixels);
+
 // Per-frame fragment-shader global (Unity's Shader.SetGlobalFloat
 // equivalent). graphics.c writes this into Shader_Data.params[1] each
 // time it submits a mesh — games that need world-to-UV mapping set it
