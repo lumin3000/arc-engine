@@ -575,7 +575,7 @@ static struct {
     sg_view bone_tex;
     float *bone_data;              // SPLAT_MAX_SKIN_INSTANCES x (SPLAT_MAX_BONES * 12)
     int bone_rows;                 // rows of bone_img: grows by doubling with the number of instances
-    Splat_Skin_Model models[640];
+    Splat_Skin_Model models[4608];
     int model_n;
     int inst_model[SPLAT_MAX_SKIN_INSTANCES];
     int inst_n;

@@ -199,7 +199,7 @@ void splat_chunk_baked_free(Splat_Chunk_Baked *baked);
 // its own bone matrices (12 floats a bone: 3x3 rotation by rows, then translation), drawn with
 // depth test and an opaque cut after the static cloud.
 #define SPLAT_MAX_BONES 64
-#define SPLAT_MAX_SKIN_INSTANCES 1024
+#define SPLAT_MAX_SKIN_INSTANCES 4096
 int splat_skin_add_model(const Splat_Cloud *c);
 // puts other splats in a model's place (the same number of bones); its instances stay as they are
 void splat_skin_set_model(int model, const Splat_Cloud *c);

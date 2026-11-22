@@ -5322,6 +5322,8 @@ SOKOL_GFX_API_DECL const void* sg_mtl_device(void);
 /* arc-engine local patch (see impl): Metal command queue getter for
    frame-fence diagnostics. */
 SOKOL_GFX_API_DECL const void* sg_mtl_command_queue(void);
+// Arc diagnostic extension. Borrowed until commit, for completion timestamps.
+SOKOL_GFX_API_DECL const void* sg_mtl_command_buffer(void);
 // Metal: return __bridge-casted MTLRenderCommandEncoder when inside render pass (otherwise zero)
 SOKOL_GFX_API_DECL const void* sg_mtl_render_command_encoder(void);
 // Metal: return __bridge-casted MTLComputeCommandEncoder when inside compute pass (otherwise zero)
@@ -26190,6 +26192,14 @@ SOKOL_API_IMPL const void* sg_mtl_command_queue(void) {
         } else {
             return 0;
         }
+    #else
+        return 0;
+    #endif
+}
+
+SOKOL_API_IMPL const void* sg_mtl_command_buffer(void) {
+    #if defined(SOKOL_METAL)
+        return (__bridge const void*) _sg.mtl.cmd_buffer;
     #else
         return 0;
     #endif
