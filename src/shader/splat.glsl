@@ -131,7 +131,7 @@ void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c
     gl_Position = vec4(ndc, zd, 1.0);
     v_rel = rel;
     v_conic = vec3(C / det, -B / det, A / det);
-    v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, al);
+    v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, ground ? -al : al);
     v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
 }
 
@@ -323,13 +323,16 @@ void main() {
     float dx = d.x, dy = d.y;
     float pw = -0.5 * (v_conic.x * dx * dx + v_conic.z * dy * dy) - v_conic.y * dx * dy;
     if (pw > 0.0 || pw < -4.5) discard;
-    float al = v_col.a;
+    bool ground = v_col.a < 0.0;
+    float al = abs(v_col.a);
     float gg = al * exp(pw);
     float a = min(0.99, gg);
     bool solid = al >= 1.0;
     if (solid) a = 0.99 * smoothstep(0.38, 0.62, gg);
     if (a < 0.004) discard;
-    if (mode.x > 0.5) {
+    // Adjacent ground footprints overlap on the same plane. A translucent rim
+    // can otherwise write depth before the neighbour fills in the background.
+    if (ground || mode.x > 0.5) {
         if (a < 0.5) discard;
         a = 1.0;
     }
