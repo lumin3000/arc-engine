@@ -1926,12 +1926,13 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail, const
     sg_end_pass();
 }
 
-static void blur_highlights(const vs_quad_params_t *quad) {
+static void blur_highlights(const vs_quad_params_t *quad, const int lattice[2]) {
     sg_view source = S.native.color_tex;
     int w=S.native.w, h=S.native.h;
     for (int i=0; i<2; i++) {
         BloomLevel *level=&bloom_levels[i];
-        fs_bloom_params_t params = {.blur={{.68f,i==0?.16f:0,1.0f/w,1.0f/h}}};
+        fs_bloom_params_t params = {.blur={{.68f,i==0?.16f:0,1.0f/w,1.0f/h}},
+            .grid={{(float)((lattice[0]>>i)&1),(float)((lattice[1]>>i)&1),(float)level->width,(float)level->height}}};
         sg_begin_pass(&(sg_pass){.action.colors[0].load_action=SG_LOADACTION_DONTCARE,
             .attachments.colors[0]=level->attachment,.label="art-bloom-downsample"});
         sg_apply_pipeline(bloom_pipeline);
@@ -2008,7 +2009,12 @@ void splat_render_offscreen(void) {
         rp.depth_scale.v[0]=1.0f/(2.0f*S.view.radius);
         rp.opts.v[1]*=post.dither;
         for (int k=1;k<=S.own_n;k++) rp.own[k].v[1]*=post.dither;
-        if (post.bloom>0) blur_highlights(&qp);
+        if (post.bloom>0) {
+            // Bloom blocks follow the same world lattice as the dither pattern, in storage rows.
+            const int lattice[2]={S.view.phase_x&3, (flip>0 ? -(S.art_h+S.view.phase_y) : S.view.phase_y)&3};
+            rp.bloom_grid=(Splat_Vec4){{(float)lattice[0],(float)lattice[1],0,0}};
+            blur_highlights(&qp,lattice);
+        }
     }
     sg_begin_pass(&(sg_pass){
         .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},

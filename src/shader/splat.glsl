@@ -447,6 +447,7 @@ layout(binding=1) uniform fs_resolve_params {
     vec4 ramps[64];
     vec4 effect; // depth outline, convex ridge, bloom, grade
     vec4 depth_scale; // normalised depth per unit
+    vec4 bloom_grid;  // x, y = offset (0..3) of the world-anchored bloom blocks in native pixels
     vec4 own[16]; // own palette k (1..15): x = size, y = dither
 };
 @image_sample_type u_scene unfilterable_float
@@ -672,9 +673,10 @@ void main() {
         c+=vec3(.15,.14,.11)*ridge*effect.y*(1.0-edge);
     }
     if(effect.z>0.0){
-        vec2 uv=(vec2(fp)+.5)/size.xy;
-        vec3 h=textureLod(sampler2D(u_half,u_smp),uv,0.0).rgb;
-        vec3 q=textureLod(sampler2D(u_quarter,u_smp),uv,0.0).rgb;
+        vec2 half_at=(vec2(fp)+.5+mod(bloom_grid.xy,2.0))*.5;
+        vec2 quarter_at=(half_at+floor(bloom_grid.xy*.5))*.5;
+        vec3 h=textureLod(sampler2D(u_half,u_smp),half_at/vec2(textureSize(sampler2D(u_half,u_smp),0)),0.0).rgb;
+        vec3 q=textureLod(sampler2D(u_quarter,u_smp),quarter_at/vec2(textureSize(sampler2D(u_quarter,u_smp),0)),0.0).rgb;
         c+=effect.z*(.35*h+.65*q);
     }
     c=mix(c,c*vec3(1.035,1.005,.975)+vec3(.006,.001,.003),effect.w);
@@ -957,7 +959,10 @@ void main() {
 @program artsurface_post vs_artsurface_post fs_artsurface_post
 
 @fs fs_bloom
-layout(binding=1) uniform fs_bloom_params { vec4 blur; }; // threshold, knee, source inverse width and height
+layout(binding=1) uniform fs_bloom_params {
+    vec4 blur; // threshold, knee, source inverse width and height
+    vec4 grid; // x, y = offset of the world-anchored 2x2 blocks in source pixels; z, w = target size
+};
 layout(binding=0) uniform texture2D u_bright;
 layout(binding=0) uniform sampler bloom_smp;
 in vec2 v_uv;
@@ -965,7 +970,9 @@ out vec4 frag_color;
 void main(){
     vec3 sum=vec3(0);
     for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
-        vec3 sample_color=textureLod(sampler2D(u_bright,bloom_smp),v_uv+vec2(float(x),float(y))*blur.zw*1.5,0.0).rgb;
+        // Each target texel gathers the same world pixels wherever the camera stands.
+        vec2 centre=(2.0*v_uv*grid.zw-grid.xy)*blur.zw;
+        vec3 sample_color=textureLod(sampler2D(u_bright,bloom_smp),centre+vec2(float(x),float(y))*blur.zw*1.5,0.0).rgb;
         float lum=dot(sample_color,vec3(.30,.55,.15));
         float weight=float((2-abs(x))*(2-abs(y)))/16.0;
         sum+=weight*sample_color*(blur.y>0.0?smoothstep(blur.x,blur.x+blur.y,lum):1.0);
