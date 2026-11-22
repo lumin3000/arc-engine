@@ -51,6 +51,7 @@ typedef struct Splat_View {
     float radius;       // depth normalisation radius
     float near_dist;
     int art_w, art_h;   // art grid; samples target is 2x
+    float sky_phase, night, sky_tint[3], rain, clouds;
     float dither;
     float outline;      // 0 = reference look; 1 = dark contour on silhouettes and depth steps
     float outline_step; // world depth step that draws a contour when outline is on
@@ -142,6 +143,8 @@ Splat_Cloud *splat_cloud_from_portrait(const uint8_t *const views[4], int img_w,
 typedef struct { float outline, ridge, bloom, grade, dither; } Splat_Post;
 void splat_configure_post(Splat_Post settings);
 bool splat_post_enabled(void);
+void splat_enable_sun(const uint8_t ramp_indices[64][3]);
+void splat_snow_texture(const uint8_t *depth, int width, int height);
 void splat_init(void);
 void splat_upload(const Splat_Cloud *c, const float view[16]);
 void splat_set_palette(const uint32_t *pal, int n);

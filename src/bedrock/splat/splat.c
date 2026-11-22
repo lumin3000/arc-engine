@@ -48,7 +48,7 @@ Splat_Cloud *splat_cloud_load(const char *path) {
     if (fread(buf, 1, (size_t)size, f) != (size_t)size) SPLAT_FATAL("[splat] %s: short read\n", path);
     fclose(f);
     if (memcmp(buf, "ARSP", 4) != 0) SPLAT_FATAL("[splat] %s: bad magic\n", path);
-    if (rd_u32(buf + 4) != 1) SPLAT_FATAL("[splat] %s: unsupported version %u\n", path, rd_u32(buf + 4));
+    if (rd_u32(buf + 4) != 1 && rd_u32(buf + 4) != 2) SPLAT_FATAL("[splat] %s: unsupported version %u\n", path, rd_u32(buf + 4));
 
     Splat_Cloud *c = calloc(1, sizeof(*c));
     c->count = rd_u32(buf + 8);
@@ -495,6 +495,8 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
 
 typedef struct {
     int w, h;
+    sg_image surface;
+    sg_view surface_att, surface_tex;
     sg_image normal;
     sg_view normal_att, normal_tex;
     sg_image color, depth;           // depth: normalised depth in .r (second colour target)
@@ -664,7 +666,32 @@ Splat_View splat_view_oblique(float k, const float target[3], float art_world, i
     return v;
 }
 
-static bool post_enabled;
+static bool post_enabled, live_sun;
+static Splat_Vec4 material_ramps[64];
+static Splat_Target shadow_map;
+static sg_image snow_image;
+static sg_view snow_texture;
+static int snow_width,snow_height;
+void splat_enable_sun(const uint8_t indices[64][3]) {
+    live_sun=true;
+    for (int i=0; i<64; i++) {
+        material_ramps[i].v[3] = 1;
+        for (int k=0; k<3; k++) {
+            material_ramps[i].v[k] = indices[i][k];
+            if (indices[i][k] == i) material_ramps[i].v[3] = k;
+        }
+    }
+}
+void splat_snow_texture(const uint8_t *depth,int w,int h) {
+    if(!live_sun) return;
+    if(w!=snow_width || h!=snow_height){
+        if(snow_image.id){sg_destroy_view(snow_texture);sg_destroy_image(snow_image);}
+        snow_image=sg_make_image(&(sg_image_desc){.width=w,.height=h,.pixel_format=SG_PIXELFORMAT_R8,
+            .usage.stream_update=true,.label="snow-depth"});
+        snow_texture=sg_make_view(&(sg_view_desc){.texture.image=snow_image});snow_width=w;snow_height=h;
+    }
+    sg_update_image(snow_image,&(sg_image_data){.mip_levels[0]={depth,(size_t)w*h}});
+}
 static Splat_Post post;
 typedef struct {
     sg_image image;
@@ -688,6 +715,7 @@ static void target_destroy(Splat_Target *t) {
         sg_destroy_view(t->normal_att);
         sg_destroy_view(t->normal_tex);
         sg_destroy_image(t->normal);
+        sg_destroy_view(t->surface_att); sg_destroy_view(t->surface_tex); sg_destroy_image(t->surface);
     }
     sg_destroy_view(t->color_att);
     sg_destroy_view(t->depth_att);
@@ -717,6 +745,10 @@ static void target_make(Splat_Target *t, int w, int h, const char *label) {
     t->h = h;
     t->color = make_target_image(w, h, label);
     if (post_enabled) {
+        t->surface=sg_make_image(&(sg_image_desc){.usage.color_attachment=true,.width=w,.height=h,
+            .pixel_format=SG_PIXELFORMAT_RGBA16F,.sample_count=1,.label="lighting-surface"});
+        t->surface_att=sg_make_view(&(sg_view_desc){.color_attachment.image=t->surface});
+        t->surface_tex=sg_make_view(&(sg_view_desc){.texture.image=t->surface});
         t->normal = make_target_image(w, h, "mesh-normal-depth");
         t->normal_att = sg_make_view(&(sg_view_desc){.color_attachment.image=t->normal});
         t->normal_tex = sg_make_view(&(sg_view_desc){.texture.image=t->normal});
@@ -807,7 +839,7 @@ void splat_init(void) {
         .src_factor_alpha = SG_BLENDFACTOR_ONE,
         .dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
     };
-    S.splat_pip = sg_make_pipeline(&(sg_pipeline_desc){
+    sg_pipeline_desc splat_desc={
         .shader = S.splat_shd,
         .layout = {
             .buffers[0] = {.stride = SPLAT_FLOATS * 4, .step_func = SG_VERTEXSTEP_PER_INSTANCE},
@@ -821,15 +853,18 @@ void splat_init(void) {
         // back-to-front order already resolves the static cloud; the depth test only keeps
         // what is drawn later (skinned instances) behind what stands in front of it
         .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
-        .color_count = post_enabled ? 3 : 2,
+        .color_count = post_enabled ? 4 : 2,
         .colors = {
             [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [1] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [2] = {.pixel_format = SG_PIXELFORMAT_RGBA8},
+            [3] = {.pixel_format = SG_PIXELFORMAT_RGBA16F},
         },
         .sample_count = 1,
         .label = "splat-pipeline",
-    });
+    };
+    if(post_enabled) splat_desc.layout.attrs[ATTR_splat_post_a_material]=(sg_vertex_attr_state){.format=SG_VERTEXFORMAT_FLOAT4,.offset=48};
+    S.splat_pip=sg_make_pipeline(&splat_desc);
     S.skin_shd = sg_make_shader(post_enabled ? splat_skin_post_shader_desc(sg_query_backend()) : splat_skin_shader_desc(sg_query_backend()));
     S.skin_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.skin_shd,
@@ -844,15 +879,20 @@ void splat_init(void) {
         },
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
         .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
-        .color_count = post_enabled ? 3 : 2,
+        .color_count = post_enabled ? 4 : 2,
         .colors = {
             [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [1] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [2] = {.pixel_format = SG_PIXELFORMAT_RGBA8},
+            [3] = {.pixel_format = SG_PIXELFORMAT_RGBA16F},
         },
         .sample_count = 1,
         .label = "splat-skin-pipeline",
     });
+    if(live_sun){
+        const uint8_t bare=0;
+        splat_snow_texture(&bare,1,1);
+    }
     bone_image_make(256);
     S.bone_data = calloc((size_t)SPLAT_MAX_SKIN_INSTANCES * SPLAT_MAX_BONES * 12, sizeof(float));
     S.resolve_pip = sg_make_pipeline(&(sg_pipeline_desc){
@@ -1076,10 +1116,14 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
             if (d[3] > al) al = d[3];
         }
         for (int q = 0; q < 3; q++) m[q] /= w;
+        const float *closest = src + (size_t)it[a].idx * SPLAT_FLOATS;
+        double best = HUGE_VAL;
         double c[6] = {0, 0, 0, 0, 0, 0};  // c00 c01 c02 c11 c12 c22
         for (uint32_t k = a; k < b; k++) {
             const float *d = src + (size_t)it[k].idx * SPLAT_FLOATS;
             const double dx = d[0] - m[0], dy = d[1] - m[1], dz = d[2] - m[2];
+            const double distance = dx*dx + dy*dy + dz*dz;
+            if (distance < best) { best = distance; closest = d; }
             c[0] += d[4] + dx * dx;
             c[1] += d[5] + dx * dy;
             c[2] += d[6] + dx * dz;
@@ -1104,7 +1148,10 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
         o[10] = (float)(c[5] * f + (b - a == 1 ? base : 0));
         const uint32_t r = (uint32_t)lround(col[0] / w), g = (uint32_t)lround(col[1] / w), bl = (uint32_t)lround(col[2] / w);
         o[7] = (float)(r + g * 256 + bl * 65536);
-        o[11] = flame / w < -0.4 ? (float)(flame / w) : 0;
+        // Keep the authored material and surface normal of the nearest contributing dab
+        // when a distant LOD merges several surfaces into a single Gaussian.
+        memcpy(o+12,closest+12,sizeof(float)*4);
+        o[11] = flame < 0 ? (flame / w < -.4 ? (float)(flame / w) : 0) : closest[11];
         out++;
         a = b;
     }
@@ -1131,19 +1178,17 @@ Splat_Cloud *splat_cloud_merged(const Splat_Cloud *c, float cell) {
     const int groups = c->bone_n ? (int)c->bone_n : 1;
     for (int b = 0; b < groups; b++) {
         uint32_t n = 0;
-        float kind = 0.0f;
         for (uint32_t i = 0; i < c->count; i++) {
             const float *d = c->data + (size_t)i * SPLAT_FLOATS;
             if (c->bone_n && (int)d[12] != b) continue;
-            kind = d[11];
             memcpy(part + (size_t)n++ * SPLAT_FLOATS, d, sizeof(float) * SPLAT_FLOATS);
         }
         if (!n) continue;
         const uint32_t m = lod_merge(part, n, cell, rows + (size_t)out * SPLAT_FLOATS);
         for (uint32_t i = 0; c->bone_n && i < m; i++) {
             float *d = rows + (size_t)(out + i) * SPLAT_FLOATS;
-            d[11] = kind;
             d[12] = d[13] = (float)b;
+            d[14] = 0;
         }
         out += m;
     }
@@ -1414,7 +1459,7 @@ static sg_buffer skin_model_buffer(const Splat_Cloud *c) {
     if (c->bone_n == 0 || c->bone_n > SPLAT_MAX_BONES) SPLAT_FATAL("[splat] skinned model needs 1..%d bones, has %u\n", SPLAT_MAX_BONES, c->bone_n);
     for (uint32_t i = 0; i < c->count; i++) {
         const float *d = c->data + (size_t)i * SPLAT_FLOATS;
-        if ((int)lroundf(d[11]) != 12) SPLAT_FATAL("[splat] skinned model splat %u is kind %d, not 12\n", i, (int)lroundf(d[11]));
+        if (((int)lroundf(d[11]) & 15) != 12) SPLAT_FATAL("[splat] skinned model splat %u is kind %d, not 12\n", i, (int)lroundf(d[11]));
         if (d[12] < 0 || d[12] >= (float)c->bone_n || d[13] < 0 || d[13] >= (float)c->bone_n)
             SPLAT_FATAL("[splat] skinned model splat %u has bone %g/%g of %u\n", i, d[12], d[13], c->bone_n);
     }
@@ -1739,11 +1784,11 @@ static void prepare_detail_regions(void) {
     for (int k = S.detail_n; k < old_n; k++) target_destroy(&S.details[k].target);
 }
 
-static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
-    const Splat_View *v = &S.view;
+static void draw_splats(const Splat_Target *t, const Splat_Detail *detail, const Splat_View *v) {
+    const bool casting=(t==&shadow_map);
     vs_splat_params_t p;
     p.lampOrigin = (Splat_Vec4){{(float)S.lamp_x, (float)S.lamp_z, 0, 0}};
-    p.lampFrame=(Splat_Vec4){{(float)S.lamp_w,(float)S.lamp_h,v->lamp_seconds,v->lamp_height}};
+    p.lampFrame=(Splat_Vec4){{live_sun?0.0f:(float)S.lamp_w,(float)S.lamp_h,v->lamp_seconds,v->lamp_height}};
     memcpy(p.view.v, v->view, sizeof(p.view.v));
     // A crop uses the same projected scene and depth range, translated to
     // its own target. Only the sampling pitch changes.
@@ -1773,9 +1818,10 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         .action = {
             .colors[0] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {bg[0], bg[1], bg[2], 0.0f}},
             .colors[1] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {1.0f, 0.0f, 0.0f, 0.0f}},
+            .colors[3] = {.load_action=SG_LOADACTION_CLEAR,.clear_value={0,0,1,0}},
             .colors[2] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {0,0,0,0}},
         },
-        .attachments = {.colors = {t->color_att, t->depth_att, t->normal_att}, .depth_stencil = t->zbuf_att},
+        .attachments = {.colors = {t->color_att, t->depth_att, t->normal_att,t->surface_att}, .depth_stencil = t->zbuf_att},
         .label = "splat-pass",
     });
     artmesh_draw(&p.view, p.cam, p.dep, p.zr, backdrop);
@@ -1816,7 +1862,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
             S.chunks_drawn = drawn;
             S.splats_drawn = sd;
         }
-        if (!detail) {
+        if (!detail && !casting) {
             S.pass_lod[t == &S.native] = S.lod_level;
             S.pass_splats[t == &S.native] = S.splats_drawn;
         }
@@ -1828,7 +1874,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         uint64_t sks = 0;
         for (int i = 0; i < S.inst_n; i++) {
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
-            if (m->rows) continue;  // blended: below
+            if (m->rows && !casting) continue;  // an opaque cut can draw the unsorted original buffer
             const float *b = S.inst_bounds[i];
             if (b[3] > 0) {
                 const float lo[3] = {b[0] - b[3], b[1] - b[3], b[2] - b[3]}, hi[3] = {b[0] + b[3], b[1] + b[3], b[2] + b[3]};
@@ -1851,7 +1897,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         }
         // blended instances last, far ones first: each is in back-to-front order itself, and what
         // stands in front of it has written its depth
-        for (int k = 0; k < S.blend_n; k++) {
+        for (int k = 0; !casting && k < S.blend_n; k++) {
             const int i = S.blend_list[k];
             if (!detail && S.detail_active[i]) continue;
             const Splat_Skin_Model *m = &S.models[S.inst_model[i]];
@@ -1872,7 +1918,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
             sg_apply_uniforms(UB_fs_splat_params, &SG_RANGE(fp));
             sg_draw(0, 4, (int)m->count);
         }
-        if (!detail) {
+        if (!detail && !casting) {
             S.skin_drawn = sk;
             S.pass_skinned[t == &S.native] = sks;
         }
@@ -1898,6 +1944,34 @@ static void blur_highlights(const vs_quad_params_t *quad) {
     }
 }
 
+static void render_sun(fs_resolve_params_t *p){
+    const Splat_View *eye=&S.view;
+    const float angle=6.283185307f*(eye->sky_phase-.25f);
+    const float elevation=sinf(angle);
+    const float x=-cosf(angle),y=fmaxf(.13f,elevation),z=-.40f;
+    const float len=sqrtf(x*x+y*y+z*z);
+    p->sunVector=(Splat_Vec4){{x/len,y/len,z/len,fminf(1,fmaxf(0,(elevation+.14f)*3))}};
+    const float pitch=asinf(y/len), yaw=atan2f(x,z);
+    const float *v=eye->view;
+    float center[3];
+    for(int i=0;i<3;i++) center[i]=-v[4*i]*v[12]-v[4*i+1]*v[13]-v[4*i+2]*(v[14]+eye->eye_dist);
+    const int side=1024;
+    const float half=fmaxf(16,eye->ortho_half_h*sqrtf(1+powf((float)eye->art_w/eye->art_h,2))+10);
+    Splat_View light=splat_view_ortho(yaw,pitch,center,2*half/side,side,side,S.scene_radius,0);
+    light.static_cut=true;
+    if(!shadow_map.w) target_make(&shadow_map,side,side,"sun-shadow");
+    if(p->sunVector.v[3]>.01f) draw_splats(&shadow_map,NULL,&light);
+    memcpy(p->camera.v,eye->view,sizeof p->camera.v);
+    memcpy(p->lightCamera.v,light.view,sizeof p->lightCamera.v);
+    p->reconstruct=(Splat_Vec4){{2*eye->ortho_half_h/eye->art_h,eye->eye_dist,eye->radius,1}};
+    p->shadowGrid=(Splat_Vec4){{.5f/half,light.eye_dist-light.radius,.5f/light.radius,1.f/side}};
+    const float dusk=1-fminf(1,fabsf(elevation)*3);
+    p->skyTint=(Splat_Vec4){{eye->sky_tint[0],eye->sky_tint[1],eye->sky_tint[2],.60f*eye->night+.10f*dusk}};
+    p->weather=(Splat_Vec4){{eye->rain,eye->clouds,eye->lamp_seconds,eye->lamp_height}};
+    p->lightRect=(Splat_Vec4){{S.lamp_x,S.lamp_z,S.lamp_w,S.lamp_h}};
+    memcpy(p->ramps,material_ramps,sizeof material_ramps);
+}
+
 void splat_render_offscreen(void) {
     if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0 && !artmesh_visible())) return;
     ensure_targets(S.view.art_w, S.view.art_h);
@@ -1912,14 +1986,14 @@ void splat_render_offscreen(void) {
         S.own_dirty = false;
     }
     blended_prepare(&S.samples);
-    prepare_detail_regions();
-    for (int k = 0; k < S.detail_n; k++) draw_splats(&S.details[k].target, &S.details[k]);
-    draw_splats(&S.samples, NULL);
-    draw_splats(&S.native, NULL);
+    if (!live_sun) prepare_detail_regions();
+    fs_resolve_params_t rp={0};
+    if(live_sun) render_sun(&rp);
+    for (int k = 0; k < S.detail_n; k++) draw_splats(&S.details[k].target, &S.details[k], &S.view);
+    draw_splats(&S.samples, NULL, &S.view);
+    draw_splats(&S.native, NULL, &S.view);
 
     const float flip = sg_query_features().origin_top_left ? 1.0f : 0.0f;
-    fs_resolve_params_t rp;
-    memset(&rp, 0, sizeof(rp));
     memcpy(rp.pal, S.pal, sizeof(float) * 4 * (size_t)S.pal_n);
     rp.opts = (Splat_Vec4){{(float)S.pal_n, S.view.dither, flip, S.view.outline}};
     rp.size = (Splat_Vec4){{(float)S.art_w, (float)S.art_h, (float)S.samples.w, (float)S.samples.h}};
@@ -1949,6 +2023,10 @@ void splat_render_offscreen(void) {
             [VIEW_u_native] = S.native.color_tex,
             [VIEW_u_pal] = S.own_tex,
             [VIEW_u_geometry] = S.native.normal_tex,
+            [VIEW_u_surface] = S.native.surface_tex,
+            [VIEW_u_lamps] = post_enabled ? S.lamp_tex : (sg_view){0},
+            [VIEW_u_shadow] = live_sun ? shadow_map.surface_tex : S.native.surface_tex,
+            [VIEW_u_snow] = live_sun ? snow_texture : S.native.normal_tex,
             [VIEW_u_half] = post_enabled && post.bloom==0 ? S.native.color_tex : bloom_levels[0].texture,
             [VIEW_u_quarter] = post_enabled && post.bloom==0 ? S.native.color_tex : bloom_levels[1].texture,
         },
@@ -2073,9 +2151,10 @@ Splat_Stats splat_stats(void) {
     st.blended_bytes = S.sorted_bytes;
     st.blended_sort_ms = S.sort_ms;
     if (post_enabled) {
-        st.target_bytes+=(uint64_t)S.art_w*S.art_h*20;
-        for(int i=0;i<S.detail_n;i++) st.target_bytes+=(uint64_t)S.details[i].target.w*S.details[i].target.h*4;
+        st.target_bytes+=(uint64_t)S.art_w*S.art_h*60;
+        for(int i=0;i<S.detail_n;i++) st.target_bytes+=(uint64_t)S.details[i].target.w*S.details[i].target.h*12;
         for(int i=0;i<2;i++) st.target_bytes+=(uint64_t)bloom_levels[i].width*bloom_levels[i].height*4;
     }
+    if(live_sun) st.target_bytes+=(uint64_t)shadow_map.w*shadow_map.h*24+(uint64_t)snow_width*snow_height;
     return st;
 }

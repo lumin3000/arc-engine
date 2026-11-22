@@ -143,7 +143,7 @@ void project_patch(int vertex, vec3 center, vec3 halfExtent, mat3 rotation, floa
 }
 @end
 
-@vs vs_splat
+@block vertex_splat
 layout(binding=0) uniform vs_splat_params {
     mat4 view;      // world -> view (column-major); only its rotation rows are used for x/y
     vec4 cam;       // x = screen offset Cx, y = screen offset Cy (target px), z = target width px, w = target height px
@@ -159,6 +159,9 @@ in vec4 a_pos;   // x y z density
 in vec4 a_cov0;  // c00 c01 c02 packed rgb
 in vec4 a_cov1;  // c11 c12 c22 kind
 
+#ifdef ART_POST
+in vec4 a_material;
+#endif
 // Everything the fragment stage needs is constant per splat (flat): the fragment's offset from
 // the centre is formed from gl_FragCoord there, so a view moved by whole pixels reproduces
 // every fragment bit for bit.
@@ -167,6 +170,9 @@ flat out vec3 v_conic;
 flat out vec4 v_col;
 flat out float v_lit;
 out float v_dn;
+#ifdef ART_POST
+flat out vec4 v_receiver;
+#endif
 
 @include_block art_projection
 @include_block splat_project
@@ -187,10 +193,23 @@ void main() {
         mat3 shape=mat3(a_cov0.xyz,vec3(a_cov0.y,a_cov1.xy),vec3(a_cov0.z,a_cov1.yz));
         lamp_shade(pos,shape,vec3(0));
     }
+#ifdef ART_POST
+    mat3 cov=mat3(a_cov0.xyz,vec3(a_cov0.y,a_cov1.xy),vec3(a_cov0.z,a_cov1.yz));
+    vec3 normal=a_material.w>0.0?unpack_normal(a_material.w):surface_normal(cov,vec3(view[0][2],view[1][2],view[2][2]));
+    vec3 vn=mat3(view)*normal;
+    v_receiver=vec4(vn.z<0.0?-vn.xy:vn.xy,0,flame>0.0 ? 127.0 : 1.0+a_material.x+(a_material.x>0.0 ? .125*(1.0+a_material.y) : 0.0));
+#endif
 }
 @end
+@vs vs_splat
+@include_block vertex_splat
+@end
+@vs vs_splat_post
+#define ART_POST 1
+@include_block vertex_splat
+@end
 
-@vs vs_splat_skin
+@block vertex_splat_skin
 layout(binding=0) uniform vs_splat_params {
     mat4 view;
     vec4 cam;
@@ -215,6 +234,9 @@ flat out vec3 v_conic;
 flat out vec4 v_col;
 flat out float v_lit;
 out float v_dn;
+#ifdef ART_POST
+flat out vec4 v_receiver;
+#endif
 
 @include_block art_projection
 @include_block splat_project
@@ -249,7 +271,19 @@ void main() {
         vec3 n=a_bone.w>0.0 ? normalize(R*unpack_normal(a_bone.w)) : vec3(0);
         lamp_shade(x,Sp,n);
     }
+#ifdef ART_POST
+    vec3 normal=a_bone.w>0.0?normalize(R*unpack_normal(a_bone.w)):surface_normal(Sp,vec3(view[0][2],view[1][2],view[2][2]));
+    vec3 vn=mat3(view)*normal;
+    v_receiver=vec4(vn.z<0.0?-vn.xy:vn.xy,0,1.0+floor(a_cov1.w/16.0));
+#endif
 }
+@end
+@vs vs_splat_skin
+@include_block vertex_splat_skin
+@end
+@vs vs_splat_skin_post
+#define ART_POST 1
+@include_block vertex_splat_skin
 @end
 
 @block body_splat
@@ -264,10 +298,14 @@ flat in vec3 v_conic;
 flat in vec4 v_col;
 flat in float v_lit;
 in float v_dn;
+#ifdef ART_POST
+flat in vec4 v_receiver;
+#endif
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 #ifdef ART_POST
 layout(location=2) out vec4 frag_geometry;
+layout(location=3) out vec4 frag_surface;
 #endif
 
 void main() {
@@ -288,6 +326,7 @@ void main() {
     }
     #ifdef ART_POST
     frag_geometry=vec4(0);
+    frag_surface=vec4(v_receiver.xy,2.0*v_dn-1.0,v_receiver.w);
     #endif
     frag_color = vec4(mix(min(v_col.rgb, vec3(1.0)), tint.rgb, tint.a), a);
     // .g = own palette number in steps of 8/255, .b = 1 for an own palette: blended like the depth, so
@@ -306,9 +345,9 @@ void main() {
 @end
 
 @program splat vs_splat fs_splat
-@program splat_post vs_splat fs_splat_post
+@program splat_post vs_splat_post fs_splat_post
 @program splat_skin vs_splat_skin fs_splat
-@program splat_skin_post vs_splat_skin fs_splat_post
+@program splat_skin_post vs_splat_skin_post fs_splat_post
 
 @vs vs_quad
 layout(binding=0) uniform vs_quad_params {
@@ -385,6 +424,15 @@ layout(binding=1) uniform fs_resolve_params {
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
     vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised); w = 1: transparent background
+    mat4 camera;
+    mat4 lightCamera;
+    vec4 reconstruct; // world width per native pixel, camera eye distance, depth radius, live-sun flag
+    vec4 shadowGrid;
+    vec4 sunVector;
+    vec4 skyTint;
+    vec4 weather; // rain, cloud opacity, animation seconds, lamp height
+    vec4 lightRect;
+    vec4 ramps[64];
     vec4 effect; // depth outline, convex ridge, bloom, grade
     vec4 depth_scale; // normalised depth per unit
     vec4 own[16]; // own palette k (1..15): x = size, y = dither
@@ -402,6 +450,13 @@ layout(binding=3) uniform texture2D u_pal;
 layout(binding=4) uniform texture2D u_geometry;
 layout(binding=5) uniform texture2D u_half;
 layout(binding=6) uniform texture2D u_quarter;
+@image_sample_type u_lamps unfilterable_float
+layout(binding=7) uniform texture2D u_lamps;
+@image_sample_type u_surface unfilterable_float
+layout(binding=8) uniform texture2D u_surface;
+@image_sample_type u_shadow unfilterable_float
+layout(binding=9) uniform texture2D u_shadow;
+layout(binding=10) uniform texture2D u_snow;
 #endif
 @sampler_type u_smp nonfiltering
 layout(binding=0) uniform sampler u_smp;
@@ -427,6 +482,88 @@ int pixelNearest(vec3 c, bool solid, int k) {
     }
     return best;
 }
+#ifdef ART_POST
+// A host port of KIT.light.glsl (Ink Studio, MIT). The ramp contains actual
+// world palette indices. Receivers and casters use the same light-space view.
+float sunLevel(vec3 n,float visibility){
+    float daylight=sunVector.w;
+    return .13+.23*(.5+.5*n.y)+.69*daylight*visibility*max(dot(n,sunVector.xyz),0.0);
+}
+vec3 fragmentLamps(vec3 world,vec3 normal){
+    ivec2 cell=ivec2(floor(world.xz))-ivec2(lightRect.xy);
+    if(any(lessThan(cell,ivec2(0))) || any(greaterThanEqual(cell,ivec2(lightRect.zw)))) return vec3(0);
+    int width=textureSize(sampler2D(u_lamps,u_smp),0).x;
+    int header=1+cell.y*int(lightRect.z)+cell.x;
+    vec2 span=texelFetch(sampler2D(u_lamps,u_smp),ivec2(header%width,header/width),0).xy;
+    vec3 energy=vec3(0);
+    for(int i=0;i<int(span.y);i++){
+        int id=int(span.x)+i;
+        vec4 lamp=texelFetch(sampler2D(u_lamps,u_smp),ivec2(id%width,id/width),0);
+        vec3 delta=vec3(lamp.x,weather.w,lamp.y)-world;
+        float dist=length(delta);
+        float fade=max(0.0,1.0-dist/lamp.z);
+        float flicker=1.0+.025*sin(5.0*(weather.z+dot(floor(lamp.xy),vec2(1.7,2.1))));
+        int rgb=int(lamp.w);
+        vec3 lampColor=vec3(rgb>>16,(rgb>>8)&255,rgb&255)/255.0;
+        energy+=lampColor*fade*fade*(.20+1.15*max(dot(normal,delta/max(.01,dist)),0.0))*flicker;
+    }
+    return energy;
+}
+vec3 daylightColor(vec3 base,int ownPalette,ivec2 pixel,ivec2 fp){
+    vec4 surface=texelFetch(sampler2D(u_surface,u_smp),fp,0);
+    if(surface.w<.5 || surface.w>126.0) return base;
+    vec3 eye=vec3((vec2(pixel)+.5-size.xy*.5)*reconstruct.x-camera[3].xy,
+                   -reconstruct.y+-surface.z*reconstruct.z-camera[3].z);
+    mat3 toWorld=transpose(mat3(camera));
+    vec3 world=toWorld*eye;
+    vec3 n=normalize(toWorld*vec3(surface.xy,sqrt(max(0.0,1.0-dot(surface.xy,surface.xy)))));
+    float shadow=1.0;
+    if(sunVector.w>.01){
+        vec3 l=(lightCamera*vec4(world,1)).xyz;
+        vec2 uv=.5+l.xy*shadowGrid.x;
+        if(opts.z>.5) uv.y=1.0-uv.y;
+        if(all(greaterThan(uv,vec2(0))) && all(lessThan(uv,vec2(1)))){
+            float receiver=(-l.z-shadowGrid.y)*shadowGrid.z;
+            // One shadow texel covers a longer stretch of surface at grazing incidence.
+            float cosine=clamp(dot(n,sunVector.xyz),.12,1.0);
+            float slope=sqrt(1.0-cosine*cosine)/cosine;
+            float bias=.00018+(.045+.0006*reconstruct.z+1.4*slope*shadowGrid.w/shadowGrid.x)*shadowGrid.z;
+            for(int j=0;j<4;j++){
+                vec2 d=vec2(float(j&1)-.5,float(j>>1)-.5)*shadowGrid.w;
+                vec4 sampleData=textureLod(sampler2D(u_shadow,u_smp),uv+d,0.0);
+                if(sampleData.w>.5 && receiver>.5+.5*sampleData.z+bias) shadow-=.25;
+            }
+        }
+    }
+    float cloud=.5+.5*sin(world.x*.12+world.z*.06+weather.z*.07+.8*sin(world.z*.11-weather.z*.04));
+    float sunShare=shadow*(1.0-.52*weather.y*smoothstep(.33,.79,cloud));
+    vec3 lamps=fragmentLamps(world,n);
+    float lampLevel=max(lamps.r,max(lamps.g,lamps.b));
+    float level=sunLevel(n,sunShare)+lampLevel*.63;
+    // Authored materials name their ramp; older geometry starts at its nearest base colour.
+    int mat=surface.w>=2.0 ? int(floor(surface.w))-2 : pixelNearest(base,false,0);
+    vec4 row=ramps[clamp(mat,0,63)];
+    vec3 ramp=row.xyz;
+    // Captured delta mode: the reference sun is calibrated to the middle stop.
+    // Static v2 dabs carry their reference stop in the fractional part of the tag.
+    float packedStop=fract(surface.w)*8.0;
+    float stop=packedStop>.5 ? packedStop-1.0 : row.w;
+    if(surface.w>=2.0) level+=(stop-1.0)/3.0;
+    int stepIndex=int(clamp(floor(level*3.0),0.0,2.0));
+    vec3 col;
+    if(ownPalette==0) col=pixelMapped(0,int(ramp[stepIndex]+.5));
+    else col=pixelMapped(ownPalette,pixelNearest(base*(.67+.53*level),false,ownPalette));
+    ivec2 snowCell=ivec2(floor(world.xz)),extent=textureSize(sampler2D(u_snow,u_smp),0);
+    if(all(greaterThanEqual(snowCell,ivec2(0)))&&all(lessThan(snowCell,extent))){
+        float depth=texelFetch(sampler2D(u_snow,u_smp),snowCell,0).r;
+        col=mix(col,pixelMapped(0,51),smoothstep(.30,1.0,n.y)*depth);
+    }
+    float wet=weather.x*(.35+.65*max(n.y,0.0));
+    col*=1.0-.21*wet;
+    col=mix(col,skyTint.rgb,skyTint.a*(1.0-min(lampLevel,1.0)));
+    return col+min(lamps,vec3(1.4))*(.13+.38*col);
+}
+#endif
 // own palette of a samples texel of the depth target (0 = the scene's): see fs_splat
 int ownOf(vec4 d) { return d.b > 0.5 ? int(d.g / d.b * (255.0 / 8.0) + 0.5) : 0; }
 // y-up pixel coordinate -> storage texel coordinate
@@ -501,6 +638,7 @@ void main() {
         if(meta.b>.5 && meta.g*255.0/meta.b-float(k*8)>1.5) c=lit_palette(c,native);
     }
 #ifdef ART_POST
+    if(reconstruct.w>.5 && !clear) c=daylightColor(c,k,p,fp);
     vec4 center=texelFetch(sampler2D(u_geometry,u_smp),fp,0);
     if((effect.x>0.0 || effect.y>0.0) && center.b+center.a>0.0) {
         vec2 n=center.rg*2.0-1.0;
@@ -608,6 +746,7 @@ in vec4 lit;
 in vec4 shade;
 #ifdef ART_POST
 out vec3 mesh_view_position;
+flat out float mesh_material;
 #endif
 out vec3 mesh_color;
 out float mesh_depth;
@@ -619,6 +758,7 @@ void main() {
     mesh_color = mix(color.rgb * face, backdrop.rgb, backdrop.a);
 #ifdef ART_POST
     mesh_view_position=mat3(view)*world;
+    mesh_material=color.a>.99 ? 127.0 : (color.a*255.0>=3.0 ? round(color.a*255.0)-1.0 : 1.0);
 #endif
     project_surface(world, mesh_depth);
 }
@@ -634,6 +774,7 @@ void main() {
 @block body_artmesh
 #ifdef ART_POST
 in vec3 mesh_view_position;
+flat in float mesh_material;
 #endif
 in vec3 mesh_color;
 in float mesh_depth;
@@ -641,10 +782,12 @@ layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 #ifdef ART_POST
 layout(location=2) out vec4 frag_geometry;
+layout(location=3) out vec4 frag_surface;
 #endif
 void main() {
 #ifdef ART_POST
     frag_geometry=pack_surface(mesh_view_position,mesh_depth);
+    frag_surface=vec4(frag_geometry.rg*2.0-1.0,2.0*mesh_depth-1.0,mesh_material);
 #endif
     frag_color = vec4(mesh_color,1);
     frag_depth = vec4(mesh_depth,0,0,1);
@@ -673,6 +816,7 @@ in vec4 accent;
 in vec4 material;
 #ifdef ART_POST
 out vec3 surface_view_position;
+flat out float surface_material;
 #endif
 out vec3 world;
 out vec3 c0;
@@ -690,6 +834,7 @@ void main() {
     vec3 placed=vec3(p.x,position.y,p.y);
 #ifdef ART_POST
     surface_view_position=mat3(view)*placed;
+    surface_material=material.a>.99 ? 127.0 : (material.a*255.0>=3.0 ? round(material.a*255.0)-1.0 : 1.0);
 #endif
     project_surface(placed,surface_depth);
 }
@@ -705,6 +850,7 @@ void main() {
 @block body_artsurface
 #ifdef ART_POST
 in vec3 surface_view_position;
+flat in float surface_material;
 #endif
 layout(binding=1) uniform fs_artsurface_params { vec4 surface_backdrop; };
 in vec3 world;
@@ -718,11 +864,13 @@ layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 #ifdef ART_POST
 layout(location=2) out vec4 frag_geometry;
+layout(location=3) out vec4 frag_surface;
 #endif
 float roll(vec2 xy) { return fract(sin(dot(xy,vec2(12.9898,78.233)))*4375.545); }
 void main() {
 #ifdef ART_POST
     frag_geometry=pack_surface(surface_view_position,surface_depth);
+    frag_surface=vec4(frag_geometry.rg*2.0-1.0,2.0*surface_depth-1.0,surface_material);
 #endif
     vec2 p=world.xz;
     int kind=int(info.x+0.5);
