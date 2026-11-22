@@ -560,7 +560,7 @@ void main() {
 @program artmesh vs_artmesh fs_artmesh
 
 @vs vs_artsurface
-layout(binding=0) uniform vs_artsurface_params { mat4 view; vec4 cam; vec4 dep; vec4 zr; };
+layout(binding=0) uniform vs_artsurface_params { mat4 view; vec4 cam; vec4 dep; vec4 zr; vec4 model_pose; };
 in vec3 position;
 in vec4 dark;
 in vec4 base;
@@ -579,7 +579,8 @@ void main() {
     world=position;
     c0=dark.rgb; c1=base.rgb; c2=light.rgb; c3=accent.rgb;
     info=material.rgb*255.0;
-    project_surface(world,surface_depth);
+    vec2 p=model_pose.xy+vec2(position.x*model_pose.z-position.z*model_pose.w,position.x*model_pose.w+position.z*model_pose.z);
+    project_surface(vec3(p.x,position.y,p.y),surface_depth);
 }
 @end
 
@@ -621,6 +622,13 @@ void main() {
         float wear=roll(vec2(row,floor(along/7.5)));
         col=wear<.045?c0:wear>.95?c2:c1;
         if(fract(p.y)<.063 || mod(along,7.5)<.068) col=mix(col,c3,.36);
+    } else if(kind>=6){
+        float side=info.z>.5?world.z:world.x;
+        if(kind==7){
+            float course=floor(world.y/.575);
+            if(fract(world.y/.575)<.034 || mod(side+course,2.0)<.018) col*=.89;
+        }
+        if(kind==8 && fract(side*4.0)<.06) col*=.82;
     } else if(kind==5){
         col=mix(c0,c2,clamp(1.0+world.y,0.0,1.0));
     } else {

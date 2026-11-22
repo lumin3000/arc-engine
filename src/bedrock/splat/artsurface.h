@@ -9,6 +9,7 @@ typedef struct {
 } ArtSurfaceVertex;
 typedef struct ArtSurface ArtSurface;
 ArtSurface *artsurface_create(const ArtSurfaceVertex *vertices, int count);
+void artsurface_pose(ArtSurface *surface, float x, float z, float heading, bool shown);
 void artsurface_destroy(ArtSurface *surface);
 bool artsurface_visible(void);
 size_t artsurface_bytes(void);

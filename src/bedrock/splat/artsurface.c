@@ -3,12 +3,15 @@
 #include "splat_shader.h"
 #include "../../log.h"
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 struct ArtSurface {
     sg_buffer geometry;
     int count;
     float center[3], half[3];
+    Splat_Vec4 pose;
+    bool shown;
     struct ArtSurface *next, *previous;
 };
 static ArtSurface *surfaces;
@@ -44,6 +47,8 @@ ArtSurface *artsurface_create(const ArtSurfaceVertex *v, int n) {
     check(sg_query_buffer_state(s->geometry)==SG_RESOURCESTATE_VALID,"geometry upload");
     bytes+=size;
     s->count=n;
+    s->pose.v[2]=1;
+    s->shown=true;
     for(int k=0;k<3;k++){
         float lo=v[0].position[k], hi=lo;
         for(int i=1;i<n;i++) { lo=fminf(lo,v[i].position[k]); hi=fmaxf(hi,v[i].position[k]); }
@@ -53,6 +58,11 @@ ArtSurface *artsurface_create(const ArtSurfaceVertex *v, int n) {
     if(surfaces) surfaces->previous=s;
     surfaces=s;
     return s;
+}
+void artsurface_pose(ArtSurface *s, float x, float z, float heading, bool shown) {
+    if(!s) return;
+    s->pose=(Splat_Vec4){{x,z,cosf(heading),sinf(heading)}};
+    s->shown=shown;
 }
 void artsurface_destroy(ArtSurface *s) {
     if(!s) return;
@@ -66,9 +76,12 @@ bool artsurface_visible(void) { return surfaces!=NULL; }
 size_t artsurface_bytes(void) { return bytes; }
 static bool in_view(const ArtSurface *s, const Splat_Mat4 *v, Splat_Vec4 cam, float focal) {
     for(int axis=0;axis<2;axis++){
-        float center=cam.v[axis], radius=1;
+        const float *p=s->pose.v;
+        float center=cam.v[axis]+focal*(v->v[axis]*p[0]+v->v[8+axis]*p[1]), radius=1;
+        const float coeff[]={v->v[axis]*p[2]+v->v[8+axis]*p[3],v->v[4+axis],
+                             -v->v[axis]*p[3]+v->v[8+axis]*p[2]};
         for(int k=0;k<3;k++){
-            float a=v->v[4*k+axis]*focal;
+            float a=coeff[k]*focal;
             center+=s->center[k]*a;
             radius+=s->half[k]*fabsf(a);
         }
@@ -78,13 +91,18 @@ static bool in_view(const ArtSurface *s, const Splat_Mat4 *v, Splat_Vec4 cam, fl
 }
 void artsurface_draw(const Splat_Mat4 *v, Splat_Vec4 cam, Splat_Vec4 dep, Splat_Vec4 zr, Splat_Vec4 tint) {
     if(!surfaces) return;
-    const vs_artsurface_params_t params={.view=*v,.cam=cam,.dep=dep,.zr=zr};
+    vs_artsurface_params_t params={.view=*v,.cam=cam,.dep=dep,.zr=zr};
     const fs_artsurface_params_t colors={.surface_backdrop=tint};
     sg_apply_pipeline(pipeline);
+    params.model_pose.v[2]=1;
     sg_apply_uniforms(UB_vs_artsurface_params,&SG_RANGE(params));
     sg_apply_uniforms(UB_fs_artsurface_params,&SG_RANGE(colors));
     for(ArtSurface *s=surfaces;s;s=s->next) {
-        if(!in_view(s,v,cam,dep.v[2])) continue;
+        if(!s->shown || !in_view(s,v,cam,dep.v[2])) continue;
+        if(memcmp(&params.model_pose,&s->pose,sizeof s->pose)){
+            params.model_pose=s->pose;
+            sg_apply_uniforms(UB_vs_artsurface_params,&SG_RANGE(params));
+        }
         sg_apply_bindings(&(sg_bindings){.vertex_buffers={s->geometry}});
         sg_draw(0,s->count,1);
     }
