@@ -72,6 +72,16 @@ void lamp_shade(vec3 pos, mat3 shape, vec3 normal) {
 }
 @end
 
+@block art_projection
+void project_surface(vec3 world, out float normalizedDepth) {
+    vec3 eye = mat3(view) * world;
+    float pz = eye.z + view[3][2];
+    vec2 ndc = (dep.z * eye.xy + cam.xy) / cam.zw * 2.0 - 1.0;
+    gl_Position = vec4(ndc, clamp((-pz - zr.x) * zr.y - zr.w, 0.0, 1.0), 1.0);
+    normalizedDepth = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+}
+@end
+
 @block splat_project
 // Projects one splat (world position, density, covariance, packed colour) into the target and
 // fills the flat outputs. Uniforms: view, cam, dep, zr (declared by the including stage).
@@ -124,11 +134,7 @@ void project_patch(int vertex, vec3 center, vec3 halfExtent, mat3 rotation, floa
     vec3 axes = halfExtent.x == 0.0 ? vec3(0, uv.y, uv.x) :
                 halfExtent.y == 0.0 ? vec3(uv.x, 0, uv.y) : vec3(uv.x, uv.y, 0);
     vec3 world = center + rotation * (axes * halfExtent);
-    vec3 eye = mat3(view) * world;
-    float pz = eye.z + view[3][2];
-    vec2 ndc = (dep.z * eye.xy + cam.xy) / cam.zw * 2.0 - 1.0;
-    gl_Position = vec4(ndc, clamp((-pz - zr.x) * zr.y - zr.w, 0.0, 1.0), 1.0);
-    v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+    project_surface(world, v_dn);
     v_rel = vec2(0);
     v_conic = vec3(0);
     vec3 rgb = vec3(mod(pk, 256.0), mod(floor(pk / 256.0), 256.0), floor(pk / 65536.0));
@@ -162,6 +168,7 @@ flat out vec4 v_col;
 flat out float v_lit;
 out float v_dn;
 
+@include_block art_projection
 @include_block splat_project
 @include_block local_light
 
@@ -209,6 +216,7 @@ flat out vec4 v_col;
 flat out float v_lit;
 out float v_dn;
 
+@include_block art_projection
 @include_block splat_project
 @include_block local_light
 
@@ -510,3 +518,43 @@ void main() {
 @end
 
 @program detail vs_quad fs_detail
+
+@vs vs_artmesh
+layout(binding=0) uniform vs_artmesh_params {
+    mat4 view;
+    vec4 cam;
+    vec4 dep;
+    vec4 zr;
+    vec4 backdrop;
+};
+in vec3 position;
+in vec4 color;
+in vec4 row0;
+in vec4 row1;
+in vec4 row2;
+in vec4 top;
+in vec4 lit;
+in vec4 shade;
+out vec3 mesh_color;
+out float mesh_depth;
+@include_block art_projection
+void main() {
+    vec4 local = vec4(position, 1);
+    vec3 world = vec3(dot(row0,local),dot(row1,local),dot(row2,local));
+    vec3 face = color.a < 0.5/255.0 ? top.rgb : color.a < 1.5/255.0 ? lit.rgb : shade.rgb;
+    mesh_color = mix(color.rgb * face, backdrop.rgb, backdrop.a);
+    project_surface(world, mesh_depth);
+}
+@end
+
+@fs fs_artmesh
+in vec3 mesh_color;
+in float mesh_depth;
+layout(location=0) out vec4 frag_color;
+layout(location=1) out vec4 frag_depth;
+void main() {
+    frag_color = vec4(mesh_color,1);
+    frag_depth = vec4(mesh_depth,0,0,1);
+}
+@end
+@program artmesh vs_artmesh fs_artmesh

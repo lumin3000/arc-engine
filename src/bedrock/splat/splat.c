@@ -9,6 +9,7 @@
 // back-to-front alpha blending, and a normalised depth blended alongside for the resolve.
 
 #include "splat.h"
+#include "artmesh.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1720,6 +1721,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         .attachments = {.colors = {t->color_att, t->depth_att}, .depth_stencil = t->zbuf_att},
         .label = "splat-pass",
     });
+    artmesh_draw(&p.view, p.cam, p.dep, p.zr, backdrop);
     if (S.count) {
         fp.mode = (Splat_Vec4){{v->static_cut ? 1.0f : 0.0f, 0, 0, 0}};
         sg_apply_pipeline(S.splat_pip);
@@ -1822,7 +1824,7 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
 }
 
 void splat_render_offscreen(void) {
-    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0)) return;
+    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0 && !artmesh_visible())) return;
     ensure_targets(S.view.art_w, S.view.art_h);
     if (S.inst_n) {
         sg_update_image(S.bone_img, &(sg_image_data){.mip_levels[0] = {
@@ -1872,7 +1874,7 @@ void splat_render_offscreen(void) {
 }
 
 void splat_composite(Splat_Show show) {
-    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0) || S.art_w == 0) return;
+    if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0 && !artmesh_visible()) || S.art_w == 0) return;
     sg_view tex = S.art_tex;
     int tw = S.art_w, th = S.art_h;
     const bool raw = show == SPLAT_SHOW_NATIVE_RAW;
