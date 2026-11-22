@@ -1982,7 +1982,9 @@ void splat_composite(Splat_Show show) {
     // occluders to art-pixel rectangles and normalised depths (same formulas as the splat pass)
     fs_blit_params_t bp;
     memset(&bp, 0, sizeof(bp));
-    bp.blit_opts.v[0] = raw ? 1.0f : 0.0f;
+    // Samples already contain RGB composited over the palette background. A diagnostic
+    // readback must copy that RGB once, including pixels of zero accumulated opacity.
+    bp.blit_opts.v[0] = (raw || show==SPLAT_SHOW_SAMPLES) ? 1.0f : 0.0f;
     if (show == SPLAT_SHOW_ART && S.occ_n) {
         const Splat_View *v = &S.view;
         const double f = (double)S.art_h / 2.0 / (double)v->ortho_half_h;  // art px per world unit
