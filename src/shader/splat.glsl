@@ -85,7 +85,9 @@ void project_surface(vec3 world, out float normalizedDepth) {
 @block splat_project
 // Projects one splat (world position, density, covariance, packed colour) into the target and
 // fills the flat outputs. Uniforms: view, cam, dep, zr (declared by the including stage).
-void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c02, float c11, float c12, float c22, float pk) {
+void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c02, float c11, float c12, float c22, float pk, vec3 groundUp) {
+    bool ground = al == -5.0;  // SPLAT_GROUND_DAB
+    if (ground) al = 4.0;
     v_lit=0.0;
     vec2 sgn = vec2((corner & 1) != 0 ? 1.0 : -1.0, (corner & 2) != 0 ? 1.0 : -1.0);
     vec3 xa = vec3(view[0][0], view[1][0], view[2][0]);
@@ -117,6 +119,13 @@ void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c
     // the fragment stage do
     vec2 corner_px = rel + cam.xy + sgn * (ext * 1.02 + 0.5);
     vec2 ndc = corner_px / cam.zw * 2.0 - 1.0;
+    // The Gaussian still has its elliptical footprint, but each corner lies on the
+    // ground plane. Both the camera and sun pass interpolate the same surface depth.
+    if (ground) {
+        vec3 n = mat3(view) * groundUp;
+        vec2 eyeOffset = sgn * (ext * 1.02 + 0.5) / focal;
+        if (abs(n.z) > 0.0001) pz -= dot(n.xy, eyeOffset) / n.z;
+    }
     // hardware depth: farther = larger, over the whole scene depth range
     float zd = clamp((-pz - zr.x) * zr.y - zr.w, 0.0, 1.0);
     gl_Position = vec4(ndc, zd, 1.0);
@@ -188,7 +197,7 @@ void main() {
     }
     if (is_flat_patch(a_pos.w))
         project_patch(gl_VertexIndex, pos, sqrt(vec3(a_cov0.x, a_cov1.x, a_cov1.z)), mat3(1.0), a_cov0.w);
-    else splat_project(gl_VertexIndex, pos, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
+    else splat_project(gl_VertexIndex, pos, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w, vec3(0, 1, 0));
     if(flame==0.0 && lampFrame.x>0.0) {
         mat3 shape=mat3(a_cov0.xyz,vec3(a_cov0.y,a_cov1.xy),vec3(a_cov0.z,a_cov1.yz));
         lamp_shade(pos,shape,vec3(0));
@@ -266,7 +275,7 @@ void main() {
     mat3 Sp = R * S * transpose(R);
     if (is_flat_patch(a_pos.w))
         project_patch(gl_VertexIndex, x, sqrt(vec3(a_cov0.x, a_cov1.x, a_cov1.z)), R, a_cov0.w);
-    else splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w);
+    else splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w, R[1]);
     if(lampFrame.x>0.0) {
         vec3 n=a_bone.w>0.0 ? normalize(R*unpack_normal(a_bone.w)) : vec3(0);
         lamp_shade(x,Sp,n);

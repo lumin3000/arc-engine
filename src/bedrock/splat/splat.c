@@ -1088,7 +1088,7 @@ static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) 
     uint32_t particles = 0, out = 0;
     for (uint32_t i = 0; i < n; i++) {
         const float *d = src + (size_t)i * SPLAT_FLOATS;
-        if (d[3] == SPLAT_FLAT_PATCH) {
+        if (d[3] == SPLAT_FLAT_PATCH || d[3] == SPLAT_GROUND_DAB) {
             memcpy(dst + (size_t)out++ * SPLAT_FLOATS, d, SPLAT_FLOATS * sizeof(float));
             continue;
         }
