@@ -1,4 +1,5 @@
 #include "artmesh.h"
+#include "artsurface.h"
 #include "../../../external/sokol/c/sokol_gfx.h"
 #include "../../log.h"
 #include "splat_shader.h"
@@ -95,8 +96,9 @@ void artmesh_destroy(Artmesh_Batch *b) {
     free(b);
     if (!batches) { sg_destroy_pipeline(pipeline); sg_destroy_shader(shader); }
 }
-bool artmesh_visible(void) { return visible_batches > 0; }
+bool artmesh_visible(void) { return visible_batches > 0 || artsurface_visible(); }
 void artmesh_draw(const Splat_Mat4 *view, Splat_Vec4 cam, Splat_Vec4 dep, Splat_Vec4 zr, Splat_Vec4 tint) {
+    artsurface_draw(view,cam,dep,zr,tint);
     if (!visible_batches) return;
     const vs_artmesh_params_t p = {.view = *view, .cam = cam, .dep = dep, .zr = zr, .backdrop = tint};
     sg_apply_pipeline(pipeline);

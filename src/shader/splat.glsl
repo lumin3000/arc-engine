@@ -558,3 +558,85 @@ void main() {
 }
 @end
 @program artmesh vs_artmesh fs_artmesh
+
+@vs vs_artsurface
+layout(binding=0) uniform vs_artsurface_params { mat4 view; vec4 cam; vec4 dep; vec4 zr; };
+in vec3 position;
+in vec4 dark;
+in vec4 base;
+in vec4 light;
+in vec4 accent;
+in vec4 material;
+out vec3 world;
+out vec3 c0;
+out vec3 c1;
+out vec3 c2;
+out vec3 c3;
+out vec3 info;
+out float surface_depth;
+@include_block art_projection
+void main() {
+    world=position;
+    c0=dark.rgb; c1=base.rgb; c2=light.rgb; c3=accent.rgb;
+    info=material.rgb*255.0;
+    project_surface(world,surface_depth);
+}
+@end
+
+@fs fs_artsurface
+layout(binding=1) uniform fs_artsurface_params { vec4 surface_backdrop; };
+in vec3 world;
+in vec3 c0;
+in vec3 c1;
+in vec3 c2;
+in vec3 c3;
+in vec3 info;
+in float surface_depth;
+layout(location=0) out vec4 frag_color;
+layout(location=1) out vec4 frag_depth;
+float roll(vec2 xy) { return fract(sin(dot(xy,vec2(12.9898,78.233)))*4375.545); }
+void main() {
+    vec2 p=world.xz;
+    int kind=int(info.x+0.5);
+    vec3 col=c1;
+    float grain=roll(floor(p*12.0))-.5;
+    float field=sin(dot(p,vec2(.19,.08)))+.7*cos(dot(p,vec2(-.11,.22)))+
+        .32*sin(dot(p,vec2(.43,.70)))+.18*cos(dot(p,vec2(1.02,-.52)))+.08*grain;
+    if(kind==1){
+        int mask=int(info.z+.5);
+        vec2 uv=fract(p);
+        float bank=2.0;
+        if((mask&1)!=0) bank=min(bank,uv.x);
+        if((mask&2)!=0) bank=min(bank,1.0-uv.x);
+        if((mask&4)!=0) bank=min(bank,uv.y);
+        if((mask&8)!=0) bank=min(bank,1.0-uv.y);
+        float crest=sin(p.x*1.62+p.y*.45+.65*sin(p.y*.45));
+        float swell=sin(p.x*.67+p.y*.16+.73*sin(p.y*.21))+.42*sin(p.x*.24-p.y*.22);
+        col=swell < -1.18 ? c0 : c1;
+        if(crest>.973 && cos(p.y*1.19-p.x*.44)+.65*sin(p.x*.83+p.y*.34)>.63) col=c2;
+        if(bank<.32 && sin(p.x*1.6+p.y*.85)>.3) col=c3;
+        else if(bank<.55 && swell>.85) col=c2;
+    } else if(kind==2){
+        float row=floor(p.y), along=p.x+floor(roll(vec2(row,7))*16.0)/8.0;
+        float wear=roll(vec2(row,floor(along/7.5)));
+        col=wear<.045?c0:wear>.95?c2:c1;
+        if(fract(p.y)<.063 || mod(along,7.5)<.068) col=mix(col,c3,.36);
+    } else if(kind==5){
+        col=mix(c0,c2,clamp(1.0+world.y,0.0,1.0));
+    } else {
+        col=field<-.82?c0:field>.97?c2:c1;
+        if(kind==3){
+            float course=floor(p.y*2.0);
+            if(fract(p.y*2.0)<.065 || fract(p.x+course*.5)<.034) col=mix(col,c0,.55);
+        }
+    }
+    if(info.y>0.0 && kind!=1 && kind!=5){
+        float snow=info.y/255.0;
+        float cover=clamp(snow*1.6-.25+(.55*field+.27*grain)*(1.0-snow),0.0,1.0);
+        col=mix(col,vec3(.89,.91,.94)+.025*field,cover);
+    }
+    frag_color=vec4(mix(col,surface_backdrop.rgb,surface_backdrop.a),1);
+    frag_depth=vec4(surface_depth,0,0,1);
+}
+@end
+@program artsurface vs_artsurface fs_artsurface
