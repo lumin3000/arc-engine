@@ -988,15 +988,20 @@ static int cmp_cell(const void *a, const void *b) {
 // merges `src` (n rows) on cells of `cell`, writes rows to `dst` (capacity n), returns count
 static uint32_t lod_merge(const float *src, uint32_t n, float cell, float *dst) {
     Cell_Item *it = malloc(sizeof(Cell_Item) * n);
+    uint32_t particles = 0, out = 0;
     for (uint32_t i = 0; i < n; i++) {
         const float *d = src + (size_t)i * SPLAT_FLOATS;
+        if (d[3] == SPLAT_FLAT_PATCH) {
+            memcpy(dst + (size_t)out++ * SPLAT_FLOATS, d, SPLAT_FLOATS * sizeof(float));
+            continue;
+        }
         const int64_t cx = (int64_t)floorf(d[0] / cell) + (1 << 20), cy = (int64_t)floorf(d[1] / cell) + (1 << 20),
                       cz = (int64_t)floorf(d[2] / cell) + (1 << 20);
-        it[i].key = ((uint64_t)cx << 42) | ((uint64_t)cy << 21) | (uint64_t)cz;
-        it[i].idx = i;
+        it[particles].key = ((uint64_t)cx << 42) | ((uint64_t)cy << 21) | (uint64_t)cz;
+        it[particles++].idx = i;
     }
+    n = particles;
     qsort(it, n, sizeof(Cell_Item), cmp_cell);
-    uint32_t out = 0;
     for (uint32_t a = 0; a < n;) {
         uint32_t b = a;
         while (b < n && it[b].key == it[a].key) b++;

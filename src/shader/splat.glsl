@@ -115,6 +115,26 @@ void splat_project(int corner, vec3 pos, float al, float c00, float c01, float c
     v_col = vec4(mod(pk, 256.0) / 255.0, mod(floor(pk / 256.0), 256.0) / 255.0, floor(pk / 65536.0) / 255.0, al);
     v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
 }
+
+// SPLAT_FLAT_PATCH in splat.h. Project actual corners so intersecting faces share
+// a straight edge and hardware depth varies continuously across the surface.
+bool is_flat_patch(float density) { return density == -4.0; }
+void project_patch(int vertex, vec3 center, vec3 halfExtent, mat3 rotation, float pk) {
+    vec2 uv = vec2((vertex & 1) == 0 ? -1.0 : 1.0, (vertex & 2) == 0 ? -1.0 : 1.0);
+    vec3 axes = halfExtent.x == 0.0 ? vec3(0, uv.y, uv.x) :
+                halfExtent.y == 0.0 ? vec3(uv.x, 0, uv.y) : vec3(uv.x, uv.y, 0);
+    vec3 world = center + rotation * (axes * halfExtent);
+    vec3 eye = mat3(view) * world;
+    float pz = eye.z + view[3][2];
+    vec2 ndc = (dep.z * eye.xy + cam.xy) / cam.zw * 2.0 - 1.0;
+    gl_Position = vec4(ndc, clamp((-pz - zr.x) * zr.y - zr.w, 0.0, 1.0), 1.0);
+    v_dn = clamp((-pz - (dep.x - dep.y)) / (2.0 * dep.y), 0.0, 1.0);
+    v_rel = vec2(0);
+    v_conic = vec3(0);
+    vec3 rgb = vec3(mod(pk, 256.0), mod(floor(pk / 256.0), 256.0), floor(pk / 65536.0));
+    v_col = vec4(rgb / 255.0, 4.0);
+    v_lit = 0.0;
+}
 @end
 
 @vs vs_splat
@@ -140,7 +160,7 @@ flat out vec2 v_rel;    // splat centre minus the screen offset, target px (y-up
 flat out vec3 v_conic;
 flat out vec4 v_col;
 flat out float v_lit;
-flat out float v_dn;
+out float v_dn;
 
 @include_block splat_project
 @include_block local_light
@@ -153,7 +173,9 @@ void main() {
         pos.x+=flame*.035*sin(phase*5.0);
         pos.y+=flame*.045*sin(phase*7.0);
     }
-    splat_project(gl_VertexIndex, pos, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
+    if (is_flat_patch(a_pos.w))
+        project_patch(gl_VertexIndex, pos, sqrt(vec3(a_cov0.x, a_cov1.x, a_cov1.z)), mat3(1.0), a_cov0.w);
+    else splat_project(gl_VertexIndex, pos, a_pos.w, a_cov0.x, a_cov0.y, a_cov0.z, a_cov1.x, a_cov1.y, a_cov1.z, a_cov0.w);
     if(flame==0.0 && lampFrame.x>0.0) {
         mat3 shape=mat3(a_cov0.xyz,vec3(a_cov0.y,a_cov1.xy),vec3(a_cov0.z,a_cov1.yz));
         lamp_shade(pos,shape,vec3(0));
@@ -185,7 +207,7 @@ flat out vec2 v_rel;
 flat out vec3 v_conic;
 flat out vec4 v_col;
 flat out float v_lit;
-flat out float v_dn;
+out float v_dn;
 
 @include_block splat_project
 @include_block local_light
@@ -212,7 +234,9 @@ void main() {
     mat3 S = mat3(a_cov0.x, a_cov0.y, a_cov0.z, a_cov0.y, a_cov1.x, a_cov1.y, a_cov0.z, a_cov1.y, a_cov1.z);
     mat3 R = transpose(mat3(r0.xyz, r1.xyz, r2.xyz));
     mat3 Sp = R * S * transpose(R);
-    splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w);
+    if (is_flat_patch(a_pos.w))
+        project_patch(gl_VertexIndex, x, sqrt(vec3(a_cov0.x, a_cov1.x, a_cov1.z)), R, a_cov0.w);
+    else splat_project(gl_VertexIndex, x, a_pos.w, Sp[0][0], Sp[0][1], Sp[0][2], Sp[1][1], Sp[1][2], Sp[2][2], a_cov0.w);
     if(lampFrame.x>0.0) {
         vec3 n=a_bone.w>0.0 ? normalize(R*unpack_normal(a_bone.w)) : vec3(0);
         lamp_shade(x,Sp,n);
@@ -231,7 +255,7 @@ flat in vec2 v_rel;
 flat in vec3 v_conic;
 flat in vec4 v_col;
 flat in float v_lit;
-flat in float v_dn;
+in float v_dn;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 

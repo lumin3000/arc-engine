@@ -22,6 +22,9 @@ typedef struct { float v[16]; } Splat_Mat4;
 typedef struct { float v[4]; } Splat_Vec4;
 
 #define SPLAT_FLOATS 16
+// A filled axis-aligned rectangular patch in the same instance stream. The three
+// diagonal slots hold squared half-extents (one zero); RGB, position and skinning are shared.
+#define SPLAT_FLAT_PATCH (-4.0f)
 #define SPLAT_MAX_PALETTE 64
 
 typedef struct Splat_Cloud {
