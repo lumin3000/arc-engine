@@ -879,6 +879,14 @@ layout(location=2) out vec4 frag_geometry;
 layout(location=3) out vec4 frag_surface;
 #endif
 float roll(vec2 xy) { return fract(sin(dot(xy,vec2(12.9898,78.233)))*4375.545); }
+// A seam every `period` along `coord`, `width` wide; `span` is how far coord moves across one
+// pixel. A seam thinner than a pixel would be drawn only where a pixel centre happens to land
+// in it, so it is widened to one pixel. Where neighbouring seams come closer than
+// SEAM_MIN_GAP pixels the whole family is left out instead of turning the face into stripes.
+#define SEAM_MIN_GAP 5.0
+bool seam(float coord, float span, float period, float width) {
+    return period >= SEAM_MIN_GAP*span && mod(coord,period) < max(width,span);
+}
 void main() {
 #ifdef ART_POST
     frag_geometry=pack_surface(surface_view_position,surface_depth);
@@ -908,21 +916,22 @@ void main() {
         float row=floor(p.y), along=p.x+floor(roll(vec2(row,7))*16.0)/8.0;
         float wear=roll(vec2(row,floor(along/7.5)));
         col=wear<.045?c0:wear>.95?c2:c1;
-        if(fract(p.y)<.063 || mod(along,7.5)<.068) col=mix(col,c3,.36);
+        if(seam(p.y,fwidth(p.y),1.0,.063) || seam(along,fwidth(p.x),7.5,.068)) col=mix(col,c3,.36);
     } else if(kind>=6){
         float side=info.z>.5?world.z:world.x;
+        float side_span=fwidth(side);
         if(kind==7){
             float course=floor(world.y/.575);
-            if(fract(world.y/.575)<.034 || mod(side+course,2.0)<.018) col*=.89;
+            if(seam(world.y,fwidth(world.y),.575,.01955) || seam(side+course,side_span,2.0,.018)) col*=.89;
         }
-        if(kind==8 && fract(side*4.0)<.06) col*=.82;
+        if(kind==8 && seam(side,side_span,.25,.015)) col*=.82;
     } else if(kind==5){
         col=mix(c0,c2,clamp(1.0+world.y,0.0,1.0));
     } else {
         col=field<-.82?c0:field>.97?c2:c1;
         if(kind==3){
             float course=floor(p.y*2.0);
-            if(fract(p.y*2.0)<.065 || fract(p.x+course*.5)<.034) col=mix(col,c0,.55);
+            if(seam(p.y,fwidth(p.y),.5,.0325) || seam(p.x+course*.5,fwidth(p.x),1.0,.034)) col=mix(col,c0,.55);
         }
     }
     if(info.y>0.0 && kind!=1 && kind!=5){
