@@ -20,7 +20,7 @@ static void fail(const char *reason) {
     exit(1);
 }
 static void make_pipeline(void) {
-    shader = sg_make_shader(artmesh_shader_desc(sg_query_backend()));
+    shader = sg_make_shader(splat_post_enabled() ? artmesh_post_shader_desc(sg_query_backend()) : artmesh_shader_desc(sg_query_backend()));
     pipeline = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = shader,
         .layout = {
@@ -37,7 +37,7 @@ static void make_pipeline(void) {
                 [ATTR_artmesh_shade] = {.buffer_index = 1, .format = SG_VERTEXFORMAT_UBYTE4N},
             }},
         .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
-        .color_count = 2, .colors = {{.pixel_format = SG_PIXELFORMAT_RGBA8},{.pixel_format = SG_PIXELFORMAT_RGBA8}},
+        .color_count = splat_post_enabled() ? 3 : 2, .colors = {{.pixel_format = SG_PIXELFORMAT_RGBA8},{.pixel_format = SG_PIXELFORMAT_RGBA8},{.pixel_format=SG_PIXELFORMAT_RGBA8}},
         .sample_count = 1, .label = "artmesh-pipeline",
     });
     if (sg_query_pipeline_state(pipeline) != SG_RESOURCESTATE_VALID) fail("pipeline creation failed");

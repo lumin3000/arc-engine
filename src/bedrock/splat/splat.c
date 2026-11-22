@@ -495,6 +495,8 @@ Splat_View splat_view_ortho(float yaw, float pitch, const float target[3], float
 
 typedef struct {
     int w, h;
+    sg_image normal;
+    sg_view normal_att, normal_tex;
     sg_image color, depth;           // depth: normalised depth in .r (second colour target)
     sg_image zbuf;                   // hardware depth
     sg_view color_att, depth_att, zbuf_att;
@@ -662,8 +664,31 @@ Splat_View splat_view_oblique(float k, const float target[3], float art_world, i
     return v;
 }
 
+static bool post_enabled;
+static Splat_Post post;
+typedef struct {
+    sg_image image;
+    sg_view attachment, texture;
+    int width, height;
+} BloomLevel;
+static BloomLevel bloom_levels[2];
+static sg_pipeline bloom_pipeline;
+static sg_sampler bloom_sampler;
+
+void splat_configure_post(Splat_Post settings) {
+    if (S.ready) SPLAT_FATAL("[splat] configure post before initialization\n");
+    post_enabled = true;
+    post = settings;
+}
+bool splat_post_enabled(void) { return post_enabled; }
+
 static void target_destroy(Splat_Target *t) {
     if (t->w == 0) return;
+    if (t->normal.id) {
+        sg_destroy_view(t->normal_att);
+        sg_destroy_view(t->normal_tex);
+        sg_destroy_image(t->normal);
+    }
     sg_destroy_view(t->color_att);
     sg_destroy_view(t->depth_att);
     sg_destroy_view(t->color_tex);
@@ -691,6 +716,11 @@ static void target_make(Splat_Target *t, int w, int h, const char *label) {
     t->w = w;
     t->h = h;
     t->color = make_target_image(w, h, label);
+    if (post_enabled) {
+        t->normal = make_target_image(w, h, "mesh-normal-depth");
+        t->normal_att = sg_make_view(&(sg_view_desc){.color_attachment.image=t->normal});
+        t->normal_tex = sg_make_view(&(sg_view_desc){.texture.image=t->normal});
+    }
     t->depth = make_target_image(w, h, label);
     t->color_att = sg_make_view(&(sg_view_desc){.color_attachment = {.image = t->color}});
     t->depth_att = sg_make_view(&(sg_view_desc){.color_attachment = {.image = t->depth}});
@@ -715,6 +745,22 @@ static void ensure_targets(int aw, int ah) {
         sg_destroy_view(S.art_att);
         sg_destroy_view(S.art_tex);
         sg_destroy_image(S.art);
+    }
+    if (post_enabled && post.bloom > 0) {
+        int w=aw, h=ah;
+        for (int i=0; i<2; i++) {
+            BloomLevel *level=&bloom_levels[i];
+            if (level->image.id) {
+                sg_destroy_view(level->attachment);
+                sg_destroy_view(level->texture);
+                sg_destroy_image(level->image);
+            }
+            w=(w+1)/2; h=(h+1)/2;
+            level->width=w; level->height=h;
+            level->image=make_target_image(w,h,"art-bloom");
+            level->attachment=sg_make_view(&(sg_view_desc){.color_attachment.image=level->image});
+            level->texture=sg_make_view(&(sg_view_desc){.texture.image=level->image});
+        }
     }
     S.art = make_target_image(aw, ah, "splat-art");
     S.art_att = sg_make_view(&(sg_view_desc){.color_attachment = {.image = S.art}});
@@ -750,8 +796,8 @@ void splat_set_lights(const float *data, int side) {
 
 void splat_init(void) {
     if (S.ready) return;
-    S.splat_shd = sg_make_shader(splat_shader_desc(sg_query_backend()));
-    S.resolve_shd = sg_make_shader(resolve_shader_desc(sg_query_backend()));
+    S.splat_shd = sg_make_shader(post_enabled ? splat_post_shader_desc(sg_query_backend()) : splat_shader_desc(sg_query_backend()));
+    S.resolve_shd = sg_make_shader(post_enabled ? resolve_post_shader_desc(sg_query_backend()) : resolve_shader_desc(sg_query_backend()));
     S.blit_shd = sg_make_shader(blit_shader_desc(sg_query_backend()));
 
     sg_blend_state over = {
@@ -775,15 +821,16 @@ void splat_init(void) {
         // back-to-front order already resolves the static cloud; the depth test only keeps
         // what is drawn later (skinned instances) behind what stands in front of it
         .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
-        .color_count = 2,
+        .color_count = post_enabled ? 3 : 2,
         .colors = {
             [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [1] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
+            [2] = {.pixel_format = SG_PIXELFORMAT_RGBA8},
         },
         .sample_count = 1,
         .label = "splat-pipeline",
     });
-    S.skin_shd = sg_make_shader(splat_skin_shader_desc(sg_query_backend()));
+    S.skin_shd = sg_make_shader(post_enabled ? splat_skin_post_shader_desc(sg_query_backend()) : splat_skin_shader_desc(sg_query_backend()));
     S.skin_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.skin_shd,
         .layout = {
@@ -797,10 +844,11 @@ void splat_init(void) {
         },
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
         .depth = {.pixel_format = SG_PIXELFORMAT_DEPTH, .compare = SG_COMPAREFUNC_LESS_EQUAL, .write_enabled = true},
-        .color_count = 2,
+        .color_count = post_enabled ? 3 : 2,
         .colors = {
             [0] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
             [1] = {.pixel_format = SG_PIXELFORMAT_RGBA8, .blend = over},
+            [2] = {.pixel_format = SG_PIXELFORMAT_RGBA8},
         },
         .sample_count = 1,
         .label = "splat-skin-pipeline",
@@ -815,6 +863,14 @@ void splat_init(void) {
         .sample_count = 1,
         .label = "splat-resolve-pipeline",
     });
+    if (post_enabled && post.bloom > 0) {
+        bloom_pipeline=sg_make_pipeline(&(sg_pipeline_desc){
+            .shader=sg_make_shader(bloom_shader_desc(sg_query_backend())),
+            .primitive_type=SG_PRIMITIVETYPE_TRIANGLE_STRIP, .depth.pixel_format=SG_PIXELFORMAT_NONE,
+            .colors[0].pixel_format=SG_PIXELFORMAT_RGBA8, .sample_count=1, .label="art-bloom"});
+        bloom_sampler=sg_make_sampler(&(sg_sampler_desc){.min_filter=SG_FILTER_LINEAR,.mag_filter=SG_FILTER_LINEAR,
+            .wrap_u=SG_WRAP_CLAMP_TO_EDGE,.wrap_v=SG_WRAP_CLAMP_TO_EDGE,.label="bloom-linear"});
+    }
     S.blit_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = S.blit_shd,
         .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
@@ -1717,8 +1773,9 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
         .action = {
             .colors[0] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {bg[0], bg[1], bg[2], 0.0f}},
             .colors[1] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {1.0f, 0.0f, 0.0f, 0.0f}},
+            .colors[2] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {0,0,0,0}},
         },
-        .attachments = {.colors = {t->color_att, t->depth_att}, .depth_stencil = t->zbuf_att},
+        .attachments = {.colors = {t->color_att, t->depth_att, t->normal_att}, .depth_stencil = t->zbuf_att},
         .label = "splat-pass",
     });
     artmesh_draw(&p.view, p.cam, p.dep, p.zr, backdrop);
@@ -1823,6 +1880,24 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail) {
     sg_end_pass();
 }
 
+static void blur_highlights(const vs_quad_params_t *quad) {
+    sg_view source = S.native.color_tex;
+    int w=S.native.w, h=S.native.h;
+    for (int i=0; i<2; i++) {
+        BloomLevel *level=&bloom_levels[i];
+        fs_bloom_params_t params = {.blur={{.68f,i==0?.16f:0,1.0f/w,1.0f/h}}};
+        sg_begin_pass(&(sg_pass){.action.colors[0].load_action=SG_LOADACTION_DONTCARE,
+            .attachments.colors[0]=level->attachment,.label="art-bloom-downsample"});
+        sg_apply_pipeline(bloom_pipeline);
+        sg_apply_bindings(&(sg_bindings){.views[VIEW_u_bright]=source,.samplers[SMP_bloom_smp]=bloom_sampler});
+        sg_apply_uniforms(UB_vs_quad_params,&(sg_range){quad,sizeof *quad});
+        sg_apply_uniforms(UB_fs_bloom_params,&SG_RANGE(params));
+        sg_draw(0,4,1);
+        sg_end_pass();
+        source=level->texture; w=level->width; h=level->height;
+    }
+}
+
 void splat_render_offscreen(void) {
     if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0 && !artmesh_visible())) return;
     ensure_targets(S.view.art_w, S.view.art_h);
@@ -1852,6 +1927,15 @@ void splat_render_offscreen(void) {
                              S.view.outline_step / (2.0f * S.view.radius), S.view.transparent ? 1.0f : 0.0f}};
     for (int k = 1; k <= S.own_n; k++) rp.own[k] = (Splat_Vec4){{S.own_opt[k][0], S.own_opt[k][1], 0, 0}};
     vs_quad_params_t qp = {.quad = {{flip, 0, 0, 0}}};
+    if (post_enabled) {
+        float art_world=2.0f*S.view.ortho_half_h/S.art_h;
+        float fade=fminf(1.0f,.045f/art_world);
+        rp.effect=(Splat_Vec4){{post.outline*fade,post.ridge*fade,post.bloom,post.grade}};
+        rp.depth_scale.v[0]=1.0f/(2.0f*S.view.radius);
+        rp.opts.v[1]*=post.dither;
+        for (int k=1;k<=S.own_n;k++) rp.own[k].v[1]*=post.dither;
+        if (post.bloom>0) blur_highlights(&qp);
+    }
     sg_begin_pass(&(sg_pass){
         .action = {.colors[0] = {.load_action = SG_LOADACTION_DONTCARE}},
         .attachments = {.colors[0] = S.art_att},
@@ -1864,6 +1948,9 @@ void splat_render_offscreen(void) {
             [VIEW_u_depth] = S.samples.depth_tex,
             [VIEW_u_native] = S.native.color_tex,
             [VIEW_u_pal] = S.own_tex,
+            [VIEW_u_geometry] = S.native.normal_tex,
+            [VIEW_u_half] = post_enabled && post.bloom==0 ? S.native.color_tex : bloom_levels[0].texture,
+            [VIEW_u_quarter] = post_enabled && post.bloom==0 ? S.native.color_tex : bloom_levels[1].texture,
         },
         .samplers[SMP_u_smp] = S.nearest,
     });
@@ -1983,5 +2070,10 @@ Splat_Stats splat_stats(void) {
     st.blended_sorted_splats = S.sorted_splats;
     st.blended_bytes = S.sorted_bytes;
     st.blended_sort_ms = S.sort_ms;
+    if (post_enabled) {
+        st.target_bytes+=(uint64_t)S.art_w*S.art_h*20;
+        for(int i=0;i<S.detail_n;i++) st.target_bytes+=(uint64_t)S.details[i].target.w*S.details[i].target.h*4;
+        for(int i=0;i<2;i++) st.target_bytes+=(uint64_t)bloom_levels[i].width*bloom_levels[i].height*4;
+    }
     return st;
 }

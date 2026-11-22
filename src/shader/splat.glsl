@@ -252,7 +252,7 @@ void main() {
 }
 @end
 
-@fs fs_splat
+@block body_splat
 layout(binding=1) uniform fs_splat_params {
     vec4 frag;      // x = screen offset Cx, y = Cy, z = target height px, w = 1 if storage origin is top-left
     vec4 mode;      // x = 1: opaque cut (alpha >= 0.5 drawn whole, the rest dropped), for splats drawn out of order;
@@ -266,6 +266,9 @@ flat in float v_lit;
 in float v_dn;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
+#ifdef ART_POST
+layout(location=2) out vec4 frag_geometry;
+#endif
 
 void main() {
     vec2 fc = vec2(gl_FragCoord.x, frag.w > 0.5 ? frag.z - gl_FragCoord.y : gl_FragCoord.y);
@@ -283,15 +286,29 @@ void main() {
         if (a < 0.5) discard;
         a = 1.0;
     }
+    #ifdef ART_POST
+    frag_geometry=vec4(0);
+    #endif
     frag_color = vec4(mix(min(v_col.rgb, vec3(1.0)), tint.rgb, tint.a), a);
     // .g = own palette number in steps of 8/255, .b = 1 for an own palette: blended like the depth, so
     // .b is the share of the pixel that splats with an own palette drew and .g / .b their palette
     frag_depth = vec4(v_dn, (mode.y*8.0+(mode.y>0.0 ? 3.0*v_lit : 0.0))/255.0, mode.y > 0.0 ? 1.0 : 0.0, solid ? a : 0.0);
 }
 @end
+@fs fs_splat
+
+@include_block body_splat
+@end
+@fs fs_splat_post
+#define ART_POST 1
+
+@include_block body_splat
+@end
 
 @program splat vs_splat fs_splat
+@program splat_post vs_splat fs_splat_post
 @program splat_skin vs_splat_skin fs_splat
+@program splat_skin_post vs_splat_skin fs_splat_post
 
 @vs vs_quad
 layout(binding=0) uniform vs_quad_params {
@@ -362,12 +379,14 @@ vec3 lit_palette(vec3 entry,vec3 sampleColor) {
     return clamp(entry+round(64.0*chroma)/64.0,0.0,1.0);
 }
 @end
-@fs fs_resolve
+@block body_resolve
 layout(binding=1) uniform fs_resolve_params {
     vec4 pal[64];
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
     vec4 size;   // x, y = art grid size, z, w = samples size
     vec4 phase;  // x, y = ordered-dither phase of art pixel (0,0); z = contour depth step (normalised); w = 1: transparent background
+    vec4 effect; // depth outline, convex ridge, bloom, grade
+    vec4 depth_scale; // normalised depth per unit
     vec4 own[16]; // own palette k (1..15): x = size, y = dither
 };
 @image_sample_type u_scene unfilterable_float
@@ -379,6 +398,11 @@ layout(binding=2) uniform texture2D u_native;
 // own palettes: row k holds palette k (row 0 unused), one colour a texel
 @image_sample_type u_pal unfilterable_float
 layout(binding=3) uniform texture2D u_pal;
+#ifdef ART_POST
+layout(binding=4) uniform texture2D u_geometry;
+layout(binding=5) uniform texture2D u_half;
+layout(binding=6) uniform texture2D u_quarter;
+#endif
 @sampler_type u_smp nonfiltering
 layout(binding=0) uniform sampler u_smp;
 in vec2 v_uv;
@@ -476,11 +500,48 @@ void main() {
         vec4 meta=texelFetch(sampler2D(u_depth,u_smp),stor(clampS(p*2),size.w),0);
         if(meta.b>.5 && meta.g*255.0/meta.b-float(k*8)>1.5) c=lit_palette(c,native);
     }
+#ifdef ART_POST
+    vec4 center=texelFetch(sampler2D(u_geometry,u_smp),fp,0);
+    if((effect.x>0.0 || effect.y>0.0) && center.b+center.a>0.0) {
+        vec2 n=center.rg*2.0-1.0;
+        float z=dot(center.ba,vec2(256.0,1.0))*(255.0/65535.0);
+        float ridge=0.0, edge=0.0;
+        for(int i=0;i<4;i++){
+            ivec2 delta=ivec2(i==0?1:(i==1?-1:0), i==2?1:(i==3?-1:0));
+            ivec2 q=clamp(fp+delta,ivec2(0),ivec2(size.xy)-1);
+            vec4 other=texelFetch(sampler2D(u_geometry,u_smp),q,0);
+            // Splats clear the surface tag. Their contours continue to use the palette resolve.
+            if(other.b+other.a==0.0) continue;
+            float dz=(dot(other.ba,vec2(256.0,1.0))*(255.0/65535.0)-z)/depth_scale.x;
+            edge=max(edge,smoothstep(.25,.65,dz));
+            vec2 diff=other.rg*2.0-1.0-n;
+            vec2 direction=vec2(float(delta.x),float(delta.y)*(opts.z>.5?-1.0:1.0));
+            if(abs(dz)<.33) ridge=max(ridge,smoothstep(.20,.72,dot(diff,direction)));
+        }
+        c=mix(c,c*.45,edge*effect.x);
+        c+=vec3(.15,.14,.11)*ridge*effect.y*(1.0-edge);
+    }
+    if(effect.z>0.0){
+        vec2 uv=(vec2(fp)+.5)/size.xy;
+        vec3 h=textureLod(sampler2D(u_half,u_smp),uv,0.0).rgb;
+        vec3 q=textureLod(sampler2D(u_quarter,u_smp),uv,0.0).rgb;
+        c+=effect.z*(.35*h+.65*q);
+    }
+    c=mix(c,c*vec3(1.035,1.005,.975)+vec3(.006,.001,.003),effect.w);
+#endif
     frag_color = vec4(c, clear ? 0.0 : 1.0);
 }
 @end
+@fs fs_resolve
+@include_block body_resolve
+@end
+@fs fs_resolve_post
+#define ART_POST 1
+@include_block body_resolve
+@end
 
 @program resolve vs_quad fs_resolve
+@program resolve_post vs_quad fs_resolve_post
 
 // The crop carries the visible contribution of just one own-palette model in
 // depth.b. All other geometry participates in depth and colour blending.
@@ -519,7 +580,17 @@ void main() {
 
 @program detail vs_quad fs_detail
 
-@vs vs_artmesh
+@block pack_normal
+vec4 pack_surface(vec3 view_position,float depth){
+    vec3 normal=normalize(cross(dFdx(view_position),dFdy(view_position)));
+    if(normal.z<0.0) normal=-normal;
+    // Reserve depth code zero for surfaces without a geometric normal.
+    float code=1.0+round(clamp(depth,0.0,1.0)*65534.0);
+    return vec4(normal.xy*.5+.5, floor(code/256.0)/255.0,mod(code,256.0)/255.0);
+}
+@end
+
+@block vertex_artmesh
 layout(binding=0) uniform vs_artmesh_params {
     mat4 view;
     vec4 cam;
@@ -535,6 +606,9 @@ in vec4 row2;
 in vec4 top;
 in vec4 lit;
 in vec4 shade;
+#ifdef ART_POST
+out vec3 mesh_view_position;
+#endif
 out vec3 mesh_color;
 out float mesh_depth;
 @include_block art_projection
@@ -543,23 +617,53 @@ void main() {
     vec3 world = vec3(dot(row0,local),dot(row1,local),dot(row2,local));
     vec3 face = color.a < 0.5/255.0 ? top.rgb : color.a < 1.5/255.0 ? lit.rgb : shade.rgb;
     mesh_color = mix(color.rgb * face, backdrop.rgb, backdrop.a);
+#ifdef ART_POST
+    mesh_view_position=mat3(view)*world;
+#endif
     project_surface(world, mesh_depth);
 }
 @end
+@vs vs_artmesh
+@include_block vertex_artmesh
+@end
+@vs vs_artmesh_post
+#define ART_POST 1
+@include_block vertex_artmesh
+@end
 
-@fs fs_artmesh
+@block body_artmesh
+#ifdef ART_POST
+in vec3 mesh_view_position;
+#endif
 in vec3 mesh_color;
 in float mesh_depth;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
+#ifdef ART_POST
+layout(location=2) out vec4 frag_geometry;
+#endif
 void main() {
+#ifdef ART_POST
+    frag_geometry=pack_surface(mesh_view_position,mesh_depth);
+#endif
     frag_color = vec4(mesh_color,1);
     frag_depth = vec4(mesh_depth,0,0,1);
 }
 @end
-@program artmesh vs_artmesh fs_artmesh
+@fs fs_artmesh
 
-@vs vs_artsurface
+@include_block body_artmesh
+@end
+@fs fs_artmesh_post
+#define ART_POST 1
+
+@include_block pack_normal
+@include_block body_artmesh
+@end
+@program artmesh vs_artmesh fs_artmesh
+@program artmesh_post vs_artmesh_post fs_artmesh_post
+
+@block vertex_artsurface
 layout(binding=0) uniform vs_artsurface_params { mat4 view; vec4 cam; vec4 dep; vec4 zr; vec4 model_pose; };
 in vec3 position;
 in vec4 dark;
@@ -567,6 +671,9 @@ in vec4 base;
 in vec4 light;
 in vec4 accent;
 in vec4 material;
+#ifdef ART_POST
+out vec3 surface_view_position;
+#endif
 out vec3 world;
 out vec3 c0;
 out vec3 c1;
@@ -580,11 +687,25 @@ void main() {
     c0=dark.rgb; c1=base.rgb; c2=light.rgb; c3=accent.rgb;
     info=material.rgb*255.0;
     vec2 p=model_pose.xy+vec2(position.x*model_pose.z-position.z*model_pose.w,position.x*model_pose.w+position.z*model_pose.z);
-    project_surface(vec3(p.x,position.y,p.y),surface_depth);
+    vec3 placed=vec3(p.x,position.y,p.y);
+#ifdef ART_POST
+    surface_view_position=mat3(view)*placed;
+#endif
+    project_surface(placed,surface_depth);
 }
 @end
+@vs vs_artsurface
+@include_block vertex_artsurface
+@end
+@vs vs_artsurface_post
+#define ART_POST 1
+@include_block vertex_artsurface
+@end
 
-@fs fs_artsurface
+@block body_artsurface
+#ifdef ART_POST
+in vec3 surface_view_position;
+#endif
 layout(binding=1) uniform fs_artsurface_params { vec4 surface_backdrop; };
 in vec3 world;
 in vec3 c0;
@@ -595,8 +716,14 @@ in vec3 info;
 in float surface_depth;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
+#ifdef ART_POST
+layout(location=2) out vec4 frag_geometry;
+#endif
 float roll(vec2 xy) { return fract(sin(dot(xy,vec2(12.9898,78.233)))*4375.545); }
 void main() {
+#ifdef ART_POST
+    frag_geometry=pack_surface(surface_view_position,surface_depth);
+#endif
     vec2 p=world.xz;
     int kind=int(info.x+0.5);
     vec3 col=c1;
@@ -647,4 +774,34 @@ void main() {
     frag_depth=vec4(surface_depth,0,0,1);
 }
 @end
+@fs fs_artsurface
+
+@include_block body_artsurface
+@end
+@fs fs_artsurface_post
+#define ART_POST 1
+
+@include_block pack_normal
+@include_block body_artsurface
+@end
 @program artsurface vs_artsurface fs_artsurface
+@program artsurface_post vs_artsurface_post fs_artsurface_post
+
+@fs fs_bloom
+layout(binding=1) uniform fs_bloom_params { vec4 blur; }; // threshold, knee, source inverse width and height
+layout(binding=0) uniform texture2D u_bright;
+layout(binding=0) uniform sampler bloom_smp;
+in vec2 v_uv;
+out vec4 frag_color;
+void main(){
+    vec3 sum=vec3(0);
+    for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
+        vec3 sample_color=textureLod(sampler2D(u_bright,bloom_smp),v_uv+vec2(float(x),float(y))*blur.zw*1.5,0.0).rgb;
+        float lum=dot(sample_color,vec3(.30,.55,.15));
+        float weight=float((2-abs(x))*(2-abs(y)))/16.0;
+        sum+=weight*sample_color*(blur.y>0.0?smoothstep(blur.x,blur.x+blur.y,lum):1.0);
+    }
+    frag_color=vec4(sum,1);
+}
+@end
+@program bloom vs_quad fs_bloom

@@ -22,7 +22,7 @@ static void check(bool ok, const char *operation) {
     if(!ok) { LOG_ERROR("[artsurface] %s failed\n",operation); exit(1); }
 }
 static void setup(void) {
-    shader=sg_make_shader(artsurface_shader_desc(sg_query_backend()));
+    shader=sg_make_shader(splat_post_enabled() ? artsurface_post_shader_desc(sg_query_backend()) : artsurface_shader_desc(sg_query_backend()));
     pipeline=sg_make_pipeline(&(sg_pipeline_desc){
         .shader=shader,
         .layout={.buffers={{.stride=sizeof(ArtSurfaceVertex)}},.attrs={
@@ -33,7 +33,7 @@ static void setup(void) {
             [ATTR_artsurface_accent]={.format=SG_VERTEXFORMAT_UBYTE4N},
             [ATTR_artsurface_material]={.format=SG_VERTEXFORMAT_UBYTE4N}}},
         .depth={.pixel_format=SG_PIXELFORMAT_DEPTH,.compare=SG_COMPAREFUNC_LESS_EQUAL,.write_enabled=true},
-        .color_count=2,.colors={{.pixel_format=SG_PIXELFORMAT_RGBA8},{.pixel_format=SG_PIXELFORMAT_RGBA8}},
+        .color_count = splat_post_enabled() ? 3 : 2,.colors={{.pixel_format=SG_PIXELFORMAT_RGBA8},{.pixel_format=SG_PIXELFORMAT_RGBA8},{.pixel_format=SG_PIXELFORMAT_RGBA8}},
         .sample_count=1,.label="artsurface-pipeline"});
     check(sg_query_pipeline_state(pipeline)==SG_RESOURCESTATE_VALID,"pipeline creation");
 }

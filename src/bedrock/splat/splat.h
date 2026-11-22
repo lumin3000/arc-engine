@@ -138,6 +138,10 @@ Splat_Cloud *splat_cloud_from_portrait(const uint8_t *const views[4], int img_w,
                                     float world_per_px, int alpha_cut, int split_row,
                                     const uint32_t *pal, int pal_n);
 
+// Configure once, before splat_init, to keep the baseline two-attachment path intact.
+typedef struct { float outline, ridge, bloom, grade, dither; } Splat_Post;
+void splat_configure_post(Splat_Post settings);
+bool splat_post_enabled(void);
 void splat_init(void);
 void splat_upload(const Splat_Cloud *c, const float view[16]);
 void splat_set_palette(const uint32_t *pal, int n);
