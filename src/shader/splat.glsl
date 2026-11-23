@@ -430,7 +430,16 @@ vec3 lit_palette(vec3 entry,vec3 sampleColor) {
     return clamp(entry+round(64.0*chroma)/64.0,0.0,1.0);
 }
 @end
+// Surface-buffer values 2..65 identify palette ramps and 127 identifies emissive
+// pixels. Natural ground keeps its base colour through palette resolve, then lights normally.
+@block natural_ground_tag
+const float NATURAL_GROUND = 126.0;
+@end
+
 @block body_resolve
+#ifdef ART_POST
+@include_block natural_ground_tag
+#endif
 layout(binding=1) uniform fs_resolve_params {
     vec4 pal[64];
     vec4 opts;   // x = palette size, y = dither, z = flip (storage origin top-left), w = outline darkening (0 = body-coloured contour)
@@ -522,8 +531,8 @@ vec3 fragmentLamps(vec3 world,vec3 normal){
     }
     return energy;
 }
-vec3 daylightColor(vec3 base,int ownPalette,ivec2 pixel,ivec2 fp){
-    vec4 surface=texelFetch(sampler2D(u_surface,u_smp),fp,0);
+vec3 daylightColor(vec3 base,int ownPalette,ivec2 pixel,vec4 surface){
+    if(surface.w==NATURAL_GROUND) surface.w=1.0;
     if(surface.w<.5 || surface.w>126.0) return base;
     vec3 eye=vec3((vec2(pixel)+.5-size.xy*.5)*reconstruct.x-camera[3].xy,
                    -reconstruct.y+-surface.z*reconstruct.z-camera[3].z);
@@ -618,6 +627,10 @@ void main() {
     vec3 native = texelFetch(sampler2D(u_native, u_smp), stor(p, size.y), 0).rgb;
     ivec2 dp = p + ivec2(phase.xy);
     float noise = ((bayer((dp.x & 3) + ((dp.y & 3) << 2)) + 0.5) / 16.0 - 0.5) * (k == 0 ? opts.y : own[k].y);
+#ifdef ART_POST
+    vec4 surface=texelFetch(sampler2D(u_surface,u_smp),fp,0);
+    if(surface.w==NATURAL_GROUND) noise=0.0;
+#endif
     vec3 c = pixelMapped(k, pixelNearest(clamp(native + noise, 0.0, 1.0), false, k));
     int best = -1, score = 0;
     for (int i = 0; i < 4; i++) {
@@ -651,7 +664,7 @@ void main() {
         if(meta.b>.5 && meta.g*255.0/meta.b-float(k*8)>1.5) c=lit_palette(c,native);
     }
 #ifdef ART_POST
-    if(reconstruct.w>.5 && !clear) c=daylightColor(c,k,p,fp);
+    if(reconstruct.w>.5 && !clear) c=daylightColor(c,k,p,surface);
     vec4 center=texelFetch(sampler2D(u_geometry,u_smp),fp,0);
     if((effect.x>0.0 || effect.y>0.0) && center.b+center.a>0.0) {
         vec2 n=center.rg*2.0-1.0;
@@ -821,6 +834,9 @@ void main() {
 @program artmesh_post vs_artmesh_post fs_artmesh_post
 
 @block vertex_artsurface
+#ifdef ART_POST
+@include_block natural_ground_tag
+#endif
 layout(binding=0) uniform vs_artsurface_params { mat4 view; vec4 cam; vec4 dep; vec4 zr; vec4 model_pose; };
 in vec3 position;
 in vec4 dark;
@@ -848,7 +864,7 @@ void main() {
     vec3 placed=vec3(p.x,position.y,p.y);
 #ifdef ART_POST
     surface_view_position=mat3(view)*placed;
-    surface_material=material.a>.99 ? 127.0 : (material.a*255.0>=3.0 ? round(material.a*255.0)-1.0 : 1.0);
+    surface_material=info.x<.5 ? NATURAL_GROUND : material.a>.99 ? 127.0 : (material.a*255.0>=3.0 ? round(material.a*255.0)-1.0 : 1.0);
 #endif
     project_surface(placed,surface_depth);
 }
@@ -929,7 +945,7 @@ void main() {
         if(kind==8 && seam(side,side_span,.25,.015)) col*=.82;
     } else if(kind==5){
         col=mix(c0,c2,clamp(1.0+world.y,0.0,1.0));
-    } else {
+    } else if(kind!=0){
         col=field<-.82?c0:field>.97?c2:c1;
         if(kind==3){
             float course=floor(p.y*2.0);
