@@ -14,12 +14,25 @@ static Artmesh_Batch *batches;
 static int visible_batches;
 static sg_shader shader;
 static sg_pipeline pipeline;
+static sg_image albedo;
+static sg_view albedo_view;
+static sg_sampler albedo_sampler;
+void artmesh_albedo(const uint8_t *rgba, int width, int height) {
+    if (albedo_view.id) sg_destroy_view(albedo_view);
+    if (albedo.id) sg_destroy_image(albedo);
+    albedo = sg_make_image(&(sg_image_desc){.width=width,.height=height,.pixel_format=SG_PIXELFORMAT_RGBA8,
+        .data.mip_levels[0]={rgba,(size_t)width*height*4},.label="artmesh-albedo"});
+    albedo_view = sg_make_view(&(sg_view_desc){.texture.image=albedo});
+    if (!albedo_sampler.id) albedo_sampler=sg_make_sampler(&(sg_sampler_desc){
+        .min_filter=SG_FILTER_LINEAR,.mag_filter=SG_FILTER_LINEAR,.wrap_u=SG_WRAP_CLAMP_TO_EDGE,.wrap_v=SG_WRAP_CLAMP_TO_EDGE});
+}
 
 static void fail(const char *reason) {
     LOG_ERROR("[artmesh] %s\n", reason);
     exit(1);
 }
 static void make_pipeline(void) {
+    if (!albedo.id) { const uint8_t white[4]={255,255,255,255}; artmesh_albedo(white,1,1); }
     shader = sg_make_shader(splat_post_enabled() ? artmesh_post_shader_desc(sg_query_backend()) : artmesh_shader_desc(sg_query_backend()));
     pipeline = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = shader,
@@ -105,7 +118,7 @@ void artmesh_draw(const Splat_Mat4 *view, Splat_Vec4 cam, Splat_Vec4 dep, Splat_
     sg_apply_uniforms(UB_vs_artmesh_params, &SG_RANGE(p));
     for (Artmesh_Batch *b = batches; b; b = b->next) {
         if (!b->count) continue;
-        sg_apply_bindings(&(sg_bindings){.vertex_buffers = {b->geometry, b->instances}});
+        sg_apply_bindings(&(sg_bindings){.vertex_buffers = {b->geometry, b->instances}, .views[VIEW_mesh_albedo]=albedo_view, .samplers[SMP_mesh_sampler]=albedo_sampler});
         sg_draw(0, b->vertices, b->count);
     }
 }

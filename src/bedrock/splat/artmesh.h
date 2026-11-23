@@ -13,6 +13,8 @@ typedef struct {
 } Artmesh_Instance;
 Artmesh_Batch *artmesh_create(const Artmesh_Vertex *vertices, int count);
 Artmesh_Batch *artmesh_create_box(void); // centred unit cube with three face swatches
+// Optional shared albedo for vertices carrying UV in RG and light in B (tag 254).
+void artmesh_albedo(const uint8_t *rgba, int width, int height);
 void artmesh_instances(Artmesh_Batch *batch, const Artmesh_Instance *rows, int count);
 void artmesh_destroy(Artmesh_Batch *batch);
 bool artmesh_visible(void);
