@@ -434,6 +434,17 @@ typedef struct {
 
 static GraphicsTextureCache g_graphics_textures[MAX_GRAPHICS_TEXTURES];
 
+// A render-thread attachment can also be sampled by ordinary UI image nodes.
+// Registration is done during render initialization, before script workers start.
+int graphics_register_render_texture(sg_image image, sg_view view) {
+  for (int i = 0; i < MAX_GRAPHICS_TEXTURES; i++) {
+    if (g_graphics_textures[i].valid) continue;
+    g_graphics_textures[i] = (GraphicsTextureCache){.valid=true,.image=image,.view=view};
+    return i;
+  }
+  return -1;
+}
+
 // 供同层其他绑定查询 graphics 纹理池 (load_texture / texture_create_staged 页):
 // imgui draw_image 的第二纹理来源 — atlas 池 (unified_mesh) 查不到时回退到这里。
 // 声明方式与 atlas_texture_get 的跨文件 extern 惯例一致。

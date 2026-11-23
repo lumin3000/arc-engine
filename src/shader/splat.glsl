@@ -777,6 +777,8 @@ flat out float mesh_material;
 #endif
 out vec3 mesh_color;
 out vec3 mesh_uv;
+out vec3 facet_position;
+flat out float facet_lit;
 out float mesh_depth;
 @include_block art_projection
 void main() {
@@ -787,11 +789,13 @@ void main() {
     mesh_uv = vec3(color.rg, textured ? 1.0 : 0.0);
     float tag=round(color.a*255.0);
     if(tag==252.0)face*=8.0;
-    else if(tag==253.0 || textured)face*=2.0;
+    else if(tag==253.0 || textured)face*=4.0;
+    facet_position=mat3(view)*world;
+    facet_lit=tag>=251.0 && tag<=254.0 ? 1.0 : 0.0;
     mesh_color = mix(textured ? face*color.b : color.rgb*face, backdrop.rgb, backdrop.a);
 #ifdef ART_POST
     mesh_view_position=mat3(view)*world;
-    mesh_material=tag>=252.0 && tag<=254.0 ? 1.0 : color.a>.99 ? 127.0 : (color.a*255.0>=3.0 ? round(color.a*255.0)-1.0 : 1.0);
+    mesh_material=tag>=251.0 && tag<=254.0 ? 1.0 : color.a>.99 ? 127.0 : (color.a*255.0>=3.0 ? round(color.a*255.0)-1.0 : 1.0);
 #endif
     project_surface(world, mesh_depth);
 }
@@ -811,6 +815,8 @@ flat in float mesh_material;
 #endif
 in vec3 mesh_color;
 in vec3 mesh_uv;
+in vec3 facet_position;
+flat in float facet_lit;
 layout(binding=0) uniform texture2D mesh_albedo;
 layout(binding=0) uniform sampler mesh_sampler;
 in float mesh_depth;
@@ -826,6 +832,12 @@ void main() {
     frag_surface=vec4(frag_geometry.rg*2.0-1.0,2.0*mesh_depth-1.0,mesh_material);
 #endif
     frag_color = vec4(mesh_color * (mesh_uv.z>.5 ? texture(sampler2D(mesh_albedo,mesh_sampler),mesh_uv.xy).rgb : vec3(1)),1);
+    if(facet_lit>.5){
+        vec3 normal=normalize(cross(dFdx(facet_position),dFdy(facet_position)));
+        normal=normal.z<0.0 ? -normal : normal;
+        float diffuse=max(0.0,dot(normal,normalize(vec3(-.55,.77,.39))));
+        frag_color.rgb*=.62+.54*diffuse;
+    }
     frag_depth = vec4(mesh_depth,0,0,1);
 }
 @end
