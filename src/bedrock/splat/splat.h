@@ -74,6 +74,9 @@ typedef enum {
     // behind (the plain one is laid over it by the target's alpha): for reading the target back
     // from a screenshot
     SPLAT_SHOW_NATIVE_RAW = 3,
+    // diagnostics: the art grid's hardware depth, grey by distance from the eye (near is light)
+    // with a dark contour every half world unit; dark red where nothing was drawn
+    SPLAT_SHOW_DEPTH = 4,
 } Splat_Show;
 
 typedef struct Splat_Stats {

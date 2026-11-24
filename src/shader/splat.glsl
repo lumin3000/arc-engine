@@ -422,6 +422,31 @@ void main() {
 
 @program blit vs_quad fs_blit
 
+@fs fs_depth_view
+@image_sample_type depth_view_z unfilterable_float
+layout(binding=0) uniform texture2D depth_view_z;
+@sampler_type depth_view_smp nonfiltering
+layout(binding=0) uniform sampler depth_view_smp;
+layout(binding=1) uniform fs_depth_view_params {
+    vec4 range;   // x = eye distance at hardware depth 0, y = hardware depth per world unit, z = eye distance of the target, w = world span from light to dark
+    vec4 bands;   // x = world spacing of the contours
+};
+in vec2 v_uv;
+out vec4 frag_color;
+void main() {
+    ivec2 size = textureSize(sampler2D(depth_view_z, depth_view_smp), 0);
+    float z = texelFetch(sampler2D(depth_view_z, depth_view_smp), ivec2(v_uv * vec2(size)), 0).r;
+    if (z >= 1.0) { frag_color = vec4(0.35, 0.0, 0.0, 1.0); return; }
+    float d = z / range.y + range.x;
+    float t = clamp((d - range.z) / range.w + 0.5, 0.0, 1.0);
+    float g = 0.15 + 0.8 * (1.0 - t);
+    if (fract(d / bands.x) < 0.12) g *= 0.55;
+    frag_color = vec4(vec3(g), 1.0);
+}
+@end
+
+@program depth_view vs_quad fs_depth_view
+
 @block warm_palette
 // Keep the native luminance choices; add the chroma of a lit sample in small discrete steps.
 vec3 lit_palette(vec3 entry,vec3 sampleColor) {

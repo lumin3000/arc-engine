@@ -502,6 +502,7 @@ typedef struct {
     sg_image color, depth;           // depth: normalised depth in .r (second colour target)
     sg_image zbuf;                   // hardware depth
     sg_view color_att, depth_att, zbuf_att;
+    sg_view zbuf_tex;                // the hardware depth to sample (kept past the pass for the art grid only)
     sg_view color_tex, depth_tex;
 } Splat_Target;
 
@@ -554,7 +555,7 @@ struct Splat_Chunks {
 static struct {
     bool ready;
     sg_shader splat_shd, resolve_shd, blit_shd;
-    sg_pipeline splat_pip, resolve_pip, blit_pip, detail_pip;
+    sg_pipeline splat_pip, resolve_pip, blit_pip, detail_pip, depth_view_pip;
     Splat_Detail details[SPLAT_MAX_SKIN_INSTANCES];
     bool detail_active[SPLAT_MAX_SKIN_INSTANCES];
     int detail_n;
@@ -722,6 +723,7 @@ static void target_destroy(Splat_Target *t) {
     sg_destroy_view(t->color_tex);
     sg_destroy_view(t->depth_tex);
     sg_destroy_view(t->zbuf_att);
+    sg_destroy_view(t->zbuf_tex);
     sg_destroy_image(t->color);
     sg_destroy_image(t->depth);
     sg_destroy_image(t->zbuf);
@@ -767,6 +769,7 @@ static void target_make(Splat_Target *t, int w, int h, const char *label) {
         .label = label,
     });
     t->zbuf_att = sg_make_view(&(sg_view_desc){.depth_stencil_attachment = {.image = t->zbuf}});
+    t->zbuf_tex = sg_make_view(&(sg_view_desc){.texture = {.image = t->zbuf}});
 }
 
 static void ensure_targets(int aw, int ah) {
@@ -922,6 +925,11 @@ void splat_init(void) {
             .dst_factor_alpha = SG_BLENDFACTOR_ONE,
         },
         .label = "splat-blit-pipeline",
+    });
+    S.depth_view_pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(depth_view_shader_desc(sg_query_backend())),
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .label = "splat-depth-view",
     });
     S.detail_pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = sg_make_shader(detail_shader_desc(sg_query_backend())),
@@ -1820,6 +1828,9 @@ static void draw_splats(const Splat_Target *t, const Splat_Detail *detail, const
             .colors[1] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {1.0f, 0.0f, 0.0f, 0.0f}},
             .colors[3] = {.load_action=SG_LOADACTION_CLEAR,.clear_value={0,0,1,0}},
             .colors[2] = {.load_action = SG_LOADACTION_CLEAR, .clear_value = {0,0,0,0}},
+            // the art grid's depth outlives the pass: the composite tests what it lays over the picture against it
+            .depth = {.load_action = SG_LOADACTION_CLEAR, .clear_value = 1.0f,
+                      .store_action = t == &S.native ? SG_STOREACTION_STORE : SG_STOREACTION_DONTCARE},
         },
         .attachments = {.colors = {t->color_att, t->depth_att, t->normal_att,t->surface_att}, .depth_stencil = t->zbuf_att},
         .label = "splat-pass",
@@ -2092,6 +2103,21 @@ void splat_composite(Splat_Show show) {
         bp.occ_info = (Splat_Vec4){{(float)S.occ_n, (float)S.art_h, sg_query_features().origin_top_left ? 1.0f : 0.0f, (float)S.samples.h}};
     }
     sg_apply_viewport(S.view.offset_px[0], S.view.offset_px[1], tw * k, th * k, true);
+    if (show == SPLAT_SHOW_DEPTH) {
+        const Splat_View *v = &S.view;
+        const float zrad = S.scene_radius > v->radius ? S.scene_radius : v->radius;
+        fs_depth_view_params_t dv = {
+            .range = {{v->eye_dist - zrad - 1.0f, 1.0f / (2.0f * zrad + 2.0f), v->eye_dist, 4.0f * v->ortho_half_h}},
+            .bands = {{0.5f, 0, 0, 0}},
+        };
+        sg_apply_pipeline(S.depth_view_pip);
+        sg_apply_bindings(&(sg_bindings){.views[VIEW_depth_view_z] = S.native.zbuf_tex, .samplers[SMP_depth_view_smp] = S.nearest});
+        sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));
+        sg_apply_uniforms(UB_fs_depth_view_params, &SG_RANGE(dv));
+        sg_draw(0, 4, 1);
+        sg_apply_viewport(0, 0, sw, sh, true);
+        return;
+    }
     sg_apply_pipeline(S.blit_pip);
     sg_apply_bindings(&(sg_bindings){
         .views = {[VIEW_blit_tex] = tex, [VIEW_blit_depth] = S.samples.depth_tex},
