@@ -182,7 +182,7 @@ void splat_set_occluders(const float *occ, int n);
 // drawn at the height of their cell. All of these are for the render thread, outside any pass.
 #define SPLAT_GROUND_LAYERS 4
 #define SPLAT_GROUND_LEVELS 4
-#define SPLAT_GROUND_MAX_RECTS 1024
+#define SPLAT_GROUND_MAX_RECTS 8192
 #define SPLAT_GROUND_RECT_FLOATS 12
 typedef struct {
     float inset;          // world units cut off every edge of a cell
