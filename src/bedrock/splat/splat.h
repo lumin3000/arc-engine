@@ -168,6 +168,49 @@ Splat_Stats splat_stats(void);
 #define SPLAT_OCCLUDER_FLOATS 6
 void splat_set_occluders(const float *occ, int n);
 
+// Ground overlay: flat marks laid over the composite (splat_composite with SPLAT_SHOW_ART) at their
+// height in the world, after the picture and before detail crops. Every pixel of a mark is compared
+// with the art grid's hardware depth: where something stands in front of the mark it is drawn at
+// a fraction of its opacity. Two inputs:
+//  - mask layers on a ground grid of 1x1 world cells with its corner at the world origin (x east,
+//    z north): one RGBA8 colour a cell, rows of z; alpha 0 = nothing in that cell. A cell is filled
+//    with its colour and gets a border just inside its edges (per layer style). Layers are drawn in
+//    order, 0 first.
+//  - loose rectangles, SPLAT_GROUND_RECT_FLOATS floats each: x0, z0, x1, z1, height y, line width
+//    (0 = filled, else an outline that wide inside the edges), opacity factor where hidden, 0, r, g, b, a.
+// Each cell of the grid is at one of SPLAT_GROUND_LEVELS heights (a byte a cell); mask colours are
+// drawn at the height of their cell. All of these are for the render thread, outside any pass.
+#define SPLAT_GROUND_LAYERS 4
+#define SPLAT_GROUND_LEVELS 4
+#define SPLAT_GROUND_MAX_RECTS 1024
+#define SPLAT_GROUND_RECT_FLOATS 12
+typedef struct {
+    float inset;          // world units cut off every edge of a cell
+    float border_width;   // world units inside the (inset) edge; 0 = no border
+    float border_lighten; // border colour = cell colour moved this far towards white
+    float border_alpha;
+    float hidden;         // opacity factor where something stands in front
+} Splat_Ground_Style;
+// The grid's textures take one update a frame each (sokol): a frame calls splat_ground_grid or
+// splat_ground_level_cells, not both, and sets each layer at most once.
+// (Re)makes the grid: every layer empty; levels: w * h bytes, the level of each cell (rows of z).
+void splat_ground_grid(int w, int h, const uint8_t *levels);
+void splat_ground_level_cells(const uint8_t *levels);  // w * h bytes, each < SPLAT_GROUND_LEVELS
+void splat_ground_levels(const float *y, int n);       // the height of levels 0 .. n-1
+// rgba: w * h * 4 bytes (copied now). cells: x0, z0, x1, z1 (x1, z1 exclusive), the only cells
+// that may be coloured; the overlay covers just that rectangle. NULL rgba empties the layer.
+void splat_ground_layer(int layer, const uint8_t *rgba, const int cells[4]);
+void splat_ground_layer_style(int layer, Splat_Ground_Style s);
+// world units along the line of sight a mark may lie behind the scene and still count as in front
+// (marks lie on the surfaces they mark; default 0)
+void splat_ground_bias(float world);
+// the rectangles drawn from now on; more than SPLAT_GROUND_MAX_RECTS is fatal
+void splat_ground_rects(const float *rows, int n);
+// The overlay over a picture that splat_composite did not draw (a flat top-down view of the host's):
+// with this world -> clip matrix (column-major, orthographic), inside the host's pass, without the
+// depth test.
+void splat_ground_draw_flat(const float clip_from_world[16]);
+
 // Chunked static worlds: copies of prototype clouds placed by translation into a grid of
 // square chunks on x/z. splat_chunks_upload sorts each chunk back to front for the view
 // direction, orders the chunks back to front, uploads one buffer and frees the CPU copy.

@@ -829,6 +829,182 @@ void splat_set_lights(const float *data, int side) {
     S.lamp_w = (int)data[2]; S.lamp_h = (int)data[3];
 }
 
+// ---------------------------------------------------------------------------
+// Ground overlay (splat.h)
+
+static struct {
+    int w, h;  // 0: no grid
+    sg_image cells[SPLAT_GROUND_LAYERS], levels;
+    sg_view cells_tex[SPLAT_GROUND_LAYERS], levels_tex;
+    int bounds[SPLAT_GROUND_LAYERS][4];  // the cells that may be coloured; empty when x0 >= x1
+    Splat_Ground_Style style[SPLAT_GROUND_LAYERS];
+    float level_y[SPLAT_GROUND_LEVELS];
+    int level_n;
+    float bias;
+    sg_buffer rects;
+    int rect_n;
+    sg_image no_depth;
+    sg_view no_depth_tex;
+    sg_pipeline mask_pip, rect_pip;
+} G;
+
+static void ground_init(void) {
+    const sg_blend_state over = {
+        .enabled = true,
+        .src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA,
+        .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .src_factor_alpha = SG_BLENDFACTOR_ZERO,
+        .dst_factor_alpha = SG_BLENDFACTOR_ONE,
+    };
+    G.mask_pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(ground_mask_shader_desc(sg_query_backend())),
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .colors[0].blend = over,
+        .label = "splat-ground-mask",
+    });
+    G.rect_pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(ground_rect_shader_desc(sg_query_backend())),
+        .layout = {
+            .buffers[0] = {.stride = SPLAT_GROUND_RECT_FLOATS * 4, .step_func = SG_VERTEXSTEP_PER_INSTANCE},
+            .attrs = {
+                [ATTR_ground_rect_r_rect] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 0},
+                [ATTR_ground_rect_r_info] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 16},
+                [ATTR_ground_rect_r_color] = {.format = SG_VERTEXFORMAT_FLOAT4, .offset = 32},
+            },
+        },
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .colors[0].blend = over,
+        .label = "splat-ground-rect",
+    });
+    G.rects = sg_make_buffer(&(sg_buffer_desc){
+        .size = SPLAT_GROUND_MAX_RECTS * SPLAT_GROUND_RECT_FLOATS * sizeof(float),
+        .usage = {.vertex_buffer = true, .stream_update = true},
+        .label = "splat-ground-rects",
+    });
+    const float far = 1.0f;
+    G.no_depth = sg_make_image(&(sg_image_desc){
+        .width = 1, .height = 1, .pixel_format = SG_PIXELFORMAT_R32F,
+        .data.mip_levels[0] = {&far, sizeof(far)}, .label = "splat-ground-no-depth",
+    });
+    G.no_depth_tex = sg_make_view(&(sg_view_desc){.texture.image = G.no_depth});
+    G.level_n = 1;
+    for (int i = 0; i < SPLAT_GROUND_LAYERS; i++)
+        G.style[i] = (Splat_Ground_Style){.hidden = 1.0f};
+}
+
+static void ground_check_levels(const uint8_t *levels) {
+    if (!levels) SPLAT_FATAL("[splat] ground levels missing\n");
+    for (size_t i = 0, n = (size_t)G.w * G.h; i < n; i++)
+        if (levels[i] >= SPLAT_GROUND_LEVELS) SPLAT_FATAL("[splat] ground cell %zu at level %d (max %d)\n", i, levels[i], SPLAT_GROUND_LEVELS - 1);
+}
+
+void splat_ground_grid(int w, int h, const uint8_t *levels) {
+    if (!S.ready) SPLAT_FATAL("[splat] ground grid before initialization\n");
+    if (w < 1 || h < 1) SPLAT_FATAL("[splat] ground grid %dx%d\n", w, h);
+    if (w != G.w || h != G.h) {
+        if (G.w) {
+            for (int i = 0; i < SPLAT_GROUND_LAYERS; i++) { sg_destroy_view(G.cells_tex[i]); sg_destroy_image(G.cells[i]); }
+            sg_destroy_view(G.levels_tex);
+            sg_destroy_image(G.levels);
+        }
+        for (int i = 0; i < SPLAT_GROUND_LAYERS; i++) {
+            G.cells[i] = sg_make_image(&(sg_image_desc){.width = w, .height = h, .pixel_format = SG_PIXELFORMAT_RGBA8,
+                                                        .usage.dynamic_update = true, .label = "splat-ground-layer"});
+            G.cells_tex[i] = sg_make_view(&(sg_view_desc){.texture.image = G.cells[i]});
+        }
+        G.levels = sg_make_image(&(sg_image_desc){.width = w, .height = h, .pixel_format = SG_PIXELFORMAT_R8,
+                                                  .usage.dynamic_update = true, .label = "splat-ground-levels"});
+        G.levels_tex = sg_make_view(&(sg_view_desc){.texture.image = G.levels});
+        G.w = w;
+        G.h = h;
+    }
+    memset(G.bounds, 0, sizeof(G.bounds));
+    splat_ground_level_cells(levels);
+}
+
+void splat_ground_level_cells(const uint8_t *levels) {
+    if (!G.w) SPLAT_FATAL("[splat] ground levels without a grid\n");
+    ground_check_levels(levels);
+    sg_update_image(G.levels, &(sg_image_data){.mip_levels[0] = {levels, (size_t)G.w * G.h}});
+}
+
+void splat_ground_levels(const float *y, int n) {
+    if (n < 1 || n > SPLAT_GROUND_LEVELS) SPLAT_FATAL("[splat] %d ground levels (max %d)\n", n, SPLAT_GROUND_LEVELS);
+    memcpy(G.level_y, y, sizeof(float) * (size_t)n);
+    G.level_n = n;
+}
+
+void splat_ground_layer(int layer, const uint8_t *rgba, const int cells[4]) {
+    if (layer < 0 || layer >= SPLAT_GROUND_LAYERS) SPLAT_FATAL("[splat] ground layer %d\n", layer);
+    if (!G.w) SPLAT_FATAL("[splat] ground layer without a grid\n");
+    int *b = G.bounds[layer];
+    if (!rgba) { memset(b, 0, sizeof(G.bounds[0])); return; }
+    if (cells[0] < 0 || cells[1] < 0 || cells[2] > G.w || cells[3] > G.h || cells[0] > cells[2] || cells[1] > cells[3])
+        SPLAT_FATAL("[splat] ground layer %d: cells %d,%d..%d,%d outside the %dx%d grid\n", layer, cells[0], cells[1], cells[2], cells[3], G.w, G.h);
+    memcpy(b, cells, sizeof(G.bounds[0]));
+    if (b[0] < b[2] && b[1] < b[3])
+        sg_update_image(G.cells[layer], &(sg_image_data){.mip_levels[0] = {rgba, (size_t)G.w * G.h * 4}});
+}
+
+void splat_ground_layer_style(int layer, Splat_Ground_Style s) {
+    if (layer < 0 || layer >= SPLAT_GROUND_LAYERS) SPLAT_FATAL("[splat] ground layer %d\n", layer);
+    G.style[layer] = s;
+}
+
+void splat_ground_bias(float world) { G.bias = world; }
+
+void splat_ground_rects(const float *rows, int n) {
+    if (n < 0 || n > SPLAT_GROUND_MAX_RECTS) SPLAT_FATAL("[splat] %d ground rectangles (max %d)\n", n, SPLAT_GROUND_MAX_RECTS);
+    if (n) sg_update_buffer(G.rects, &(sg_range){rows, sizeof(float) * SPLAT_GROUND_RECT_FLOATS * (size_t)n});
+    G.rect_n = n;
+}
+
+// depth_scale: hardware depth per world unit along the line of sight (0 with depth == no_depth)
+static void ground_draw(const float m[16], sg_view depth, float depth_scale, bool test) {
+    vs_ground_params_t vp;
+    memset(&vp, 0, sizeof(vp));
+    memcpy(vp.clip_from_world.v, m, sizeof(vp.clip_from_world.v));
+    fs_ground_params_t fp;
+    memset(&fp, 0, sizeof(fp));
+    fp.art = (Splat_Vec4){{(float)S.art_w, (float)S.art_h, sg_query_features().origin_top_left ? 1.0f : 0.0f, test ? 0.0f : 1.0f}};
+    fp.depth = (Splat_Vec4){{G.bias * depth_scale, 0, 0, 0}};
+    bool applied = false;
+    for (int l = 0; G.w && l < SPLAT_GROUND_LAYERS; l++) {
+        const int *b = G.bounds[l];
+        if (b[0] >= b[2] || b[1] >= b[3]) continue;
+        if (!applied) { sg_apply_pipeline(G.mask_pip); applied = true; }
+        sg_apply_bindings(&(sg_bindings){
+            .views = {[VIEW_ground_depth] = depth, [VIEW_ground_cells] = G.cells_tex[l], [VIEW_ground_levels] = G.levels_tex},
+            .samplers[SMP_ground_smp] = S.nearest,
+        });
+        const Splat_Ground_Style *s = &G.style[l];
+        fp.style = (Splat_Vec4){{s->inset, s->border_width, s->border_lighten, s->border_alpha}};
+        vp.quad = (Splat_Vec4){{(float)b[0], (float)b[1], (float)b[2], (float)b[3]}};
+        for (int k = 0; k < G.level_n; k++) {
+            vp.level = (Splat_Vec4){{G.level_y[k], 0, 0, 0}};
+            fp.grid = (Splat_Vec4){{(float)G.w, (float)G.h, (float)k, s->hidden}};
+            sg_apply_uniforms(UB_vs_ground_params, &SG_RANGE(vp));
+            sg_apply_uniforms(UB_fs_ground_params, &SG_RANGE(fp));
+            sg_draw(0, 4, 1);
+        }
+    }
+    if (G.rect_n) {
+        sg_apply_pipeline(G.rect_pip);
+        sg_apply_bindings(&(sg_bindings){
+            .vertex_buffers[0] = G.rects,
+            .views[VIEW_ground_depth] = depth,
+            .samplers[SMP_ground_smp] = S.nearest,
+        });
+        sg_apply_uniforms(UB_vs_ground_params, &SG_RANGE(vp));
+        sg_apply_uniforms(UB_fs_ground_params, &SG_RANGE(fp));
+        sg_draw(0, 4, G.rect_n);
+    }
+}
+
+void splat_ground_draw_flat(const float clip_from_world[16]) {
+    if (!S.ready) return;
+    ground_draw(clip_from_world, G.no_depth_tex, 0.0f, false);
+}
 void splat_init(void) {
     if (S.ready) return;
     S.splat_shd = sg_make_shader(post_enabled ? splat_post_shader_desc(sg_query_backend()) : splat_shader_desc(sg_query_backend()));
@@ -954,6 +1130,7 @@ void splat_init(void) {
     S.own_dirty = true;
     const float unlit[4]={0};
     splat_set_lights(unlit, 1);
+    ground_init();
     S.ready = true;
 }
 
@@ -2055,6 +2232,24 @@ void splat_render_offscreen(void) {
     sg_end_pass();
 }
 
+// over the art grid in the composite's viewport, tested against the art grid's hardware depth
+static void ground_draw_art(void) {
+    // world -> the art grid's clip space and hardware depth (the splat pass's projection)
+    const Splat_View *v = &S.view;
+    const float focal = (float)S.art_h / (2.0f * v->ortho_half_h);
+    const float zrad = S.scene_radius > v->radius ? S.scene_radius : v->radius;
+    const float zs = 1.0f / (2.0f * zrad + 2.0f), z0 = v->eye_dist - zrad - 1.0f;
+    float m[16];
+    for (int c = 0; c < 4; c++) {
+        m[c * 4 + 0] = 2.0f * focal / (float)S.art_w * v->view[c * 4 + 0];
+        m[c * 4 + 1] = 2.0f * focal / (float)S.art_h * v->view[c * 4 + 1];
+        m[c * 4 + 2] = -zs * v->view[c * 4 + 2];
+        m[c * 4 + 3] = c == 3 ? 1.0f : 0.0f;
+    }
+    m[14] -= z0 * zs;
+    ground_draw(m, S.native.zbuf_tex, zs, true);
+}
+
 void splat_composite(Splat_Show show) {
     if (!S.ready || !S.have_view || (S.count == 0 && S.inst_n == 0 && !artmesh_visible()) || S.art_w == 0) return;
     sg_view tex = S.art_tex;
@@ -2115,6 +2310,7 @@ void splat_composite(Splat_Show show) {
         sg_apply_uniforms(UB_vs_quad_params, &SG_RANGE(qp));
         sg_apply_uniforms(UB_fs_depth_view_params, &SG_RANGE(dv));
         sg_draw(0, 4, 1);
+        ground_draw_art();
         sg_apply_viewport(0, 0, sw, sh, true);
         return;
     }
@@ -2127,6 +2323,7 @@ void splat_composite(Splat_Show show) {
     sg_apply_uniforms(UB_fs_blit_params, &SG_RANGE(bp));
     sg_draw(0, 4, 1);
     if (show == SPLAT_SHOW_ART) {
+        ground_draw_art();
         for (int i = 0; i < S.detail_n; i++) {
             const Splat_Detail *d = &S.details[i];
             const int pal = S.models[S.inst_model[d->instance]].own;

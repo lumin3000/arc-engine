@@ -447,6 +447,139 @@ void main() {
 
 @program depth_view vs_quad fs_depth_view
 
+// Ground overlay (splat.h). clip_from_world gives clip x, y and the hardware depth of the art grid's
+// pass in z; the marks are not depth-tested by the pipeline (the target has no such depth), so the
+// rasterised z is constant.
+@vs vs_ground_mask
+layout(binding=0) uniform vs_ground_params {
+    mat4 clip_from_world;
+    vec4 quad;    // mask: world rectangle x0, z0, x1, z1 drawn
+    vec4 level;   // mask: x = height of the level drawn
+};
+out vec3 g_world;
+out vec3 g_clip;
+void main() {
+    int i = gl_VertexIndex;
+    vec3 w = vec3((i & 1) != 0 ? quad.z : quad.x, level.x, (i & 2) != 0 ? quad.w : quad.y);
+    vec4 c = clip_from_world * vec4(w, 1.0);
+    g_world = w;
+    g_clip = c.xyz;
+    gl_Position = vec4(c.xy / c.w, 0.5, 1.0);
+}
+@end
+
+@vs vs_ground_rect
+layout(binding=0) uniform vs_ground_params {
+    mat4 clip_from_world;
+    vec4 quad;
+    vec4 level;
+};
+in vec4 r_rect;    // x0, z0, x1, z1
+in vec4 r_info;    // y, line width (0 = filled), opacity factor where hidden
+in vec4 r_color;
+out vec3 g_world;
+out vec3 g_clip;
+flat out vec4 g_rect;
+flat out vec4 g_info;
+flat out vec4 g_color;
+void main() {
+    int i = gl_VertexIndex;
+    vec3 w = vec3((i & 1) != 0 ? r_rect.z : r_rect.x, r_info.x, (i & 2) != 0 ? r_rect.w : r_rect.y);
+    vec4 c = clip_from_world * vec4(w, 1.0);
+    g_world = w;
+    g_clip = c.xyz;
+    g_rect = r_rect;
+    g_info = r_info;
+    g_color = r_color;
+    gl_Position = vec4(c.xy / c.w, 0.5, 1.0);
+}
+@end
+
+@block ground_depth_inputs
+@image_sample_type ground_depth unfilterable_float
+layout(binding=0) uniform texture2D ground_depth;
+@sampler_type ground_smp nonfiltering
+layout(binding=0) uniform sampler ground_smp;
+@end
+
+@block ground_seen
+layout(binding=1) uniform fs_ground_params {
+    vec4 art;     // art grid width, height; z = 1 if storage origin is top-left; w = 1: no depth test
+    vec4 depth;   // x = hardware depth a mark may lie behind the scene and still be in front of it
+    vec4 style;   // mask: x = inset, y = border width, z = border lighten, w = border alpha
+    vec4 grid;    // mask: x = grid width, y = height, z = level drawn, w = opacity factor where hidden
+};
+// 1 where the mark is in front of the scene. The scene's depth was taken at the centre of each art
+// pixel, so the mark's depth is carried there along its own plane first (its slope over a pixel is
+// far more than any useful bias).
+float ground_seen(vec3 clip) {
+    vec2 a = (clip.xy * 0.5 + 0.5) * art.xy;
+    vec2 ax = dFdx(a), ay = dFdy(a);
+    float zx = dFdx(clip.z), zy = dFdy(clip.z);
+    if (art.w > 0.5) return 1.0;
+    ivec2 p = ivec2(floor(a));
+    if (p.x < 0 || p.y < 0 || p.x >= int(art.x) || p.y >= int(art.y)) return 1.0;
+    float det = ax.x * ay.y - ax.y * ay.x;
+    vec2 g = det != 0.0 ? vec2(zx * ay.y - ax.y * zy, ax.x * zy - ay.x * zx) / det : vec2(0.0);
+    float z = clip.z + dot(g, vec2(p) + 0.5 - a);
+    ivec2 q = ivec2(p.x, art.z > 0.5 ? int(art.y) - 1 - p.y : p.y);
+    float scene = texelFetch(sampler2D(ground_depth, ground_smp), q, 0).r;
+    return z <= scene + depth.x ? 1.0 : 0.0;
+}
+@end
+
+@fs fs_ground_mask
+@include_block ground_depth_inputs
+@image_sample_type ground_cells unfilterable_float
+layout(binding=1) uniform texture2D ground_cells;
+@image_sample_type ground_levels unfilterable_float
+layout(binding=2) uniform texture2D ground_levels;
+@include_block ground_seen
+in vec3 g_world;
+in vec3 g_clip;
+out vec4 frag_color;
+void main() {
+    float seen = ground_seen(g_clip);
+    vec2 cf = floor(g_world.xz);
+    ivec2 cell = ivec2(cf);
+    if (cell.x < 0 || cell.y < 0 || cell.x >= int(grid.x) || cell.y >= int(grid.y)) discard;
+    if (abs(texelFetch(sampler2D(ground_levels, ground_smp), cell, 0).r * 255.0 - grid.z) > 0.5) discard;
+    vec4 c = texelFetch(sampler2D(ground_cells, ground_smp), cell, 0);
+    if (c.a <= 0.0) discard;
+    vec2 f = g_world.xz - cf;
+    float e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) - style.x;
+    if (e < 0.0) discard;
+    vec4 col = c;
+    if (e < style.y) {
+        vec4 b = vec4(mix(c.rgb, vec3(1.0), style.z), style.w);
+        float a = b.a + c.a * (1.0 - b.a);
+        col = vec4((b.rgb * b.a + c.rgb * c.a * (1.0 - b.a)) / a, a);
+    }
+    col.a *= mix(grid.w, 1.0, seen);
+    frag_color = col;
+}
+@end
+
+@fs fs_ground_rect
+@include_block ground_depth_inputs
+@include_block ground_seen
+in vec3 g_world;
+in vec3 g_clip;
+flat in vec4 g_rect;
+flat in vec4 g_info;
+flat in vec4 g_color;
+out vec4 frag_color;
+void main() {
+    float seen = ground_seen(g_clip);
+    float e = min(min(g_world.x - g_rect.x, g_rect.z - g_world.x), min(g_world.z - g_rect.y, g_rect.w - g_world.z));
+    if (g_info.y > 0.0 && e > g_info.y) discard;
+    frag_color = vec4(g_color.rgb, g_color.a * mix(g_info.z, 1.0, seen));
+}
+@end
+
+@program ground_mask vs_ground_mask fs_ground_mask
+@program ground_rect vs_ground_rect fs_ground_rect
+
 @block warm_palette
 // Keep the native luminance choices; add the chroma of a lit sample in small discrete steps.
 vec3 lit_palette(vec3 entry,vec3 sampleColor) {
