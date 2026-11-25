@@ -475,18 +475,21 @@ layout(binding=0) uniform vs_ground_params {
     vec4 level;
 };
 in vec4 r_rect;    // x0, z0, x1, z1
-in vec4 r_info;    // y, line width (0 = filled), opacity factor where hidden
+in vec4 r_info;    // y, line width (0 = filled), opacity factor where hidden, turn about the centre (radians)
 in vec4 r_color;
-out vec3 g_world;
+out vec3 g_world;  // the point in the rectangle's own frame, before the turn
 out vec3 g_clip;
 flat out vec4 g_rect;
 flat out vec4 g_info;
 flat out vec4 g_color;
 void main() {
     int i = gl_VertexIndex;
-    vec3 w = vec3((i & 1) != 0 ? r_rect.z : r_rect.x, r_info.x, (i & 2) != 0 ? r_rect.w : r_rect.y);
+    vec2 p = vec2((i & 1) != 0 ? r_rect.z : r_rect.x, (i & 2) != 0 ? r_rect.w : r_rect.y);
+    vec2 o = 0.5 * (r_rect.xy + r_rect.zw), d = p - o;
+    float cs = cos(r_info.w), sn = sin(r_info.w);
+    vec3 w = vec3(o.x + d.x * cs - d.y * sn, r_info.x, o.y + d.x * sn + d.y * cs);
     vec4 c = clip_from_world * vec4(w, 1.0);
-    g_world = w;
+    g_world = vec3(p.x, r_info.x, p.y);
     g_clip = c.xyz;
     g_rect = r_rect;
     g_info = r_info;

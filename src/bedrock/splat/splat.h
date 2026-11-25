@@ -177,7 +177,8 @@ void splat_set_occluders(const float *occ, int n);
 //    with its colour and gets a border just inside its edges (per layer style). Layers are drawn in
 //    order, 0 first.
 //  - loose rectangles, SPLAT_GROUND_RECT_FLOATS floats each: x0, z0, x1, z1, height y, line width
-//    (0 = filled, else an outline that wide inside the edges), opacity factor where hidden, 0, r, g, b, a.
+//    (0 = filled, else an outline that wide inside the edges), opacity factor where hidden, turn (radians
+//    about the rectangle's centre, x towards z; 0 = axis-aligned), r, g, b, a.
 // Each cell of the grid is at one of SPLAT_GROUND_LEVELS heights (a byte a cell); mask colours are
 // drawn at the height of their cell. All of these are for the render thread, outside any pass.
 #define SPLAT_GROUND_LAYERS 4
