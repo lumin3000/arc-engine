@@ -4,6 +4,7 @@
 
 #include "quickjs.h"
 #include "sokol_gfx.h"
+bool graphics_upload_queued_file_textures(void);
 int graphics_register_render_texture(sg_image image, sg_view view);
 
 // 初始化 graphics 模块

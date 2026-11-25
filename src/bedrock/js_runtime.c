@@ -1,6 +1,7 @@
 
 #include "js_runtime.h"
 #include "js_runtime_internal.h"
+#include "../bindings/graphics_bindings.h"
 #include "engine_main.h"
 #include "engine_state.h"
 #include "../log.h"
@@ -38,13 +39,16 @@ static DWORD g_render_thread;
 #else
 static pthread_t g_render_thread;
 #endif
-void js_runtime_assert_render_thread(void) {
+bool js_runtime_is_render_thread(void) {
 #if defined(_WIN32)
-  int same = GetCurrentThreadId() == g_render_thread;
+  return GetCurrentThreadId() == g_render_thread;
 #else
-  int same = pthread_equal(pthread_self(), g_render_thread);
+  return pthread_equal(pthread_self(), g_render_thread);
 #endif
-  if (!same) { LOG_ERROR("JS render on non-render thread\n"); abort(); }
+}
+
+void js_runtime_assert_render_thread(void) {
+  if (!js_runtime_is_render_thread()) { LOG_ERROR("JS render on non-render thread\n"); abort(); }
 }
 
 
@@ -548,6 +552,8 @@ static JSValue js_message_render_frame(JSContext *ctx, JSValueConst self,
   js_runtime_assert_render_thread();
   if (argc != 1 || !JS_IsFunction(ctx, argv[0]))
     return JS_ThrowTypeError(ctx, "render_frame requires a callback");
+  if (!graphics_upload_queued_file_textures())
+    return JS_ThrowInternalError(ctx, "Failed to upload queued material texture");
   core_render_frame_start();
   JSValue result = JS_Call(ctx, argv[0], JS_UNDEFINED, 0, NULL);
   core_render_frame_end();

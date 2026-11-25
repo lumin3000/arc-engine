@@ -11,6 +11,7 @@
 //   graphics.free_mesh(meshId)
 
 #include "bedrock/utils/utils.h"
+#include "bedrock/js_runtime.h"
 
 // ... existing includes ...
 
@@ -420,6 +421,7 @@ typedef struct {
   // staged 纹理 (texture_create_staged): CPU 侧全图镜像, compose_layers 写入,
   // texture_flush_staged 整图上传。行序与 GPU 纹理一致 (= 图像空间垂直翻转,
   // 同 stbi flip-on-load 约定)。非 staged 纹理恒 NULL。
+  uint8_t *file_pixels;  // Decoded by the service, consumed on the render thread.
   uint8_t *staging;
   int width;
   int height;
@@ -486,6 +488,40 @@ static void *read_file_content(const char *path, size_t *outLen) {
   return buf;
 }
 
+static int queued_file_textures[MAX_GRAPHICS_TEXTURES];
+static int queued_file_count;
+
+static bool upload_file_texture(GraphicsTextureCache *entry) {
+  sg_image image = sg_make_image(&(sg_image_desc){
+      .width = entry->width, .height = entry->height,
+      .pixel_format = SG_PIXELFORMAT_RGBA8,
+      .data.mip_levels[0] = {.ptr = entry->file_pixels,
+                            .size = (size_t)entry->width * entry->height * 4}});
+  stbi_image_free(entry->file_pixels);
+  entry->file_pixels = NULL;
+  sg_view view = {0};
+  if (sg_query_image_state(image) == SG_RESOURCESTATE_VALID)
+    view = sg_make_view(&(sg_view_desc){.texture.image = image});
+  if (sg_query_view_state(view) != SG_RESOURCESTATE_VALID) {
+    LOG_ERROR("Failed to upload graphics texture: %s", entry->path);
+    sg_destroy_view(view);
+    sg_destroy_image(image);
+    *entry = (GraphicsTextureCache){0};
+    return false;
+  }
+  entry->image = image;
+  entry->view = view;
+  return true;
+}
+
+bool graphics_upload_queued_file_textures(void) {
+  bool ok = true;
+  for (int i = 0; i < queued_file_count; ++i)
+    if (!upload_file_texture(&g_graphics_textures[queued_file_textures[i]])) ok = false;
+  queued_file_count = 0;
+  return ok;
+}
+
 // Helper: Get or Load Texture
 static int get_or_load_graphics_texture(const char *path) {
   // 1. Search existing
@@ -533,39 +569,18 @@ static int get_or_load_graphics_texture(const char *path) {
     return -1;
   }
 
-  sg_image_desc img_desc = {
-      .width = w,
-      .height = h,
-      .pixel_format = SG_PIXELFORMAT_RGBA8,
-      .data.mip_levels[0] =
-          {
-              .ptr = pixels,
-              .size = (size_t)(w * h * 4),
-          },
-  };
-
-  sg_image img = sg_make_image(&img_desc);
-  stbi_image_free(pixels);
-
-  if (sg_query_image_state(img) != SG_RESOURCESTATE_VALID) {
-    LOG_ERROR("Failed to create sg_image for: %s", path);
-    return -1;
+  GraphicsTextureCache *entry = &g_graphics_textures[slot];
+  entry->valid = true;
+  entry->width = w;
+  entry->height = h;
+  entry->file_pixels = pixels;
+  snprintf(entry->path, sizeof(entry->path), "%s", path);
+  if (js_runtime_is_render_thread()) {
+    if (!upload_file_texture(entry)) return -1;
+  } else {
+    // The game service finishes its generator step before handing off the render frame.
+    queued_file_textures[queued_file_count++] = slot;
   }
-
-  sg_view_desc view_desc = {
-      .texture.image = img,
-  };
-  sg_view view = sg_make_view(&view_desc);
-
-  // Store in cache
-  strncpy(g_graphics_textures[slot].path, path,
-          MAX_GRAPHICS_TEXTURE_PATH_LEN - 1);
-  g_graphics_textures[slot].image = img;
-  g_graphics_textures[slot].view = view;
-  g_graphics_textures[slot].valid = true;
-
-  LOG_VERBOSE("Loaded graphics texture: %s (id=%d)", path, slot);
-
   return slot;
 }
 

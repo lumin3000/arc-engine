@@ -13,6 +13,7 @@ void js_runtime_shutdown(void);
 bool js_runtime_render(void);
 
 // Fail immediately if GPU/UI work is called outside the owning host thread.
+bool js_runtime_is_render_thread(void);
 void js_runtime_assert_render_thread(void);
 
 void js_runtime_handle_external_command(const char *cmd);
