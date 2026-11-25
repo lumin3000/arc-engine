@@ -1,7 +1,5 @@
 
-#if defined(_WIN32)
-#include <windows.h>
-#endif
+#include "platform.h"
 
 #include "engine_main.h"
 #include "engine_state.h"
@@ -13,7 +11,6 @@
 #include "js_runtime_internal.h"
 #include "sound/sound.h"
 #include "stdin_reader.h"
-#include "platform.h"
 #include "utils/utils.h"
 #include "../config.h"
 #include "../types.h"
